@@ -10,7 +10,9 @@ export interface PgClient {
 }
 
 export function createPgClient(url: string, { max = 10 }: { max?: number } = {}): PgClient {
-  const sql = postgres(url, { max, onnotice: () => {} });
+  // Encrypt when the server supports it (Supabase); local containers fall back to plain TCP.
+  const ssl = url.includes('sslmode=') ? undefined : 'prefer';
+  const sql = postgres(url, { max, onnotice: () => {}, ...(ssl && { ssl }) });
   return {
     db: drizzle(sql),
     ping: async () => {
