@@ -5,16 +5,22 @@ import postgres from 'postgres';
 
 export interface PgClient {
   db: PostgresJsDatabase;
+  // A separate single-connection client, for work that needs one session (e.g. advisory locks).
+  dedicated: () => postgres.Sql;
   ping: () => Promise<void>;
   close: () => Promise<void>;
 }
 
 export function createPgClient(url: string, { max = 10 }: { max?: number } = {}): PgClient {
   // Encrypt when the server supports it (Supabase); local containers fall back to plain TCP.
-  const ssl = url.includes('sslmode=') ? undefined : 'prefer';
-  const sql = postgres(url, { max, onnotice: () => {}, ...(ssl && { ssl }) });
+  const options = {
+    onnotice: () => {},
+    ...(!url.includes('sslmode=') && { ssl: 'prefer' as const }),
+  };
+  const sql = postgres(url, { ...options, max });
   return {
     db: drizzle(sql),
+    dedicated: () => postgres(url, { ...options, max: 1 }),
     ping: async () => {
       await sql`select 1`;
     },
@@ -33,10 +39,18 @@ export async function runMigrations(
   }: { migrationsFolder: string; schema: string; logger: Logger },
 ) {
   const startedAt = Date.now();
-  await migrate(client.db, {
-    migrationsFolder,
-    migrationsSchema: 'drizzle',
-    migrationsTable: `${schema}_migrations`,
-  });
+  const lockKey = `migrations:${schema}`;
+  // A session advisory lock serialises replicas that start at the same time.
+  const connection = client.dedicated();
+  try {
+    await connection`select pg_advisory_lock(hashtext(${lockKey}))`;
+    await migrate(drizzle(connection), {
+      migrationsFolder,
+      migrationsSchema: 'drizzle',
+      migrationsTable: `${schema}_migrations`,
+    });
+  } finally {
+    await connection.end({ timeout: 5 });
+  }
   logger.info({ schema, durationMs: Date.now() - startedAt }, 'database migrations applied');
 }

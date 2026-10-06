@@ -34,6 +34,21 @@ describe('createPgClient', () => {
 });
 
 describe('runMigrations', () => {
+  it('serialises concurrent runs from separate replicas', async () => {
+    const replicas = [createPgClient(pg.url, { max: 2 }), createPgClient(pg.url, { max: 2 })];
+    await Promise.all(
+      replicas.map((replica) =>
+        runMigrations(replica, { migrationsFolder, schema: 'race', logger }),
+      ),
+    );
+    await Promise.all(replicas.map((replica) => replica.close()));
+
+    const applied = await client.db.execute(
+      sql`select count(*)::int as n from drizzle.race_migrations`,
+    );
+    expect(applied[0]).toEqual({ n: 1 });
+  });
+
   it('applies migrations into the service schema and is idempotent', async () => {
     await runMigrations(client, { migrationsFolder, schema: 'fixture', logger });
     await runMigrations(client, { migrationsFolder, schema: 'fixture', logger });

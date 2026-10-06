@@ -1,3 +1,3 @@
-CREATE SCHEMA "fixture";
+CREATE SCHEMA IF NOT EXISTS "fixture";
 --> statement-breakpoint
-CREATE TABLE "fixture"."widgets" ("id" serial PRIMARY KEY, "name" text NOT NULL);
+CREATE TABLE IF NOT EXISTS "fixture"."widgets" ("id" serial PRIMARY KEY, "name" text NOT NULL);
