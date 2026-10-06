@@ -2,7 +2,7 @@ import type { HttpServer } from './create-server';
 
 export type HealthCheck = () => Promise<unknown>;
 
-const CHECK_TIMEOUT_MS = 2000;
+const CHECK_TIMEOUT_MS = 5000;
 
 async function runCheck(check: HealthCheck): Promise<'up' | 'down'> {
   let timer: NodeJS.Timeout | undefined;

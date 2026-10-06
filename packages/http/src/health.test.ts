@@ -42,7 +42,7 @@ describe('health routes', () => {
   it('treats a hanging check as down', async () => {
     vi.useFakeTimers();
     const pending = setup({ slow: () => new Promise(() => {}) }).inject({ url: '/health/ready' });
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(5000);
     const res = await pending;
     vi.useRealTimers();
 
