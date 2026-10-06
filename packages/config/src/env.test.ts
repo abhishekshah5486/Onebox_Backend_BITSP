@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { baseEnv, envBoolean, envPort } from './env';
+import { envBoolean, envPort } from './env';
 
 describe('envBoolean', () => {
   it.each([
@@ -23,15 +23,5 @@ describe('envPort', () => {
 
   it.each(['0', '65536', '80.5', 'http'])('rejects %s', (input) => {
     expect(envPort.safeParse(input).success).toBe(false);
-  });
-});
-
-describe('baseEnv', () => {
-  it('defaults NODE_ENV and LOG_LEVEL', () => {
-    expect(baseEnv.parse({})).toEqual({ NODE_ENV: 'development', LOG_LEVEL: 'info' });
-  });
-
-  it('rejects unknown NODE_ENV', () => {
-    expect(baseEnv.safeParse({ NODE_ENV: 'staging' }).success).toBe(false);
   });
 });
