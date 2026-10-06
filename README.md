@@ -19,4 +19,16 @@ npm test            # unit tests
 npm run test:int    # integration tests (needs Docker / .env)
 ```
 
+## Local infrastructure
+
+```bash
+cp .env.example .env                       # then fill in secrets
+npm run infra:up                           # redis + elasticsearch
+docker compose --profile mail up -d        # greenmail test IMAP/SMTP (3143 / 3025)
+docker compose --profile vector up -d      # qdrant
+npm run infra:down
+```
+
+Postgres runs on Supabase and MongoDB on Atlas; connection strings go in `.env`.
+
 Commits follow [Conventional Commits](https://www.conventionalcommits.org), enforced by a commit-msg hook.
