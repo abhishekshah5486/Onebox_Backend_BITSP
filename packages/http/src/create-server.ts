@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isAppError, toErrorResponse } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
-import Fastify, { type FastifyError } from 'fastify';
+import Fastify, { LogController, type FastifyError } from 'fastify';
 import {
   serializerCompiler,
   validatorCompiler,
@@ -17,7 +17,10 @@ const QUIET_ROUTES = new Set(['/health/live', '/health/ready']);
 export function createServer({ logger }: CreateServerOptions) {
   const app = Fastify({
     loggerInstance: logger,
-    disableRequestLogging: true,
+    logController: new LogController({
+      disableRequestLogging: true,
+      requestIdLogLabel: 'requestId',
+    }),
     requestIdHeader: 'x-request-id',
     genReqId: () => randomUUID(),
     trustProxy: true,

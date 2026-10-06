@@ -102,3 +102,14 @@ describe('createServer', () => {
     expect(lines[0]).toMatchObject({ method: 'POST', url: '/echo', statusCode: 200 });
   });
 });
+
+describe('request log fields', () => {
+  it('labels the request id as requestId', async () => {
+    let logs;
+    ({ app, logs } = setup());
+    await app.inject({ url: '/missing', headers: { 'x-request-id': 'req-9' } });
+    expect(logs.find((line) => line.msg === 'request completed')).toMatchObject({
+      requestId: 'req-9',
+    });
+  });
+});
