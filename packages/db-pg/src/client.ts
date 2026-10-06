@@ -22,7 +22,8 @@ export function createPgClient(url: string, { max = 10 }: { max?: number } = {})
   };
 }
 
-// Each service keeps its own migration history inside its own schema.
+// Histories live in a shared "drizzle" schema (one table per service) so a service's
+// first migration can still create its own schema.
 export async function runMigrations(
   client: PgClient,
   {
@@ -32,6 +33,10 @@ export async function runMigrations(
   }: { migrationsFolder: string; schema: string; logger: Logger },
 ) {
   const startedAt = Date.now();
-  await migrate(client.db, { migrationsFolder, migrationsSchema: schema });
+  await migrate(client.db, {
+    migrationsFolder,
+    migrationsSchema: 'drizzle',
+    migrationsTable: `${schema}_migrations`,
+  });
   logger.info({ schema, durationMs: Date.now() - startedAt }, 'database migrations applied');
 }

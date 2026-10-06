@@ -40,7 +40,7 @@ describe('runMigrations', () => {
 
     await client.db.execute(sql`insert into fixture.widgets (name) values ('a')`);
     const applied = await client.db.execute(
-      sql`select count(*)::int as n from fixture.__drizzle_migrations`,
+      sql`select count(*)::int as n from drizzle.fixture_migrations`,
     );
     expect(applied[0]).toEqual({ n: 1 });
   });
