@@ -20,6 +20,8 @@ export default defineConfig(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
+      // Fastify route handlers and hooks are async by convention even without await.
+      '@typescript-eslint/require-await': 'off',
     },
   },
   { files: ['**/*.js'], extends: [tseslint.configs.disableTypeChecked] },
