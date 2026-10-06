@@ -18,4 +18,4 @@ const routes = createAuthDeps(pg, config.CREDENTIALS_ENCRYPTION_KEY, logger);
 await routes.keyStore.getActiveKey();
 
 const app = buildApp({ logger, pingDatabase: pg.ping, routes });
-await startServer(app, { port: config.AUTH_PORT, cleanups: [pg.close] });
+await startServer(app, { port: config.PORT, cleanups: [pg.close] });

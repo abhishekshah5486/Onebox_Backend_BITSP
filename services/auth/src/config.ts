@@ -5,7 +5,7 @@ import { z } from 'zod';
 const schema = z.object({
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres connection string'),
   CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
-  AUTH_PORT: envPort.default(4001),
+  PORT: envPort.default(4001),
 });
 
 export type AuthConfig = z.infer<typeof schema>;

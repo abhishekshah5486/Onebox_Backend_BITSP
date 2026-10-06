@@ -21,4 +21,4 @@ const app = await buildGateway({
   upstreams: defineUpstreams(config),
   verifyToken: createTokenVerifier(jwks),
 });
-await startServer(app, { port: config.GATEWAY_PORT, cleanups: [() => redis.quit()] });
+await startServer(app, { port: config.PORT, cleanups: [() => redis.quit()] });

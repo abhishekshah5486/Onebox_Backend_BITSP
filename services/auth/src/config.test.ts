@@ -10,7 +10,7 @@ describe('loadAuthConfig', () => {
       DATABASE_URL: 'postgresql://u:p@host:5432/postgres',
       CREDENTIALS_ENCRYPTION_KEY: key,
     });
-    expect(config.AUTH_PORT).toBe(4001);
+    expect(config.PORT).toBe(4001);
     expect(config.CREDENTIALS_ENCRYPTION_KEY).toHaveLength(32);
   });
 
