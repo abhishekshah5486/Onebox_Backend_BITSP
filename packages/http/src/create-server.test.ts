@@ -22,6 +22,12 @@ function setup() {
   app.get('/missing', async () => {
     throw new NotFoundError('Thread not found');
   });
+  app.get('/upstream-down', async () => {
+    throw Object.assign(new Error('Service Unavailable'), {
+      statusCode: 503,
+      code: 'FST_REPLY_FROM_SERVICE_UNAVAILABLE',
+    });
+  });
   app.get('/boom', async () => {
     throw new Error('db password=secret leaked');
   });
@@ -83,6 +89,13 @@ describe('createServer', () => {
       headers: { 'content-type': 'application/json' },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('keeps the status of fastify plugin server errors', async () => {
+    ({ app } = setup());
+    const res = await app.inject({ url: '/upstream-down' });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: { code: 'FST_REPLY_FROM_SERVICE_UNAVAILABLE' } });
   });
 
   it('returns a json 404 for unknown routes', async () => {

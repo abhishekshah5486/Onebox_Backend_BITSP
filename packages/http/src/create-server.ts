@@ -60,10 +60,14 @@ export function createServer({ logger }: CreateServerOptions) {
       });
     }
 
-    // Fastify's own client errors (malformed JSON, payload too large) keep their status.
-    if (!isAppError(error) && error.statusCode && error.statusCode < 500) {
+    // Fastify's own errors (malformed JSON, payload too large, proxy upstream down) keep
+    // their status; anything else unexpected is masked as a 500.
+    const isFastifyError =
+      error.statusCode && (error.statusCode < 500 || error.code?.startsWith('FST_'));
+    if (!isAppError(error) && isFastifyError) {
+      if (error.statusCode! >= 500) request.log.warn({ err: error }, 'request failed');
       return reply
-        .status(error.statusCode)
+        .status(error.statusCode!)
         .send({ error: { code: error.code ?? 'BAD_REQUEST', message: error.message } });
     }
 
