@@ -11,6 +11,7 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
     "@node-rs/argon2": "^2.2.2",
     "@onebox/auth-kit": "*",
     "@onebox/config": "*",

@@ -136,6 +136,78 @@ describe('auth routes', () => {
     expect(after.statusCode).toBe(401);
   });
 
+  describe('web clients', () => {
+    const web = { 'x-onebox-client': 'web' };
+    const cookieOf = (res: { cookies: { name: string; value: string }[] }) =>
+      res.cookies.find((c) => c.name === 'ob_refresh');
+
+    it('keeps the refresh token out of the body and in a locked-down cookie', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        headers: web,
+        payload: { email: 'web@onebox.dev', name: 'Web', password },
+      });
+      const body = res.json<Session>();
+      const cookie = res.cookies.find((c) => c.name === 'ob_refresh');
+
+      expect(body.tokens).not.toHaveProperty('refreshToken');
+      expect(body.tokens.accessToken).toBeTruthy();
+      expect(cookie).toMatchObject({
+        httpOnly: true,
+        secure: true,
+        sameSite: 'Strict',
+        path: '/api/v1/auth',
+      });
+    });
+
+    it('refreshes from the cookie and rotates it, then logout clears it', async () => {
+      const login = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: web,
+        payload: { email: 'web@onebox.dev', password },
+      });
+      const first = cookieOf(login)!.value;
+
+      const refreshed = await app.inject({
+        method: 'POST',
+        url: '/auth/refresh',
+        headers: web,
+        cookies: { ob_refresh: first },
+      });
+      expect(refreshed.statusCode).toBe(200);
+      const second = cookieOf(refreshed)!.value;
+      expect(second).not.toBe(first);
+
+      const logout = await app.inject({
+        method: 'POST',
+        url: '/auth/logout',
+        headers: web,
+        cookies: { ob_refresh: second },
+      });
+      expect(logout.statusCode).toBe(204);
+      expect(cookieOf(logout)?.value).toBe('');
+
+      const after = await app.inject({
+        method: 'POST',
+        url: '/auth/refresh',
+        cookies: { ob_refresh: second },
+      });
+      expect(after.statusCode).toBe(401);
+    });
+
+    it('rejects refresh with no token at all', async () => {
+      const res = await app.inject({ method: 'POST', url: '/auth/refresh' });
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toMatchObject({ error: { code: 'MISSING_REFRESH_TOKEN' } });
+    });
+
+    it('lets logout succeed without a token', async () => {
+      expect((await app.inject({ method: 'POST', url: '/auth/logout' })).statusCode).toBe(204);
+    });
+  });
+
   it('publishes a cacheable JWKS without private material', async () => {
     const res = await app.inject({ url: '/.well-known/jwks.json' });
     const { keys } = res.json<{ keys: Record<string, unknown>[] }>();
