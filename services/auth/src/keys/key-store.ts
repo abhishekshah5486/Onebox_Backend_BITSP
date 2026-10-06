@@ -8,6 +8,8 @@ import { signingKeys } from '../db/schema';
 
 export const SIGNING_ALG = 'EdDSA';
 
+const JWKS_CACHE_MS = 60_000;
+
 export interface SigningKey {
   kid: string;
   privateKey: CryptoKey;
@@ -21,6 +23,7 @@ export interface KeyStoreDeps {
 
 export function createKeyStore({ db, encryptionKey, logger }: KeyStoreDeps) {
   let active: Promise<SigningKey> | undefined;
+  let jwksCache: { value: { keys: JWK[] }; expiresAt: number } | undefined;
 
   async function generate(): Promise<SigningKey> {
     const kid = randomUUID();
@@ -61,12 +64,15 @@ export function createKeyStore({ db, encryptionKey, logger }: KeyStoreDeps) {
       return active;
     },
 
-    async getPublicJwks(): Promise<{ keys: JWK[] }> {
+    async getPublicJwks(now = Date.now()): Promise<{ keys: JWK[] }> {
+      if (jwksCache && jwksCache.expiresAt > now) return jwksCache.value;
       const rows = await db
         .select({ publicJwk: signingKeys.publicJwk })
         .from(signingKeys)
         .where(eq(signingKeys.active, true));
-      return { keys: rows.map((row) => row.publicJwk as JWK) };
+      const value = { keys: rows.map((row) => row.publicJwk as JWK) };
+      jwksCache = { value, expiresAt: now + JWKS_CACHE_MS };
+      return value;
     },
   };
 }

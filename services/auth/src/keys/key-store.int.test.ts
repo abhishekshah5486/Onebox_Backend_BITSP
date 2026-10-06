@@ -54,6 +54,16 @@ describe('key store', () => {
     expect(new TextDecoder().decode(payload)).toBe('payload');
   });
 
+  it('caches the public JWKS for a minute', async () => {
+    const store = createKeyStore({ db: client.db, encryptionKey, logger });
+    const before = await store.getPublicJwks(0);
+    await client.db.update(signingKeys).set({ active: false });
+
+    expect(await store.getPublicJwks(30_000)).toEqual(before);
+    expect((await store.getPublicJwks(61_000)).keys).toHaveLength(0);
+    await client.db.update(signingKeys).set({ active: true });
+  });
+
   it('refuses to load keys with the wrong encryption key', async () => {
     const store = createKeyStore({ db: client.db, encryptionKey: randomBytes(32), logger });
     await expect(store.getActiveKey()).rejects.toThrow(DecryptionError);
