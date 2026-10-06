@@ -16,17 +16,23 @@
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test": "vitest run --project unit",
+    "test:int": "vitest run --project integration",
+    "test:watch": "vitest --project unit",
+    "coverage": "vitest run --project unit --coverage"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.19.1",
+    "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.13.0",
     "prettier": "^3.9.9",
     "turbo": "^2.11.7",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.1"
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3"
   }
 }
