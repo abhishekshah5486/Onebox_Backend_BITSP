@@ -23,7 +23,9 @@
     "coverage": "vitest run --project unit --coverage",
     "prepare": "husky",
     "infra:up": "docker compose up -d --wait",
-    "infra:down": "docker compose down"
+    "infra:down": "docker compose down",
+    "k8s:up": "./scripts/k8s-up.sh",
+    "k8s:down": "minikube delete -p onebox"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",

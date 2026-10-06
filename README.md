@@ -31,4 +31,14 @@ npm run infra:down
 
 Postgres runs on Supabase and MongoDB on Atlas; connection strings go in `.env`.
 
+## Kubernetes (local)
+
+```bash
+npm run k8s:up      # minikube profile "onebox": builds images, loads secrets from .env, deploys
+kubectl --context onebox -n onebox port-forward svc/api-gateway 4000:4000
+npm run k8s:down
+```
+
+Secrets are created from `.env` at deploy time and never committed; each pod receives only the keys it needs.
+
 Commits follow [Conventional Commits](https://www.conventionalcommits.org), enforced by a commit-msg hook.
