@@ -11,6 +11,11 @@
   },
   "dependencies": {
     "@onebox/errors": "*",
+    "fastify": "^5.12.5",
     "jose": "^6.2.12"
+  },
+  "devDependencies": {
+    "@onebox/http": "*",
+    "@onebox/logger": "*"
   }
 }
