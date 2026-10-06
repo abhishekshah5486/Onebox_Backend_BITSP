@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+.git
+.github
+.husky
+.env
+.env.*
+!.env.example
