@@ -1,0 +1,16 @@
+{
+  "name": "@onebox/testing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@testcontainers/postgresql": "^12.2.0",
+    "testcontainers": "^12.2.0"
+  }
+}
