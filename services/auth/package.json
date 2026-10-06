@@ -1,0 +1,21 @@
+{
+  "name": "@onebox/auth-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@onebox/config": "*",
+    "@onebox/crypto": "*",
+    "@onebox/db-pg": "*",
+    "@onebox/http": "*",
+    "@onebox/logger": "*",
+    "zod": "^4.6.5"
+  }
+}
