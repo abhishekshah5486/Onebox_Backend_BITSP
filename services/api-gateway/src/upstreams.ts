@@ -23,5 +23,17 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       access: 'public',
       rateLimit: { max: 20, timeWindow: '1 minute' },
     },
+    {
+      prefix: '/api/v1/accounts',
+      url: config.ACCOUNTS_SERVICE_URL,
+      rewritePrefix: '/accounts',
+      access: 'authenticated',
+    },
+    {
+      prefix: '/api/v1/settings',
+      url: config.SETTINGS_SERVICE_URL,
+      rewritePrefix: '/settings',
+      access: 'authenticated',
+    },
   ];
 }

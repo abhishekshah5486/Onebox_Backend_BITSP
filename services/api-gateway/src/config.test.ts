@@ -7,6 +7,8 @@ describe('loadGatewayConfig', () => {
       PORT: 4000,
       REDIS_URL: 'redis://localhost:6379',
       AUTH_SERVICE_URL: 'http://localhost:4001',
+      ACCOUNTS_SERVICE_URL: 'http://localhost:4002',
+      SETTINGS_SERVICE_URL: 'http://localhost:4004',
     });
   });
 
