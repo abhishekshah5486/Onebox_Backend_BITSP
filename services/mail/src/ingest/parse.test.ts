@@ -79,6 +79,20 @@ describe('parseMessage', () => {
     ]);
   });
 
+  it('builds a clean snippet from html-only mail', async () => {
+    const parsed = await parseMessage(
+      mime([
+        'From: noreply@github.com',
+        'Subject: Alerts',
+        'Content-Type: text/html; charset=utf-8',
+        '',
+        '<h2>Dependabot alerts</h2><p>3 new alerts in <b>onebox</b>.</p><img src="https://t.example/p.gif"><a href="https://github.com">View</a>',
+      ]),
+    );
+    expect(parsed.snippet).toBe('Dependabot alerts 3 new alerts in onebox . View');
+    expect(parsed.snippet).not.toMatch(/https?:|DEPENDABOT/);
+  });
+
   it('copes with a message that has no headers worth reading', async () => {
     const parsed = await parseMessage(mime(['', 'just a body']));
     expect(parsed).toMatchObject({

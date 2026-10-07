@@ -39,6 +39,8 @@ function htmlToText(html: string): string {
     .replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
@@ -50,10 +52,15 @@ export function makeSnippet(text: string): string {
 }
 
 export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
-  const mail = await simpleParser(raw, { skipImageLinks: true, skipTextLinks: true });
+  // skipHtmlToText: mailparser's own conversion uppercases headings and inlines URLs.
+  const mail = await simpleParser(raw, {
+    skipHtmlToText: true,
+    skipImageLinks: true,
+    skipTextLinks: true,
+  });
   const sanitized = typeof mail.html === 'string' ? sanitizeEmailHtml(mail.html) : null;
   const textBody = (
-    mail.text ?? (typeof mail.html === 'string' ? htmlToText(mail.html) : '')
+    mail.text || (typeof mail.html === 'string' ? htmlToText(mail.html) : '')
   ).slice(0, MAX_TEXT_CHARS);
 
   return {
