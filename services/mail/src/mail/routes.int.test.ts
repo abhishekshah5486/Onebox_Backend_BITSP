@@ -4,13 +4,19 @@ import { connectMongo, type MongoHandle } from '@onebox/db-mongo';
 import { UnauthorizedError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
-import { startMongo, type TestMongo } from '@onebox/testing';
+import { HISTORY_BATCH_SIZE, QUEUES, type HistoryPayload } from '@onebox/contracts';
+import { createMailboxStore, type MailboxStore } from '@onebox/mailbox-state';
+import { createProducer } from '@onebox/queue';
+import { startMongo, startRedis, type TestMongo, type TestRedis } from '@onebox/testing';
+import { Queue } from 'bullmq';
+import { Redis } from 'ioredis';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app';
 import { ensureIndexes, mailCollections, type MailCollections } from '../db/collections';
 import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
 import { createMailService } from './mail-service';
+import { createMailboxService } from './mailbox-service';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
 const context = { logger, attempt: 1 };
@@ -24,6 +30,11 @@ let handle: MongoHandle;
 let collections: MailCollections;
 let app: HttpServer;
 let ingest: ReturnType<typeof createIngestHandler>;
+let redisContainer: TestRedis;
+let redis: Redis;
+let store: MailboxStore;
+let historyQueue: Queue;
+let historyProducer: ReturnType<typeof createProducer<HistoryPayload>>;
 
 beforeAll(async () => {
   mongo = await startMongo();
@@ -31,10 +42,22 @@ beforeAll(async () => {
   collections = mailCollections(handle.db);
   await ensureIndexes(collections);
   ingest = createIngestHandler(collections);
+  redisContainer = await startRedis();
+  redis = new Redis(redisContainer.url);
+  store = createMailboxStore(redis);
+  historyQueue = new Queue(QUEUES.history, { connection: { url: redisContainer.url } });
+  historyProducer = createProducer<HistoryPayload>(QUEUES.history, {
+    redisUrl: redisContainer.url,
+    logger,
+  });
   app = buildApp({
     logger,
     checks: {},
-    routes: { mail: createMailService(collections), verifyToken },
+    routes: {
+      mail: createMailService(collections),
+      mailboxes: createMailboxService({ collections, store, historyProducer, logger }),
+      verifyToken,
+    },
   });
 });
 
@@ -44,6 +67,10 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await historyProducer.close();
+  await historyQueue.close();
+  redis.disconnect();
+  await redisContainer.stop();
   await app.close();
   await handle.close();
   await mongo.stop();
@@ -117,7 +144,7 @@ describe('mail api', () => {
   it('never shows another user mail', async () => {
     const [alice, bob] = [randomUUID(), randomUUID()];
     await seed(alice, 2);
-    expect((await list(bob)).json()).toEqual({ items: [], nextCursor: null });
+    expect((await list(bob)).json()).toEqual({ items: [], nextCursor: null, prevCursor: null });
 
     const aliceThread = (await list(alice)).json<{ items: Thread[] }>().items[0]!;
     const peek = await app.inject({ url: `/mail/threads/${aliceThread.id}`, headers: as(bob) });
@@ -172,6 +199,122 @@ describe('mail api', () => {
     const items = (await list(userId, `?accountId=${work}`)).json<{ items: Thread[] }>().items;
     expect(items).toHaveLength(2);
     expect(items.every((t) => t.accountId === work)).toBe(true);
+  });
+
+  it('pages back with the previous cursor to exactly the earlier page', async () => {
+    const userId = randomUUID();
+    await seed(userId, 5);
+    const first = (await list(userId, '?limit=2')).json<{
+      items: Thread[];
+      nextCursor: string;
+      prevCursor: null;
+    }>();
+    const second = (await list(userId, `?limit=2&cursor=${first.nextCursor}`)).json<{
+      items: Thread[];
+      prevCursor: string;
+    }>();
+    const back = (await list(userId, `?limit=2&direction=prev&cursor=${second.prevCursor}`)).json<{
+      items: Thread[];
+      prevCursor: string | null;
+    }>();
+
+    expect(first.prevCursor).toBeNull();
+    expect(back.items.map((t) => t.id)).toEqual(first.items.map((t) => t.id));
+    expect(back.prevCursor).toBeNull();
+  });
+
+  it('lists one account at a time', async () => {
+    const userId = randomUUID();
+    const work = await seed(userId, 2);
+    await seed(userId, 3);
+    const res = await app.inject({ url: `/mail/accounts/${work}/threads`, headers: as(userId) });
+    const items = res.json<{ items: Thread[] }>().items;
+    expect(items).toHaveLength(2);
+    expect(items.every((t) => t.accountId === work)).toBe(true);
+  });
+
+  describe('mailbox history', () => {
+    async function withCounts(userId: string, accountId: string, total: number) {
+      await store.setCounts({
+        userId,
+        accountId,
+        folder: 'INBOX',
+        uidValidity: 1,
+        total,
+        unread: 7,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    const summaryOf = (userId: string, accountId: string) =>
+      app.inject({ url: `/mail/accounts/${accountId}/summary`, headers: as(userId) });
+    const requestHistory = (userId: string, accountId: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/mail/accounts/${accountId}/history`,
+        headers: as(userId),
+      });
+    const historyJobs = async (accountId: string) =>
+      (await historyQueue.getJobs(['waiting'])).filter(
+        (job) => (job.data as { accountId: string }).accountId === accountId,
+      );
+
+    it('reports server totals next to what is stored', async () => {
+      const userId = randomUUID();
+      const accountId = await seed(userId, 3);
+      await withCounts(userId, accountId, 4586);
+
+      expect((await summaryOf(userId, accountId)).json()).toMatchObject({
+        server: { total: 4586, unread: 7 },
+        fetched: { conversations: 3, messages: 3 },
+        history: { status: 'idle' },
+        hasMoreOnServer: true,
+      });
+    });
+
+    it("hides another user's mailbox", async () => {
+      const owner = randomUUID();
+      const accountId = await seed(owner, 1);
+      await withCounts(owner, accountId, 10);
+      expect((await summaryOf(randomUUID(), accountId)).statusCode).toBe(404);
+      expect((await requestHistory(randomUUID(), accountId)).statusCode).toBe(404);
+    });
+
+    it('refuses to page back before the first sync has finished', async () => {
+      const res = await requestHistory(randomUUID(), randomUUID());
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ error: { code: 'MAILBOX_NOT_READY' } });
+    });
+
+    it('requests the page just before the oldest stored message, once', async () => {
+      const userId = randomUUID();
+      const accountId = await seed(userId, 3);
+      await withCounts(userId, accountId, 500);
+      const oldestUid = (
+        await collections.messages.find({ accountId }).sort({ uid: 1 }).limit(1).toArray()
+      )[0]!.uid;
+
+      const first = await requestHistory(userId, accountId);
+      expect(first.statusCode).toBe(202);
+      expect(first.json()).toMatchObject({ history: { status: 'fetching' } });
+      await requestHistory(userId, accountId);
+
+      const jobs = await historyJobs(accountId);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]!.data).toMatchObject({
+        payload: { beforeUid: oldestUid, count: HISTORY_BATCH_SIZE, uidValidity: 1 },
+      });
+    });
+
+    it('does nothing once the whole mailbox is fetched', async () => {
+      const userId = randomUUID();
+      const accountId = await seed(userId, 1);
+      await withCounts(userId, accountId, 1);
+      await store.setHistory(accountId, 'INBOX', 'complete');
+
+      const res = await requestHistory(userId, accountId);
+      expect(res.json()).toMatchObject({ hasMoreOnServer: false, history: { status: 'complete' } });
+      expect(await historyJobs(accountId)).toHaveLength(0);
+    });
   });
 
   it.each([

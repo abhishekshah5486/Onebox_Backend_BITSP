@@ -17,9 +17,11 @@
     "@onebox/errors": "*",
     "@onebox/http": "*",
     "@onebox/logger": "*",
+    "@onebox/mailbox-state": "*",
     "@onebox/queue": "*",
     "fastify": "^5.12.5",
     "fastify-type-provider-zod": "^7.0.0",
+    "ioredis": "^6.0.0",
     "mailparser": "^3.9.36",
     "mongodb": "^7.7.0",
     "sanitize-html": "^2.18.0",
@@ -28,6 +30,7 @@
   "devDependencies": {
     "@onebox/testing": "*",
     "@types/mailparser": "^3.9.0",
-    "@types/sanitize-html": "^2.16.2"
+    "@types/sanitize-html": "^2.16.2",
+    "bullmq": "6.3.11"
   }
 }

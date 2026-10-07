@@ -79,6 +79,7 @@ export async function ensureIndexes({ messages, threads }: MailCollections): Pro
     messages.createIndex({ userId: 1, threadId: 1, receivedAt: 1 }),
     messages.createIndex({ userId: 1, accountId: 1, messageIdHeader: 1 }),
     messages.createIndex({ userId: 1, receivedAt: -1 }),
+    messages.createIndex({ userId: 1, accountId: 1, folder: 1, uidValidity: 1, uid: 1 }),
     threads.createIndex({ userId: 1, lastMessageAt: -1, _id: -1 }),
     threads.createIndex({ userId: 1, accountId: 1, lastMessageAt: -1 }),
     threads.createIndex({ userId: 1, accountId: 1, normalizedSubject: 1, lastMessageAt: -1 }),
