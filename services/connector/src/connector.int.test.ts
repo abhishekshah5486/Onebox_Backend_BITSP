@@ -1,16 +1,21 @@
 import {
+  createJobEnvelope,
+  historyPayloadSchema,
   ingestPayloadSchema,
   QUEUES,
+  type HistoryPayload,
   type IngestPayload,
   type JobEnvelope,
 } from '@onebox/contracts';
 import { createLogger } from '@onebox/logger';
+import { createMailboxStore, type MailboxStore } from '@onebox/mailbox-state';
 import { createConsumer, createProducer } from '@onebox/queue';
 import { startGreenMail, startRedis, type TestMailServer, type TestRedis } from '@onebox/testing';
 import { ImapFlow } from 'imapflow';
 import { Redis } from 'ioredis';
 import nodemailer from 'nodemailer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createHistoryHandler } from './history';
 import type { ActiveAccount, InternalClient, ReportedStatus } from './internal-client';
 import { createSupervisor, type Supervisor } from './supervisor';
 
@@ -20,6 +25,7 @@ const user = { email: 'me@onebox.test', password: 'secret-pass' };
 let mail: TestMailServer;
 let redisContainer: TestRedis;
 let redis: Redis;
+let store: MailboxStore;
 const jobs: JobEnvelope<IngestPayload>[] = [];
 const statuses: { accountId: string; status: ReportedStatus }[] = [];
 const closers: (() => Promise<unknown>)[] = [];
@@ -104,8 +110,9 @@ function supervisor(internal: InternalClient): Supervisor {
     leaseTtlMs: 3000,
     sessionDeps: {
       producer,
+      store,
       allowPrivateHosts: true,
-      backfillDays: 30,
+      initialBatch: 2,
       highWatermark: 1000,
       connectTimeoutMs: 5000,
     },
@@ -117,6 +124,24 @@ function supervisor(internal: InternalClient): Supervisor {
 beforeAll(async () => {
   [mail, redisContainer] = await Promise.all([startGreenMail([user]), startRedis()]);
   redis = new Redis(redisContainer.url);
+  store = createMailboxStore(redis);
+  const historyProducer = createProducer<IngestPayload>(QUEUES.ingest, {
+    redisUrl: redisContainer.url,
+    logger,
+  });
+  const history = createConsumer(
+    QUEUES.history,
+    historyPayloadSchema,
+    createHistoryHandler({
+      internal: fakeInternal(),
+      store,
+      producer: historyProducer,
+      allowPrivateHosts: true,
+      connectTimeoutMs: 5000,
+    }),
+    { redisUrl: redisContainer.url, logger },
+  );
+  closers.push(history.close, historyProducer.close);
   const consumer = createConsumer(
     QUEUES.ingest,
     ingestPayloadSchema,
@@ -147,30 +172,73 @@ const subjects = (backfill: boolean) =>
 describe('imap connector', () => {
   let first: Supervisor;
 
-  it('backfills existing mail without marking it read', async () => {
+  it('fetches only the newest messages first and publishes server counts', async () => {
     await send('Old one');
     await send('Old two');
+    await send('Old three');
 
     first = supervisor(fakeInternal());
     await first.reconcile();
 
-    await vi.waitFor(() => expect(subjects(true).sort()).toEqual(['Old one', 'Old two']), {
+    await vi.waitFor(() => expect(subjects(true).sort()).toEqual(['Old three', 'Old two']), {
       timeout: 15_000,
     });
-    expect(account.syncState.INBOX).toMatchObject({ lastUid: 2 });
-    expect(jobs.every((job) => job.userId === 'user-1' && job.accountId === 'acc-1')).toBe(true);
-    expect(await seenFlags()).toEqual({ 'Old one': false, 'Old two': false });
+    expect(await seenFlags()).toEqual({ 'Old one': false, 'Old two': false, 'Old three': false });
+    await vi.waitFor(async () =>
+      expect(await store.getCounts('acc-1', 'INBOX')).toMatchObject({
+        total: 3,
+        unread: 3,
+        userId: 'user-1',
+      }),
+    );
+    expect(await store.getHistory('acc-1', 'INBOX')).toMatchObject({ status: 'idle' });
     expect(statuses).toContainEqual({ accountId: 'acc-1', status: 'CONNECTED' });
   });
 
-  it('picks up new mail through IDLE and applies the mark-as-read preference', async () => {
+  it('picks up new mail through IDLE, applies mark-as-read and refreshes counts', async () => {
     await send('Fresh news');
 
     await vi.waitFor(() => expect(subjects(false)).toEqual(['Fresh news']), { timeout: 15_000 });
     await vi.waitFor(async () => expect((await seenFlags())['Fresh news']).toBe(true), {
       timeout: 5000,
     });
-    expect((await seenFlags())['Old one']).toBe(false);
+    expect((await seenFlags())['Old two']).toBe(false);
+    await vi.waitFor(
+      async () =>
+        expect(await store.getCounts('acc-1', 'INBOX')).toMatchObject({ total: 4, unread: 3 }),
+      {
+        timeout: 10_000,
+      },
+    );
+  });
+
+  it('fetches older mail on request and marks history complete once stored', async () => {
+    const oldestFetched = Math.min(...jobs.map((job) => job.payload.uid));
+    const uidValidity = jobs[0]!.payload.uidValidity;
+    const producer = createProducer<HistoryPayload>(QUEUES.history, {
+      redisUrl: redisContainer.url,
+      logger,
+    });
+    closers.push(producer.close);
+
+    await producer.enqueue(
+      createJobEnvelope({
+        jobId: `history-${oldestFetched}`,
+        userId: 'user-1',
+        accountId: 'acc-1',
+        payload: { folder: 'INBOX', uidValidity, beforeUid: oldestFetched, count: 50 },
+      }),
+    );
+
+    await vi.waitFor(
+      async () =>
+        expect(await store.getHistory('acc-1', 'INBOX')).toMatchObject({ status: 'complete' }),
+      {
+        timeout: 15_000,
+      },
+    );
+    expect(subjects(true)).toContain('Old one');
+    expect(jobs.filter((job) => subjects(true).length && job.payload.uid === 1)).toHaveLength(1);
   });
 
   it('resumes from the cursor after a restart without duplicating work', async () => {

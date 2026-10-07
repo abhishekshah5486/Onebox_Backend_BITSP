@@ -17,6 +17,7 @@
     "@onebox/errors": "*",
     "@onebox/http": "*",
     "@onebox/logger": "*",
+    "@onebox/mailbox-state": "*",
     "@onebox/net-guard": "*",
     "@onebox/queue": "*",
     "imapflow": "^2.2.6",
