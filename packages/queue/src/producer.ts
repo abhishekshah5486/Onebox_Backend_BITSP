@@ -31,6 +31,18 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
       return { jobId: envelope.jobId, duplicate: false };
     },
 
+    // Resolves true once every job has finished (completed, failed, or already removed).
+    async waitUntilProcessed(jobIds: string[], { timeoutMs = 120_000, intervalMs = 300 } = {}) {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const states = await Promise.all(jobIds.map((id) => bull.getJobState(id)));
+        if (states.every((state) => ['completed', 'failed', 'unknown'].includes(state)))
+          return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    },
+
     // Jobs not yet finished; producers use it to slow down when consumers fall behind.
     pending: () => bull.getJobCountByTypes('waiting', 'delayed', 'prioritized', 'active'),
 

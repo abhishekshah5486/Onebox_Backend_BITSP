@@ -134,6 +134,27 @@ describe('queue', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('waits until a batch of jobs has been processed', async () => {
+    const done: string[] = [];
+    const { producer } = setup(async (job) => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      done.push(job.jobId);
+    });
+    await producer.enqueue(envelope('w-1'));
+    await producer.enqueue(envelope('w-2'));
+
+    expect(await producer.waitUntilProcessed(['w-1', 'w-2', 'never-enqueued'])).toBe(true);
+    expect(done.sort()).toEqual(['w-1', 'w-2']);
+  });
+
+  it('gives up waiting after the timeout', async () => {
+    const { producer } = setup(() => new Promise((resolve) => setTimeout(resolve, 2000)));
+    await producer.enqueue(envelope('slow-1'));
+    expect(await producer.waitUntilProcessed(['slow-1'], { timeoutMs: 200, intervalMs: 50 })).toBe(
+      false,
+    );
+  });
+
   it('reports pending work for backpressure', async () => {
     const producer = createProducer<{ uid: number }>('ingest', {
       redisUrl: redis.url,
