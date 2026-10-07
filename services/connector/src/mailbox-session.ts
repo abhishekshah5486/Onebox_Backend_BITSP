@@ -11,6 +11,7 @@ import { planSync, readFolderState } from './sync-plan';
 export { AuthenticationFailedError } from './imap-client';
 
 const FETCH_BATCH = 50;
+const INBOX = { path: FOLDER, role: 'inbox' } as const;
 
 export interface SessionDeps {
   internal: InternalClient;
@@ -68,6 +69,7 @@ export async function runMailboxSession(
     let lastUid = 0;
     const fetchOptions = (backfill: boolean, byUid: boolean) => ({
       account,
+      folder: INBOX,
       uidValidity,
       byUid,
       backfill,
@@ -82,6 +84,7 @@ export async function runMailboxSession(
       await store.setCounts({
         userId: account.userId,
         accountId: account.id,
+        role: INBOX.role,
         folder: FOLDER,
         uidValidity,
         total: status.messages ?? 0,
@@ -135,7 +138,7 @@ export async function runMailboxSession(
       }
       lastUid = uidNext - 1;
       await internal.saveSyncState(account.id, FOLDER, { uidValidity, lastUid });
-      await store.setHistory(account.id, FOLDER, exists > initialBatch ? 'idle' : 'complete');
+      await store.setHistory(account.id, INBOX.role, exists > initialBatch ? 'idle' : 'complete');
       logger.info(
         { fetched: Math.min(exists, initialBatch), total: exists, reason: plan.reason },
         'initial sync finished',

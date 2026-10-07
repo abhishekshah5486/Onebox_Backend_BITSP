@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { folderRoleSchema, type FolderRole } from './folders';
 
 export const HISTORY_BATCH_SIZE = 50;
 
 // Fetch up to `count` messages older than `beforeUid`; uidValidity guards against a renumbered folder.
 export const historyPayloadSchema = z.object({
   folder: z.string().min(1),
+  role: folderRoleSchema,
   uidValidity: z.number().int().nonnegative(),
   beforeUid: z.number().int().positive(),
   count: z.number().int().min(1).max(200),
@@ -16,6 +18,8 @@ export type HistoryPayload = z.infer<typeof historyPayloadSchema>;
 export const mailboxCountsSchema = z.object({
   userId: z.string(),
   accountId: z.string(),
+  role: folderRoleSchema,
+  // The provider's actual IMAP path for this role, e.g. "[Gmail]/Sent Mail".
   folder: z.string(),
   uidValidity: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
@@ -36,6 +40,6 @@ export const historyStateSchema = z.object({
 export type HistoryState = z.infer<typeof historyStateSchema>;
 
 export const mailboxKeys = {
-  counts: (accountId: string, folder: string) => `mailbox:counts:${accountId}:${folder}`,
-  history: (accountId: string, folder: string) => `mailbox:history:${accountId}:${folder}`,
+  counts: (accountId: string, role: FolderRole) => `mailbox:counts:${accountId}:${role}`,
+  history: (accountId: string, role: FolderRole) => `mailbox:history:${accountId}:${role}`,
 };

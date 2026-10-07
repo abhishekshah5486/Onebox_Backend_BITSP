@@ -1,5 +1,6 @@
 import {
   createJobEnvelope,
+  type FolderRole,
   ingestDedupeKey,
   MAX_RAW_MESSAGE_BYTES,
   type IngestPayload,
@@ -8,10 +9,15 @@ import {
 import type { Logger } from '@onebox/logger';
 import type { Producer } from '@onebox/queue';
 import type { FetchMessageObject, ImapFlow } from 'imapflow';
-import { FOLDER } from './imap-client';
+
+export interface FolderRef {
+  path: string;
+  role: FolderRole;
+}
 
 export function toIngestEnvelope(
   account: { id: string; userId: string },
+  folder: FolderRef,
   uidValidity: number,
   message: FetchMessageObject,
   backfill: boolean,
@@ -20,14 +26,15 @@ export function toIngestEnvelope(
   return createJobEnvelope({
     jobId: ingestDedupeKey({
       accountId: account.id,
-      folder: FOLDER,
+      folder: folder.path,
       uidValidity,
       uid: message.uid,
     }),
     userId: account.userId,
     accountId: account.id,
     payload: {
-      folder: FOLDER,
+      folder: folder.path,
+      role: folder.role,
       uid: message.uid,
       uidValidity,
       flags: [...(message.flags ?? [])],
@@ -45,6 +52,7 @@ export async function fetchAndEnqueue(
   range: number[] | string,
   options: {
     account: { id: string; userId: string };
+    folder: FolderRef;
     uidValidity: number;
     byUid: boolean;
     backfill: boolean;
@@ -62,6 +70,7 @@ export async function fetchAndEnqueue(
     uids.push(message.uid);
     const envelope = toIngestEnvelope(
       options.account,
+      options.folder,
       options.uidValidity,
       message,
       options.backfill,

@@ -12,7 +12,7 @@ import { ensureIndexes, mailCollections } from './db/collections';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
 import { createMailboxService } from './mail/mailbox-service';
-import { backfillThreadSortKeys } from './threads/thread-store';
+import { migrateFolderRoles } from './threads/thread-store';
 
 const logger = createLogger({ service: 'mail', pretty: process.stdout.isTTY });
 const config = loadMailConfig();
@@ -21,8 +21,8 @@ const mongo = await connectMongo(config.MONGO_URI, config.MONGO_DB);
 const collections = mailCollections(mongo.db);
 await ensureIndexes(collections);
 logger.info({ db: config.MONGO_DB }, 'mongodb connected');
-const backfilled = await backfillThreadSortKeys(collections);
-if (backfilled > 0) logger.info({ threads: backfilled }, 'conversation sort keys backfilled');
+const migrated = await migrateFolderRoles(collections);
+if (migrated > 0) logger.info({ threads: migrated }, 'conversations tagged with folders');
 
 const cleanups: Cleanup[] = [];
 if (config.MAIL_ROLE !== 'api') {

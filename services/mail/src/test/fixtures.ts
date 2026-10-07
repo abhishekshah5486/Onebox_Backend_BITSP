@@ -48,6 +48,7 @@ export function ingestJob(
   const raw = rawMessage(spec);
   const payload: IngestPayload = {
     folder: 'INBOX',
+    role: 'inbox',
     uid,
     uidValidity: 1,
     flags: spec.flags ?? [],

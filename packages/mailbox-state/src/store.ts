@@ -1,4 +1,5 @@
 import {
+  type FolderRole,
   historyStateSchema,
   mailboxCountsSchema,
   mailboxKeys,
@@ -26,30 +27,30 @@ export function createMailboxStore(redis: Redis) {
   return {
     setCounts: (counts: MailboxCounts) =>
       redis.set(
-        mailboxKeys.counts(counts.accountId, counts.folder),
+        mailboxKeys.counts(counts.accountId, counts.role),
         JSON.stringify(counts),
         'EX',
         TTL_SECONDS,
       ),
 
-    getCounts: (accountId: string, folder: string) =>
-      read(redis, mailboxKeys.counts(accountId, folder), mailboxCountsSchema),
+    getCounts: (accountId: string, role: FolderRole) =>
+      read(redis, mailboxKeys.counts(accountId, role), mailboxCountsSchema),
 
     setHistory: (
       accountId: string,
-      folder: string,
+      role: FolderRole,
       status: HistoryState['status'],
       error: string | null = null,
     ) =>
       redis.set(
-        mailboxKeys.history(accountId, folder),
+        mailboxKeys.history(accountId, role),
         JSON.stringify({ status, error, updatedAt: new Date().toISOString() }),
         'EX',
         TTL_SECONDS,
       ),
 
-    getHistory: (accountId: string, folder: string) =>
-      read(redis, mailboxKeys.history(accountId, folder), historyStateSchema),
+    getHistory: (accountId: string, role: FolderRole) =>
+      read(redis, mailboxKeys.history(accountId, role), historyStateSchema),
   };
 }
 

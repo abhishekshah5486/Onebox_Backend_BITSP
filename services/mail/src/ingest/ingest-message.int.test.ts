@@ -4,7 +4,7 @@ import { startMongo, type TestMongo } from '@onebox/testing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ensureIndexes, mailCollections, type MailCollections } from '../db/collections';
 import { ingestJob } from '../test/fixtures';
-import { backfillThreadSortKeys } from '../threads/thread-store';
+import { migrateFolderRoles } from '../threads/thread-store';
 import { createIngestHandler } from './ingest-message';
 
 const context = { logger: createLogger({ service: 'test', level: 'silent' }), attempt: 1 };
@@ -168,14 +168,19 @@ describe('ingest handler', () => {
     expect(await threadOf('<a2@x>')).not.toBe(await threadOf('<a1@x>'));
   });
 
-  it('backfills the sort key on conversations stored before it existed', async () => {
+  it('tags mail stored before folders existed as inbox', async () => {
     const job = ingestJob({ uid: 42, messageId: '<old@x>' });
     await ingest(job, context);
-    await collections.threads.updateMany({}, { $unset: { lastUid: '' } });
+    await collections.messages.updateMany({}, { $unset: { role: '' } });
+    await collections.threads.updateMany({}, { $unset: { lastUid: '', folders: '' } });
 
-    expect(await backfillThreadSortKeys(collections)).toBe(1);
-    expect(await collections.threads.findOne({})).toMatchObject({ lastUid: 42 });
-    expect(await backfillThreadSortKeys(collections)).toBe(0);
+    expect(await migrateFolderRoles(collections)).toBe(1);
+    expect(await collections.threads.findOne({})).toMatchObject({
+      lastUid: 42,
+      folders: ['inbox'],
+    });
+    expect(await collections.messages.findOne({})).toMatchObject({ role: 'inbox' });
+    expect(await migrateFolderRoles(collections)).toBe(0);
   });
 
   it('rejects jobs without an account as non-retryable', async () => {

@@ -3,7 +3,7 @@ import { historyPayloadSchema, historyStateSchema, mailboxKeys } from './mailbox
 
 describe('mailbox contracts', () => {
   it('bounds history batch sizes', () => {
-    const base = { folder: 'INBOX', uidValidity: 7, beforeUid: 100 };
+    const base = { folder: 'INBOX', role: 'inbox', uidValidity: 7, beforeUid: 100 };
     expect(historyPayloadSchema.safeParse({ ...base, count: 50 }).success).toBe(true);
     expect(historyPayloadSchema.safeParse({ ...base, count: 0 }).success).toBe(false);
     expect(historyPayloadSchema.safeParse({ ...base, count: 500 }).success).toBe(false);
@@ -19,7 +19,7 @@ describe('mailbox contracts', () => {
   });
 
   it('namespaces redis keys per account and folder', () => {
-    expect(mailboxKeys.counts('a1', 'INBOX')).toBe('mailbox:counts:a1:INBOX');
-    expect(mailboxKeys.history('a1', 'INBOX')).not.toBe(mailboxKeys.counts('a1', 'INBOX'));
+    expect(mailboxKeys.counts('a1', 'inbox')).toBe('mailbox:counts:a1:inbox');
+    expect(mailboxKeys.history('a1', 'inbox')).not.toBe(mailboxKeys.counts('a1', 'inbox'));
   });
 });

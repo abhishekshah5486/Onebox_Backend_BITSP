@@ -102,6 +102,36 @@ export async function mergeRelatedThreads(
   return winner;
 }
 
+type ThreadMessage = Pick<
+  MessageDoc,
+  | '_id'
+  | 'userId'
+  | 'accountId'
+  | 'role'
+  | 'messageIdHeader'
+  | 'subject'
+  | 'from'
+  | 'to'
+  | 'cc'
+  | 'isRead'
+  | 'isStarred'
+  | 'attachments'
+  | 'snippet'
+  | 'receivedAt'
+  | 'uid'
+>;
+
+// The same message can sit in two folders (mail sent to yourself is in Sent and Inbox); count it once.
+export function uniqueMessages<T extends Pick<MessageDoc, '_id' | 'messageIdHeader'>>(docs: T[]) {
+  const seen = new Set<string>();
+  return docs.filter((doc) => {
+    const key = doc.messageIdHeader ?? doc._id;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function participantsOf(docs: Pick<MessageDoc, 'from' | 'to' | 'cc'>[]): Address[] {
   const seen = new Map<string, Address>();
   for (const doc of docs) {
@@ -114,28 +144,14 @@ function participantsOf(docs: Pick<MessageDoc, 'from' | 'to' | 'cc'>[]): Address
 
 // Recomputed from the messages every time, so retries and replays can never drift the counts.
 export async function refreshThread({ messages, threads }: MailCollections, threadId: string) {
-  const docs = await messages
+  const all = await messages
     .find({ threadId })
     .sort({ receivedAt: 1, uid: 1 })
-    .project<
-      Pick<
-        MessageDoc,
-        | 'userId'
-        | 'accountId'
-        | 'subject'
-        | 'from'
-        | 'to'
-        | 'cc'
-        | 'isRead'
-        | 'isStarred'
-        | 'attachments'
-        | 'snippet'
-        | 'receivedAt'
-        | 'uid'
-      >
-    >({
+    .project<ThreadMessage>({
       userId: 1,
       accountId: 1,
+      role: 1,
+      messageIdHeader: 1,
       subject: 1,
       from: 1,
       to: 1,
@@ -148,6 +164,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
       uid: 1,
     })
     .toArray();
+  const docs = uniqueMessages(all);
   if (docs.length === 0) {
     await threads.deleteOne({ _id: threadId });
     return;
@@ -174,6 +191,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
         snippet: last.snippet,
         lastFrom: last.from,
         lastMessageAt: last.receivedAt,
+        folders: [...new Set(all.map((doc) => doc.role))].sort(),
         lastUid: last.uid,
         updatedAt: now,
       },
@@ -183,11 +201,15 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
   );
 }
 
-// Conversations stored before lastUid existed get it recomputed once, at startup.
-export async function backfillThreadSortKeys(collections: MailCollections): Promise<number> {
-  const missing = await collections.threads
-    .find({ lastUid: { $exists: false } }, { projection: { _id: 1 } })
+// Mail stored before folders existed all came from the inbox; it is tagged once, at startup.
+export async function migrateFolderRoles(collections: MailCollections): Promise<number> {
+  await collections.messages.updateMany({ role: { $exists: false } }, { $set: { role: 'inbox' } });
+  const stale = await collections.threads
+    .find(
+      { $or: [{ folders: { $exists: false } }, { lastUid: { $exists: false } }] },
+      { projection: { _id: 1 } },
+    )
     .toArray();
-  for (const thread of missing) await refreshThread(collections, thread._id);
-  return missing.length;
+  for (const thread of stale) await refreshThread(collections, thread._id);
+  return stale.length;
 }

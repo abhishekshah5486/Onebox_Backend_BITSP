@@ -262,6 +262,7 @@ describe('mail api', () => {
       await store.setCounts({
         userId,
         accountId,
+        role: 'inbox',
         folder: 'INBOX',
         uidValidity: 1,
         total,
@@ -333,7 +334,7 @@ describe('mail api', () => {
       const userId = randomUUID();
       const accountId = await seed(userId, 1);
       await withCounts(userId, accountId, 1);
-      await store.setHistory(accountId, 'INBOX', 'complete');
+      await store.setHistory(accountId, 'inbox', 'complete');
 
       const res = await requestHistory(userId, accountId);
       expect(res.json()).toMatchObject({ hasMoreOnServer: false, history: { status: 'complete' } });

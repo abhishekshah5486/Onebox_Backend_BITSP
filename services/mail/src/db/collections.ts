@@ -1,3 +1,4 @@
+import type { FolderRole } from '@onebox/contracts';
 import type { Collection, Db } from 'mongodb';
 
 export interface Address {
@@ -19,6 +20,7 @@ export interface MessageDoc {
   accountId: string;
   threadId: string;
   folder: string;
+  role: FolderRole;
   uid: number;
   uidValidity: number;
   messageIdHeader: string | null;
@@ -58,6 +60,8 @@ export interface ThreadDoc {
   snippet: string;
   lastFrom: Address | null;
   lastMessageAt: Date;
+  // Every folder holding at least one of its messages, so one conversation can show in several.
+  folders: FolderRole[];
   // UID of the newest message; orders conversations that share the same second.
   lastUid: number;
   createdAt: Date;
@@ -81,9 +85,16 @@ export async function ensureIndexes({ messages, threads }: MailCollections): Pro
     messages.createIndex({ userId: 1, threadId: 1, receivedAt: 1 }),
     messages.createIndex({ userId: 1, accountId: 1, messageIdHeader: 1 }),
     messages.createIndex({ userId: 1, receivedAt: -1 }),
-    messages.createIndex({ userId: 1, accountId: 1, folder: 1, uidValidity: 1, uid: 1 }),
-    threads.createIndex({ userId: 1, lastMessageAt: -1, lastUid: -1, _id: -1 }),
-    threads.createIndex({ userId: 1, accountId: 1, lastMessageAt: -1, lastUid: -1, _id: -1 }),
+    messages.createIndex({ userId: 1, accountId: 1, role: 1, uidValidity: 1, uid: 1 }),
+    threads.createIndex({ userId: 1, folders: 1, lastMessageAt: -1, lastUid: -1, _id: -1 }),
+    threads.createIndex({
+      userId: 1,
+      accountId: 1,
+      folders: 1,
+      lastMessageAt: -1,
+      lastUid: -1,
+      _id: -1,
+    }),
     threads.createIndex({ userId: 1, accountId: 1, normalizedSubject: 1, lastMessageAt: -1 }),
   ]);
 }

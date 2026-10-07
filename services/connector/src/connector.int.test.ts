@@ -184,14 +184,15 @@ describe('imap connector', () => {
       timeout: 15_000,
     });
     expect(await seenFlags()).toEqual({ 'Old one': false, 'Old two': false, 'Old three': false });
+    expect(jobs.every((job) => job.payload.role === 'inbox')).toBe(true);
     await vi.waitFor(async () =>
-      expect(await store.getCounts('acc-1', 'INBOX')).toMatchObject({
+      expect(await store.getCounts('acc-1', 'inbox')).toMatchObject({
         total: 3,
         unread: 3,
         userId: 'user-1',
       }),
     );
-    expect(await store.getHistory('acc-1', 'INBOX')).toMatchObject({ status: 'idle' });
+    expect(await store.getHistory('acc-1', 'inbox')).toMatchObject({ status: 'idle' });
     expect(statuses).toContainEqual({ accountId: 'acc-1', status: 'CONNECTED' });
   });
 
@@ -205,7 +206,7 @@ describe('imap connector', () => {
     expect((await seenFlags())['Old two']).toBe(false);
     await vi.waitFor(
       async () =>
-        expect(await store.getCounts('acc-1', 'INBOX')).toMatchObject({ total: 4, unread: 3 }),
+        expect(await store.getCounts('acc-1', 'inbox')).toMatchObject({ total: 4, unread: 3 }),
       {
         timeout: 10_000,
       },
@@ -226,13 +227,19 @@ describe('imap connector', () => {
         jobId: `history-${oldestFetched}`,
         userId: 'user-1',
         accountId: 'acc-1',
-        payload: { folder: 'INBOX', uidValidity, beforeUid: oldestFetched, count: 50 },
+        payload: {
+          folder: 'INBOX',
+          role: 'inbox',
+          uidValidity,
+          beforeUid: oldestFetched,
+          count: 50,
+        },
       }),
     );
 
     await vi.waitFor(
       async () =>
-        expect(await store.getHistory('acc-1', 'INBOX')).toMatchObject({ status: 'complete' }),
+        expect(await store.getHistory('acc-1', 'inbox')).toMatchObject({ status: 'complete' }),
       {
         timeout: 15_000,
       },

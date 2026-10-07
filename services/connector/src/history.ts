@@ -23,13 +23,13 @@ export function createHistoryHandler(deps: HistoryDeps) {
   return async (envelope: JobEnvelope<HistoryPayload>, { logger }: JobContext) => {
     const { accountId, userId, payload } = envelope;
     if (!accountId) throw new ValidationError('History job is missing accountId');
-    const { folder, uidValidity, beforeUid, count } = payload;
+    const { folder, role, uidValidity, beforeUid, count } = payload;
 
     if (beforeUid <= 1) {
-      await store.setHistory(accountId, folder, 'complete');
+      await store.setHistory(accountId, role, 'complete');
       return;
     }
-    await store.setHistory(accountId, folder, 'fetching');
+    await store.setHistory(accountId, role, 'fetching');
 
     let client: ImapFlow | undefined;
     try {
@@ -41,11 +41,11 @@ export function createHistoryHandler(deps: HistoryDeps) {
         if (Number(client.mailbox && client.mailbox.uidValidity) !== uidValidity) {
           await store.setHistory(
             accountId,
-            folder,
+            role,
             'error',
             'The mailbox was reorganised on the server and is being re-synced.',
           );
-          logger.warn({ accountId }, 'uidvalidity changed, skipping history fetch');
+          logger.warn({ accountId, folder }, 'uidvalidity changed, skipping history fetch');
           return;
         }
         const older = (
@@ -56,6 +56,7 @@ export function createHistoryHandler(deps: HistoryDeps) {
         if (batch.length > 0) {
           ({ jobIds } = await fetchAndEnqueue(client, batch, {
             account: { id: accountId, userId },
+            folder: { path: folder, role },
             uidValidity,
             byUid: true,
             backfill: true,
@@ -69,19 +70,19 @@ export function createHistoryHandler(deps: HistoryDeps) {
 
       // Only report done once the mail is actually stored, so the next page is ready to show.
       await producer.waitUntilProcessed(jobIds, { timeoutMs: deps.ingestTimeoutMs ?? 120_000 });
-      await store.setHistory(accountId, folder, remaining > 0 ? 'idle' : 'complete');
-      logger.info({ accountId, fetched: jobIds.length, remaining }, 'older mail fetched');
+      await store.setHistory(accountId, role, remaining > 0 ? 'idle' : 'complete');
+      logger.info({ accountId, role, fetched: jobIds.length, remaining }, 'older mail fetched');
     } catch (err) {
       if (err instanceof AuthenticationFailedError) {
         await store.setHistory(
           accountId,
-          folder,
+          role,
           'error',
           'The mail server rejected the stored password. Reconnect the account in Settings.',
         );
         throw new ValidationError('Mailbox credentials rejected', { cause: err });
       }
-      await store.setHistory(accountId, folder, 'error', 'Could not fetch older mail. Try again.');
+      await store.setHistory(accountId, role, 'error', 'Could not fetch older mail. Try again.');
       throw err;
     } finally {
       if (client?.usable) await client.logout().catch(() => client?.close());

@@ -35,8 +35,9 @@ describe('ingestPayloadSchema', () => {
     rawSource: Buffer.from('Subject: hi\r\n\r\nbody').toString('base64'),
   };
 
-  it('accepts a well-formed payload', () => {
-    expect(ingestPayloadSchema.parse(valid)).toEqual(valid);
+  it('accepts a well-formed payload, defaulting the folder role to inbox', () => {
+    expect(ingestPayloadSchema.parse(valid)).toEqual({ ...valid, role: 'inbox' });
+    expect(ingestPayloadSchema.parse({ ...valid, role: 'sent' }).role).toBe('sent');
   });
 
   it.each([{ uid: 0 }, { rawSource: 'not base64!' }, { internalDate: 'yesterday' }])(

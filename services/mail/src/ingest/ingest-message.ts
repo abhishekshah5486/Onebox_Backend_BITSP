@@ -48,6 +48,7 @@ export function createIngestHandler(collections: MailCollections) {
         accountId,
         threadId,
         folder: payload.folder,
+        role: payload.role,
         uid: payload.uid,
         uidValidity: payload.uidValidity,
         ...parsed,
@@ -71,7 +72,7 @@ export function createIngestHandler(collections: MailCollections) {
     );
     await refreshThread(collections, finalThreadId);
     logger[payload.backfill ? 'debug' : 'info'](
-      { threadId: finalThreadId, folder: payload.folder, backfill: payload.backfill },
+      { threadId: finalThreadId, role: payload.role, backfill: payload.backfill },
       'message stored',
     );
   };
