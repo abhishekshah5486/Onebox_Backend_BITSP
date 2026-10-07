@@ -1,0 +1,1 @@
+ALTER TYPE "accounts"."account_status" ADD VALUE 'TLS_ERROR' BEFORE 'DISABLED';

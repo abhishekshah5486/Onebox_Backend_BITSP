@@ -13,7 +13,13 @@ import {
 export const accountsSchema = pgSchema('accounts');
 
 export const PROVIDERS = ['GMAIL', 'OUTLOOK', 'IMAP'] as const;
-export const ACCOUNT_STATUSES = ['CONNECTED', 'AUTH_FAILED', 'UNREACHABLE', 'DISABLED'] as const;
+export const ACCOUNT_STATUSES = [
+  'CONNECTED',
+  'AUTH_FAILED',
+  'UNREACHABLE',
+  'TLS_ERROR',
+  'DISABLED',
+] as const;
 
 export const providerEnum = accountsSchema.enum('provider', PROVIDERS);
 export const accountStatusEnum = accountsSchema.enum('account_status', ACCOUNT_STATUSES);
