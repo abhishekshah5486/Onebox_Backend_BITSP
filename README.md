@@ -26,7 +26,9 @@ npm run test:int    # integration tests (needs Docker / .env)
 | api-gateway | 4000 | Routing, JWT checks, Redis rate limits            |
 | auth        | 4001 | Users, sessions, signing keys (`identity` schema) |
 | accounts    | 4002 | Connected mailboxes (`accounts` schema)           |
+| mail        | 4003 | Ingest worker + conversations API (MongoDB)       |
 | settings    | 4004 | Preferences and integrations (`settings` schema)  |
+| connector   | 4005 | IMAP IDLE sessions and backfill into `ingest`     |
 
 `npm run dev` starts every service with live reload (needs `.env` and `npm run infra:up`).
 
@@ -47,6 +49,13 @@ All routes except `auth` require `Authorization: Bearer <accessToken>`.
 | GET, PATCH, DELETE | `/settings/integrations/:id`               | Manage an integration                                                                   |
 | POST               | `/settings/integrations/:id/test`          | Send a test message                                                                     |
 | POST               | `/settings/integrations/:id/rotate-secret` | New webhook signing secret (shown once)                                                 |
+| GET                | `/mail/threads?filter=&cursor=`            | Unified inbox (`all`, `unread`, `starred`), newest first, cursor-paged                  |
+| GET, PATCH         | `/mail/threads/:id`                        | Read a conversation; mark read/unread, star/unstar                                      |
+| GET                | `/mail/stats`                              | Unread and starred counts                                                               |
+
+### Ingestion pipeline
+
+connector (IMAP IDLE per mailbox, Redis lease) → BullMQ `ingest` queue (retries, `ingest-dlq`) → mail worker (parse, sanitize, thread) → MongoDB → mail API. Backfill never marks mail as read; new mail is marked read only if the user's preference says so. Every job id is a dedupe key, so replays are harmless.
 
 Errors always look like `{ "error": { "code", "message", "details?" } }`.
 
