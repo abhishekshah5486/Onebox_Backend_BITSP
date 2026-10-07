@@ -7,4 +7,6 @@ resources:
   - auth.yaml
   - accounts.yaml
   - settings.yaml
+  - mail.yaml
+  - connector.yaml
   - api-gateway.yaml

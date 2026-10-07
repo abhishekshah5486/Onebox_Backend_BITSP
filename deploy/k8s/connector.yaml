@@ -1,35 +1,40 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api-gateway
+  name: connector
 spec:
-  replicas: 2
+  replicas: 1
   selector:
-    matchLabels: { app: api-gateway }
+    matchLabels: { app: connector }
   template:
     metadata:
-      labels: { app: api-gateway }
+      labels: { app: connector }
     spec:
       # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
       enableServiceLinks: false
       securityContext: { runAsNonRoot: true, runAsUser: 1000 }
       containers:
-        - name: api-gateway
-          image: onebox/api-gateway:dev
+        - name: connector
+          image: onebox/connector:dev
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 4000 }]
+          ports: [{ containerPort: 4005 }]
           env:
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
             - { name: REDIS_URL, value: 'redis://redis:6379' }
-            - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
             - { name: ACCOUNTS_SERVICE_URL, value: 'http://accounts:4002' }
             - { name: SETTINGS_SERVICE_URL, value: 'http://settings:4004' }
-            - { name: MAIL_SERVICE_URL, value: 'http://mail:4003' }
+          # Startup covers the remote database connect + migrations.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4005 }
+            periodSeconds: 2
+            failureThreshold: 45
           readinessProbe:
-            httpGet: { path: /health/ready, port: 4000 }
+            httpGet: { path: /health/ready, port: 4005 }
             periodSeconds: 10
             timeoutSeconds: 6
           livenessProbe:
-            httpGet: { path: /health/live, port: 4000 }
+            httpGet: { path: /health/live, port: 4005 }
             periodSeconds: 15
           resources:
             requests: { cpu: 50m, memory: 96Mi }
@@ -42,7 +47,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: api-gateway
+  name: accounts
 spec:
-  selector: { app: api-gateway }
-  ports: [{ port: 4000 }]
+  selector: { app: connector }
+  ports: [{ port: 4005 }]
