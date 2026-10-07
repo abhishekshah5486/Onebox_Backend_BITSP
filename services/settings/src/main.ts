@@ -1,4 +1,4 @@
-import { createRemoteTokenVerifier } from '@onebox/auth-kit';
+import { createRemoteTokenVerifier, deriveInternalToken } from '@onebox/auth-kit';
 import { createPgClient } from '@onebox/db-pg';
 import { startServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
@@ -28,6 +28,7 @@ const app = buildApp({
       allowPrivateHosts: config.ALLOW_PRIVATE_WEBHOOK_HOSTS,
     }),
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
+    internalToken: deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
   },
 });
 await startServer(app, { port: config.PORT, cleanups: [pg.close] });

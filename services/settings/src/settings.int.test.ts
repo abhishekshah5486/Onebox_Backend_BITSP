@@ -74,6 +74,7 @@ beforeAll(async () => {
               : import('@onebox/net-guard').then((m) => m.safeFetch(url, init)),
         }),
         verifyToken,
+        internalToken: 'internal-secret',
       },
     });
   app = build(true);
@@ -168,6 +169,30 @@ describe('preferences', () => {
       expect(res.statusCode).toBe(400);
     },
   );
+});
+
+describe('internal preferences', () => {
+  it('returns a user preferences only with the internal token', async () => {
+    const userId = randomUUID();
+    await app.inject({
+      method: 'PATCH',
+      url: '/settings/preferences',
+      headers: as(userId),
+      payload: { markSeenOnFetch: false },
+    });
+
+    const denied = await app.inject({
+      url: `/internal/preferences/${userId}`,
+      headers: as(userId),
+    });
+    expect(denied.statusCode).toBe(401);
+
+    const res = await app.inject({
+      url: `/internal/preferences/${userId}`,
+      headers: { 'x-onebox-internal-token': 'internal-secret' },
+    });
+    expect(res.json()).toMatchObject({ markSeenOnFetch: false });
+  });
 });
 
 describe('integrations', () => {

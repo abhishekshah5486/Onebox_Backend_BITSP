@@ -1,4 +1,4 @@
-import { requireUser, type TokenVerifier } from '@onebox/auth-kit';
+import { requireInternal, requireUser, type TokenVerifier } from '@onebox/auth-kit';
 import { createServer, registerHealthRoutes } from '@onebox/http';
 import type { Logger } from '@onebox/logger';
 import type { IntegrationService } from './integrations/integration-service';
@@ -13,6 +13,7 @@ export interface AppDeps {
     preferences: PreferencesService;
     integrations: IntegrationService;
     verifyToken: TokenVerifier;
+    internalToken: string;
   };
 }
 
@@ -30,6 +31,12 @@ export function buildApp(deps: AppDeps) {
         registerIntegrationRoutes(scope, routes.integrations);
       },
       { prefix: '/settings' },
+    );
+    // Never routed by the gateway; the connector reads a user's preferences here.
+    app.get<{ Params: { userId: string } }>(
+      '/internal/preferences/:userId',
+      { preHandler: requireInternal(routes.internalToken) },
+      async (request) => routes.preferences.get(request.params.userId),
     );
   }
   return app;
