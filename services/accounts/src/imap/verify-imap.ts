@@ -29,12 +29,45 @@ const FAILURE_MESSAGES: Record<VerifyFailure, string> = {
   TLS_ERROR: 'The mail server certificate could not be verified',
 };
 
-function classify(err: unknown): VerifyFailure {
-  const error = err as { authenticationFailed?: boolean; code?: string; message?: string };
-  if (error.authenticationFailed) return 'AUTH_FAILED';
+// These providers refuse the account's normal password for IMAP and need an app password.
+const APP_PASSWORD_HOSTS: Record<string, string> = {
+  'imap.gmail.com': 'Gmail',
+  'imap.mail.me.com': 'iCloud',
+  'imap.mail.yahoo.com': 'Yahoo',
+};
+
+interface ImapError {
+  authenticationFailed?: boolean;
+  code?: string;
+  message?: string;
+  responseText?: string;
+}
+
+export function describeFailure(
+  err: unknown,
+  host: string,
+): { reason: VerifyFailure; message: string } {
+  const error = err as ImapError;
+  if (error.authenticationFailed) {
+    const provider = APP_PASSWORD_HOSTS[host];
+    if (/application-specific password/i.test(error.responseText ?? '')) {
+      return {
+        reason: 'AUTH_FAILED',
+        message: `${provider ?? 'This provider'} requires an app password for mail apps. Create one and use it instead of your normal password.`,
+      };
+    }
+    return {
+      reason: 'AUTH_FAILED',
+      message: provider
+        ? `${provider} rejected the sign-in. Use an app password (not your normal password) and check the email address.`
+        : FAILURE_MESSAGES.AUTH_FAILED,
+    };
+  }
   const text = `${error.code ?? ''} ${error.message ?? ''}`;
-  if (/CERT|SSL|TLS|self[- ]signed|certificate/i.test(text)) return 'TLS_ERROR';
-  return 'UNREACHABLE';
+  const reason: VerifyFailure = /CERT|SSL|TLS|self[- ]signed|certificate/i.test(text)
+    ? 'TLS_ERROR'
+    : 'UNREACHABLE';
+  return { reason, message: FAILURE_MESSAGES[reason] };
 }
 
 export function createImapVerifier({
@@ -74,12 +107,14 @@ export function createImapVerifier({
       );
       return { ok: true };
     } catch (err) {
-      const reason = classify(err);
+      const { reason, message } = describeFailure(err, host);
+      // The server's reply never contains the password and is the key to diagnosing failures.
+      const serverResponse = (err as ImapError).responseText?.slice(0, 200);
       logger.warn(
-        { host, port, reason, durationMs: Date.now() - startedAt },
+        { host, port, reason, serverResponse, durationMs: Date.now() - startedAt },
         'imap verification failed',
       );
-      return { ok: false, reason, message: FAILURE_MESSAGES[reason] };
+      return { ok: false, reason, message };
     } finally {
       client.close();
     }
