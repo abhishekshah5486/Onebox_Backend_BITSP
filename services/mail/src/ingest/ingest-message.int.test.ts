@@ -115,6 +115,35 @@ describe('ingest handler', () => {
     expect(await collections.threads.countDocuments()).toBe(1);
   });
 
+  it('threads related messages correctly even when they are ingested concurrently', async () => {
+    for (let i = 0; i < 15; i++) {
+      await Promise.all([
+        ingest(ingestJob({ subject: `Race ${i}`, messageId: `<race-${i}-a@x>` }), context),
+        ingest(
+          ingestJob({
+            subject: `Re: Race ${i}`,
+            messageId: `<race-${i}-b@x>`,
+            inReplyTo: `<race-${i}-a@x>`,
+          }),
+          context,
+        ),
+        ingest(
+          ingestJob({
+            subject: `Re: Race ${i}`,
+            messageId: `<race-${i}-c@x>`,
+            references: `<race-${i}-a@x> <race-${i}-b@x>`,
+          }),
+          context,
+        ),
+      ]);
+      const ids = await Promise.all(['a', 'b', 'c'].map((s) => threadOf(`<race-${i}-${s}@x>`)));
+      expect(new Set(ids).size, `race ${i}`).toBe(1);
+    }
+    const threads = await collections.threads.find({ normalizedSubject: /^race / }).toArray();
+    expect(threads).toHaveLength(15);
+    expect(threads.every((thread) => thread.messageCount === 3)).toBe(true);
+  });
+
   it('falls back to the subject only for replies', async () => {
     await ingest(ingestJob({ subject: 'Weekly sync', messageId: '<w1@x>' }), context);
     await ingest(ingestJob({ subject: 'RE: Weekly sync', messageId: '<w2@x>' }), context);

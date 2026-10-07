@@ -58,6 +58,50 @@ export async function resolveThreadId({ messages, threads }: MailCollections, in
   return input.dedupeKey;
 }
 
+// Two related messages ingested in parallel can each start a thread before seeing the other.
+// Whichever finishes second finds the first here, and both converge on the same winner.
+export async function mergeRelatedThreads(
+  collections: MailCollections,
+  input: Pick<
+    ThreadLookup,
+    'userId' | 'accountId' | 'dedupeKey' | 'messageIdHeader' | 'inReplyTo' | 'references'
+  >,
+  threadId: string,
+): Promise<string> {
+  const parents = [
+    ...new Set([input.inReplyTo, ...input.references].filter((id): id is string => !!id)),
+  ];
+  const links = [
+    ...(parents.length > 0 ? [{ messageIdHeader: { $in: parents } }] : []),
+    ...(input.messageIdHeader
+      ? [{ inReplyTo: input.messageIdHeader }, { references: input.messageIdHeader }]
+      : []),
+  ];
+  if (links.length === 0) return threadId;
+
+  const related = await collections.messages
+    .find(
+      {
+        userId: input.userId,
+        accountId: input.accountId,
+        _id: { $ne: input.dedupeKey },
+        $or: links,
+      },
+      { projection: { threadId: 1 } },
+    )
+    .toArray();
+  const threadIds = [...new Set([threadId, ...related.map((message) => message.threadId)])].sort();
+  if (threadIds.length === 1) return threadId;
+
+  const [winner, ...losers] = threadIds as [string, ...string[]];
+  await collections.messages.updateMany(
+    { threadId: { $in: losers } },
+    { $set: { threadId: winner } },
+  );
+  await Promise.all(losers.map((loser) => refreshThread(collections, loser)));
+  return winner;
+}
+
 function participantsOf(docs: Pick<MessageDoc, 'from' | 'to' | 'cc'>[]): Address[] {
   const seen = new Map<string, Address>();
   for (const doc of docs) {

@@ -3,7 +3,7 @@ import { isDuplicateKeyError } from '@onebox/db-mongo';
 import { ValidationError } from '@onebox/errors';
 import type { JobContext } from '@onebox/queue';
 import type { MailCollections } from '../db/collections';
-import { refreshThread, resolveThreadId } from '../threads/thread-store';
+import { mergeRelatedThreads, refreshThread, resolveThreadId } from '../threads/thread-store';
 import { parseMessage } from './parse';
 
 export function createIngestHandler(collections: MailCollections) {
@@ -64,9 +64,14 @@ export function createIngestHandler(collections: MailCollections) {
       if (!isDuplicateKeyError(err)) throw err;
     }
 
-    await refreshThread(collections, threadId);
+    const finalThreadId = await mergeRelatedThreads(
+      collections,
+      { userId, accountId, dedupeKey, ...parsed },
+      threadId,
+    );
+    await refreshThread(collections, finalThreadId);
     logger[payload.backfill ? 'debug' : 'info'](
-      { threadId, folder: payload.folder, backfill: payload.backfill },
+      { threadId: finalThreadId, folder: payload.folder, backfill: payload.backfill },
       'message stored',
     );
   };
