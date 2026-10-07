@@ -7,6 +7,7 @@ const schema = z.object({
   AUTH_SERVICE_URL: z.url().default('http://localhost:4001'),
   ACCOUNTS_SERVICE_URL: z.url().default('http://localhost:4002'),
   SETTINGS_SERVICE_URL: z.url().default('http://localhost:4004'),
+  MAIL_SERVICE_URL: z.url().default('http://localhost:4003'),
 });
 
 export type GatewayConfig = z.infer<typeof schema>;

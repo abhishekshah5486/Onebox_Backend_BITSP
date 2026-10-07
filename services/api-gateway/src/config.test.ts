@@ -9,6 +9,7 @@ describe('loadGatewayConfig', () => {
       AUTH_SERVICE_URL: 'http://localhost:4001',
       ACCOUNTS_SERVICE_URL: 'http://localhost:4002',
       SETTINGS_SERVICE_URL: 'http://localhost:4004',
+      MAIL_SERVICE_URL: 'http://localhost:4003',
     });
   });
 

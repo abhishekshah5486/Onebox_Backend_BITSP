@@ -35,5 +35,11 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       rewritePrefix: '/settings',
       access: 'authenticated',
     },
+    {
+      prefix: '/api/v1/mail',
+      url: config.MAIL_SERVICE_URL,
+      rewritePrefix: '/mail',
+      access: 'authenticated',
+    },
   ];
 }

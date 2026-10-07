@@ -14,7 +14,11 @@ describe('defineUpstreams', () => {
 
   it('protects every other upstream', () => {
     const others = upstreams.filter((u) => u.prefix !== '/api/v1/auth');
-    expect(others.map((u) => u.prefix)).toEqual(['/api/v1/accounts', '/api/v1/settings']);
+    expect(others.map((u) => u.prefix)).toEqual([
+      '/api/v1/accounts',
+      '/api/v1/settings',
+      '/api/v1/mail',
+    ]);
     expect(others.every((u) => u.access === 'authenticated')).toBe(true);
   });
 
