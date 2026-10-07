@@ -9,7 +9,8 @@ const schema = z.object({
   ACCOUNTS_SERVICE_URL: z.url().default('http://localhost:4002'),
   SETTINGS_SERVICE_URL: z.url().default('http://localhost:4004'),
   ALLOW_PRIVATE_MAIL_HOSTS: envBoolean.default(false),
-  BACKFILL_DAYS: z.coerce.number().int().min(0).max(365).default(30),
+  // Newest messages fetched on first sync; older mail is fetched page by page on request.
+  INITIAL_BATCH: z.coerce.number().int().min(1).max(500).default(50),
   RECONCILE_INTERVAL_MS: z.coerce.number().int().min(1000).default(15_000),
   // Fetching pauses while more than this many ingest jobs are waiting (backpressure).
   INGEST_HIGH_WATERMARK: z.coerce.number().int().min(10).default(500),

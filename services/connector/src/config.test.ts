@@ -11,7 +11,7 @@ describe('loadConnectorConfig', () => {
       }),
     ).toMatchObject({
       PORT: 4005,
-      BACKFILL_DAYS: 30,
+      INITIAL_BATCH: 50,
       ALLOW_PRIVATE_MAIL_HOSTS: false,
       INGEST_HIGH_WATERMARK: 500,
     });
