@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROFILE=onebox
-SERVICES=(auth api-gateway)
+SERVICES=(auth accounts settings api-gateway)
 CTX="$PROFILE"
 
 minikube -p "$PROFILE" status >/dev/null 2>&1 ||
