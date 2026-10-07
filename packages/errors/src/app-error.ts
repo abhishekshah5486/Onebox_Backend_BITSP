@@ -37,6 +37,7 @@ export class UnauthorizedError extends defineError('UNAUTHORIZED', 401) {}
 export class ForbiddenError extends defineError('FORBIDDEN', 403) {}
 export class NotFoundError extends defineError('NOT_FOUND', 404) {}
 export class ConflictError extends defineError('CONFLICT', 409) {}
+export class UnprocessableError extends defineError('UNPROCESSABLE', 422) {}
 export class RateLimitedError extends defineError('RATE_LIMITED', 429) {}
 export class ExternalServiceError extends defineError('EXTERNAL_SERVICE_ERROR', 502, true) {}
 export class ServiceUnavailableError extends defineError('SERVICE_UNAVAILABLE', 503, true) {}

@@ -5,6 +5,7 @@ import {
   ExternalServiceError,
   NotFoundError,
   ServiceUnavailableError,
+  UnprocessableError,
   ValidationError,
   isAppError,
 } from './app-error';
@@ -14,6 +15,7 @@ describe('AppError subclasses', () => {
     [new ValidationError('bad'), 'VALIDATION_FAILED', 400, false],
     [new NotFoundError('missing'), 'NOT_FOUND', 404, false],
     [new ConflictError('dup'), 'CONFLICT', 409, false],
+    [new UnprocessableError('bad mailbox'), 'UNPROCESSABLE', 422, false],
     [new ExternalServiceError('llm down'), 'EXTERNAL_SERVICE_ERROR', 502, true],
     [new ServiceUnavailableError('busy'), 'SERVICE_UNAVAILABLE', 503, true],
   ])('%s has code %s, status %i, retryable %s', (error, code, statusCode, retryable) => {
