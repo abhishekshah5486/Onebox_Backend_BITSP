@@ -2,7 +2,7 @@ import { NotFoundError } from '@onebox/errors';
 import type { Filter } from 'mongodb';
 import type { MailCollections, MessageDoc, ThreadDoc } from '../db/collections';
 import { refreshThread } from '../threads/thread-store';
-import { decodeCursor, encodeCursor } from './cursor';
+import { pageThreads, type Direction } from './paging';
 
 export type ThreadFilter = 'all' | 'unread' | 'starred';
 
@@ -10,6 +10,7 @@ export interface ListThreadsInput {
   accountId?: string | undefined;
   filter?: ThreadFilter | undefined;
   cursor?: string | undefined;
+  direction?: Direction | undefined;
   limit?: number | undefined;
 }
 
@@ -59,36 +60,13 @@ export function createMailService(collections: MailCollections) {
   }
 
   return {
-    async listThreads(
-      userId: string,
-      { accountId, filter = 'all', cursor, limit = 50 }: ListThreadsInput,
-    ) {
+    async listThreads(userId: string, { accountId, filter = 'all', ...page }: ListThreadsInput) {
       const query: Filter<ThreadDoc> = { userId };
       if (accountId) query.accountId = accountId;
       if (filter === 'unread') query.unreadCount = { $gt: 0 };
       if (filter === 'starred') query.isStarred = true;
-      if (cursor) {
-        const { lastMessageAt, id } = decodeCursor(cursor);
-        query.$or = [
-          { lastMessageAt: { $lt: lastMessageAt } },
-          { lastMessageAt, _id: { $lt: id } },
-        ];
-      }
-
-      const page = await threads
-        .find(query)
-        .sort({ lastMessageAt: -1, _id: -1 })
-        .limit(limit + 1)
-        .toArray();
-      const items = page.slice(0, limit);
-      const last = items.at(-1);
-      return {
-        items: items.map(toThreadView),
-        nextCursor:
-          page.length > limit && last
-            ? encodeCursor({ lastMessageAt: last.lastMessageAt, id: last._id })
-            : null,
-      };
+      const result = await pageThreads(threads, query, page);
+      return { ...result, items: result.items.map(toThreadView) };
     },
 
     async getThread(userId: string, threadId: string) {
