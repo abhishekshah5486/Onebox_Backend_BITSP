@@ -3,6 +3,7 @@ import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { ACCOUNT_STATUSES, PROVIDERS } from '../db/schema';
+import { PRESET_PROVIDERS } from '../imap/presets';
 import type { AccountService } from './account-service';
 
 const hostname = z
@@ -25,13 +26,7 @@ const password = z.string().min(1).max(1024);
 
 const createBody = z.discriminatedUnion('provider', [
   z.object({
-    provider: z.literal('GMAIL'),
-    emailAddress,
-    displayName: displayName.optional(),
-    password,
-  }),
-  z.object({
-    provider: z.literal('OUTLOOK'),
+    provider: z.enum(PRESET_PROVIDERS),
     emailAddress,
     displayName: displayName.optional(),
     password,

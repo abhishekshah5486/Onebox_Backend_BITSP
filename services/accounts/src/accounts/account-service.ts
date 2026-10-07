@@ -6,12 +6,12 @@ import type { Logger } from '@onebox/logger';
 import { and, asc, count, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { emailAccounts, type EmailAccountRow } from '../db/schema';
-import { PRESETS, type ServerSettings } from '../imap/presets';
+import { PRESETS, type PresetProvider, type ServerSettings } from '../imap/presets';
 import type { ImapVerifier, VerifyResult } from '../imap/verify-imap';
 
 export type CreateAccountInput =
   | {
-      provider: 'GMAIL' | 'OUTLOOK';
+      provider: PresetProvider;
       emailAddress: string;
       displayName?: string | undefined;
       password: string;

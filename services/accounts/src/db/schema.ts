@@ -12,7 +12,7 @@ import {
 
 export const accountsSchema = pgSchema('accounts');
 
-export const PROVIDERS = ['GMAIL', 'OUTLOOK', 'IMAP'] as const;
+export const PROVIDERS = ['GMAIL', 'OUTLOOK', 'ICLOUD', 'YAHOO', 'IMAP'] as const;
 export const ACCOUNT_STATUSES = [
   'CONNECTED',
   'AUTH_FAILED',

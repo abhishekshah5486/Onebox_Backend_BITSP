@@ -124,6 +124,30 @@ describe('accounts api', () => {
     ).toThrow();
   });
 
+  it.each([
+    ['ICLOUD', 'imap.mail.me.com'],
+    ['YAHOO', 'imap.mail.yahoo.com'],
+  ])('connects %s using its preset', async (provider, host) => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: as(randomUUID()),
+      payload: { provider, emailAddress: 'me@example.com', password: 'app-specific' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ provider, imap: { host, port: 993, tls: true } });
+  });
+
+  it('rejects unknown providers', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: as(randomUUID()),
+      payload: { provider: 'AOL', emailAddress: 'me@aol.com', password: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('requires server settings for generic imap accounts', async () => {
     const res = await app.inject({
       method: 'POST',
