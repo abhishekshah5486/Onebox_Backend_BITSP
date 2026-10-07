@@ -134,6 +134,22 @@ describe('queue', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('re-runs a failed job when asked to retry it', async () => {
+    let calls = 0;
+    const { producer } = setup(async () => {
+      calls += 1;
+      if (calls <= fast.attempts) throw new Error('provider down');
+    });
+    await producer.enqueue(envelope('flaky-1'));
+    await vi.waitFor(async () => expect(await deadLetters()).toHaveLength(1), { timeout: 5000 });
+
+    expect((await producer.enqueue(envelope('flaky-1'))).duplicate).toBe(true);
+    expect((await producer.enqueue(envelope('flaky-1'), { retryFailed: true })).duplicate).toBe(
+      false,
+    );
+    await vi.waitFor(() => expect(calls).toBe(fast.attempts + 1), { timeout: 5000 });
+  });
+
   it('waits until a batch of jobs has been processed', async () => {
     const done: string[] = [];
     const { producer } = setup(async (job) => {

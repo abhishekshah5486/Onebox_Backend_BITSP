@@ -16,8 +16,15 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
   return {
     // The jobId is deterministic, so enqueuing the same work twice is a no-op; consumers
     // must still be idempotent because finished jobs are eventually removed.
-    async enqueue(envelope: JobEnvelope<P>): Promise<{ jobId: string; duplicate: boolean }> {
-      if (await bull.getJob(envelope.jobId)) {
+    // retryFailed: a job id that previously failed is replaced instead of being treated as a duplicate.
+    async enqueue(
+      envelope: JobEnvelope<P>,
+      { retryFailed = false }: { retryFailed?: boolean } = {},
+    ): Promise<{ jobId: string; duplicate: boolean }> {
+      const existing = await bull.getJob(envelope.jobId);
+      if (existing && retryFailed && (await existing.isFailed())) {
+        await existing.remove();
+      } else if (existing) {
         logger.debug({ queue, jobId: envelope.jobId }, 'duplicate job ignored');
         return { jobId: envelope.jobId, duplicate: true };
       }
