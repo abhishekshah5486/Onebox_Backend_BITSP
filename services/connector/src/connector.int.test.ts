@@ -77,7 +77,7 @@ async function send(subject: string) {
   });
 }
 
-async function seenFlags() {
+async function imap() {
   const client = new ImapFlow({
     host: mail.host,
     port: mail.imapPort,
@@ -86,6 +86,22 @@ async function seenFlags() {
     logger: false,
   });
   await client.connect();
+  return client;
+}
+
+async function appendTo(path: string, subject: string) {
+  const client = await imap();
+  if (!(await client.list()).some((entry) => entry.path === path)) await client.mailboxCreate(path);
+  await client.append(
+    path,
+    `From: ${user.email}\r\nTo: priya@acme.example\r\nSubject: ${subject}\r\nMessage-ID: <${subject.replace(/\W/g, '')}@onebox.test>\r\n\r\nBody of ${subject}\r\n`,
+    ['\\Seen'],
+  );
+  await client.logout();
+}
+
+async function seenFlags() {
+  const client = await imap();
   const lock = await client.getMailboxLock('INBOX');
   const result: Record<string, boolean> = {};
   for await (const message of client.fetch('1:*', { envelope: true, flags: true })) {
@@ -115,6 +131,7 @@ function supervisor(internal: InternalClient): Supervisor {
       initialBatch: 2,
       highWatermark: 1000,
       connectTimeoutMs: 5000,
+      folderSyncIntervalMs: 500,
     },
   });
   closers.push(instance.close, producer.close);
@@ -159,9 +176,9 @@ afterAll(async () => {
   await Promise.all([mail.stop(), redisContainer.stop()]);
 });
 
-const subjects = (backfill: boolean) =>
+const subjects = (backfill: boolean, role = 'inbox') =>
   jobs
-    .filter((job) => job.payload.backfill === backfill)
+    .filter((job) => job.payload.backfill === backfill && job.payload.role === role)
     .map(
       (job) =>
         Buffer.from(job.payload.rawSource, 'base64')
@@ -213,9 +230,35 @@ describe('imap connector', () => {
     );
   });
 
+  it('syncs the sent folder on its own connection, newest first and then new mail', async () => {
+    await appendTo('Sent', 'Sent one');
+    await appendTo('Sent', 'Sent two');
+
+    await vi.waitFor(
+      () => expect(subjects(true, 'sent').sort()).toEqual(['Sent one', 'Sent two']),
+      {
+        timeout: 15_000,
+      },
+    );
+    await vi.waitFor(async () =>
+      expect(await store.getCounts('acc-1', 'sent')).toMatchObject({
+        folder: 'Sent',
+        total: 2,
+        unread: 0,
+      }),
+    );
+
+    await appendTo('Sent', 'Sent three');
+    await vi.waitFor(() => expect(subjects(false, 'sent')).toEqual(['Sent three']), {
+      timeout: 15_000,
+    });
+    expect(subjects(false)).toEqual(['Fresh news']);
+  });
+
   it('fetches older mail on request and marks history complete once stored', async () => {
-    const oldestFetched = Math.min(...jobs.map((job) => job.payload.uid));
-    const uidValidity = jobs[0]!.payload.uidValidity;
+    const inbox = jobs.filter((job) => job.payload.role === 'inbox');
+    const oldestFetched = Math.min(...inbox.map((job) => job.payload.uid));
+    const uidValidity = inbox[0]!.payload.uidValidity;
     const producer = createProducer<HistoryPayload>(QUEUES.history, {
       redisUrl: redisContainer.url,
       logger,
@@ -245,7 +288,9 @@ describe('imap connector', () => {
       },
     );
     expect(subjects(true)).toContain('Old one');
-    expect(jobs.filter((job) => subjects(true).length && job.payload.uid === 1)).toHaveLength(1);
+    expect(
+      jobs.filter((job) => job.payload.role === 'inbox' && job.payload.uid === 1),
+    ).toHaveLength(1);
   });
 
   it('resumes from the cursor after a restart without duplicating work', async () => {

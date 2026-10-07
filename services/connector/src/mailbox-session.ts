@@ -3,6 +3,7 @@ import type { Logger } from '@onebox/logger';
 import type { MailboxStore } from '@onebox/mailbox-state';
 import type { Producer } from '@onebox/queue';
 import type { ImapFlow } from 'imapflow';
+import { createFolderSync } from './folder-sync';
 import { FOLDER, openImapClient } from './imap-client';
 import { fetchAndEnqueue } from './ingest-jobs';
 import type { ActiveAccount, InternalClient } from './internal-client';
@@ -25,6 +26,7 @@ export interface SessionDeps {
   connectTimeoutMs?: number;
   // Safety net for servers that silently stop sending IDLE notifications.
   pollIntervalMs?: number;
+  folderSyncIntervalMs?: number;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -170,6 +172,18 @@ export async function runMailboxSession(
         .catch((err: unknown) => logger.error({ err }, 'fetching new mail failed'));
     };
 
+    const syncFolders = createFolderSync(account, { ...deps, logger, waitForCapacity });
+    let folderRun = Promise.resolve();
+    const runFolderSync = () => {
+      folderRun = folderRun
+        .then(async () => {
+          if (!signal.aborted && client.usable) await syncFolders(signal);
+        })
+        .catch((err: unknown) =>
+          logger.warn({ err: (err as Error).message }, 'syncing other folders failed'),
+        );
+    };
+
     client.on('exists', fetchNew);
     // Deletions and read/unread changes made elsewhere change the server counts.
     client.on('expunge', refreshCounts);
@@ -181,11 +195,14 @@ export async function runMailboxSession(
       },
       deps.pollIntervalMs ?? 5 * 60_000,
     );
+    const folderPoll = setInterval(runFolderSync, deps.folderSyncIntervalMs ?? 2 * 60_000);
     fetchNew();
+    runFolderSync();
     await closed;
     clearInterval(poll);
+    clearInterval(folderPoll);
     refreshCounts.cancel();
-    await pending;
+    await Promise.all([pending, folderRun]);
   } finally {
     signal.removeEventListener('abort', onAbort);
     if (client.usable) await client.logout().catch(() => client.close());
