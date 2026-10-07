@@ -60,6 +60,7 @@ const threadPage = z.object({
   items: z.array(threadView),
   nextCursor: z.string().nullable(),
   prevCursor: z.string().nullable(),
+  endCursor: z.string().nullable(),
 });
 
 const mailboxSummary = z.object({

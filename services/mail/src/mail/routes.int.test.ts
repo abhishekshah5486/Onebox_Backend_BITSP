@@ -144,7 +144,12 @@ describe('mail api', () => {
   it('never shows another user mail', async () => {
     const [alice, bob] = [randomUUID(), randomUUID()];
     await seed(alice, 2);
-    expect((await list(bob)).json()).toEqual({ items: [], nextCursor: null, prevCursor: null });
+    expect((await list(bob)).json()).toEqual({
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      endCursor: null,
+    });
 
     const aliceThread = (await list(alice)).json<{ items: Thread[] }>().items[0]!;
     const peek = await app.inject({ url: `/mail/threads/${aliceThread.id}`, headers: as(bob) });
@@ -212,6 +217,7 @@ describe('mail api', () => {
     const second = (await list(userId, `?limit=2&cursor=${first.nextCursor}`)).json<{
       items: Thread[];
       prevCursor: string;
+      endCursor: string;
     }>();
     const back = (await list(userId, `?limit=2&direction=prev&cursor=${second.prevCursor}`)).json<{
       items: Thread[];
@@ -219,6 +225,14 @@ describe('mail api', () => {
     }>();
 
     expect(first.prevCursor).toBeNull();
+    const tail = (await list(userId, `?limit=10&cursor=${second.endCursor}`)).json<{
+      items: Thread[];
+      nextCursor: null;
+      endCursor: string;
+    }>();
+    expect(tail.items).toHaveLength(1);
+    expect(tail.nextCursor).toBeNull();
+    expect(tail.endCursor).toBeTruthy();
     expect(back.items.map((t) => t.id)).toEqual(first.items.map((t) => t.id));
     expect(back.prevCursor).toBeNull();
   });

@@ -16,6 +16,9 @@ export interface ThreadPage {
   // so mail arriving while the user reads page 3 never shifts what page 3 shows.
   nextCursor: string | null;
   prevCursor: string | null;
+  // Anchor of the last item even when nothing older is stored yet, so a client can load the
+  // page that a history fetch brings in.
+  endCursor: string | null;
 }
 
 const anchor = (thread: ThreadDoc) =>
@@ -41,10 +44,12 @@ export async function pageThreads(
       .limit(limit + 1)
       .toArray();
     const items = newer.slice(0, limit).reverse();
+    const end = items.at(-1) ? anchor(items.at(-1)!) : null;
     return {
       items,
       prevCursor: newer.length > limit && items[0] ? anchor(items[0]) : null,
-      nextCursor: items.at(-1) ? anchor(items.at(-1)!) : null,
+      nextCursor: end,
+      endCursor: end,
     };
   }
 
@@ -64,9 +69,11 @@ export async function pageThreads(
     .limit(limit + 1)
     .toArray();
   const items = older.slice(0, limit);
+  const end = items.at(-1) ? anchor(items.at(-1)!) : null;
   return {
     items,
-    nextCursor: older.length > limit && items.at(-1) ? anchor(items.at(-1)!) : null,
+    nextCursor: older.length > limit ? end : null,
     prevCursor: position && items[0] ? anchor(items[0]) : null,
+    endCursor: end,
   };
 }
