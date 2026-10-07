@@ -63,8 +63,20 @@ export function createSupervisor({
     let failures = 0;
     try {
       while (!signal.aborted) {
-        // Read the account fresh each time so the sync cursor is never stale.
-        const account = (await internal.listAccounts()).find((a) => a.id === accountId);
+        // Read the account fresh each time so the sync cursor is never stale. A failed lookup is a
+        // transient hiccup (e.g. a dropped database connection), not a reason to stop supervising.
+        let account: ActiveAccount | undefined;
+        try {
+          account = (await internal.listAccounts()).find((a) => a.id === accountId);
+        } catch (err) {
+          failures += 1;
+          logger.warn(
+            { accountId, failures, err: (err as Error).message },
+            'could not load account, will retry',
+          );
+          await sleep(backoffMs(failures), signal);
+          continue;
+        }
         if (!account || account.status === 'AUTH_FAILED') break;
         try {
           await runSession(account, { ...sessionDeps, internal, logger }, signal);
