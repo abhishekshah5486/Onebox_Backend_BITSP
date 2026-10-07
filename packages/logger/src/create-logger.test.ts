@@ -44,6 +44,19 @@ describe('createLogger', () => {
     expect(lines[0]).toMatchObject({ service: 'mail', traceId: 't-1', level: 'warn' });
   });
 
+  it('logs the root cause of wrapped errors', () => {
+    const { lines, stream } = capture();
+    const root = Object.assign(new Error('Connection terminated unexpectedly'), {
+      code: 'ECONNRESET',
+    });
+    createLogger({ service: 'accounts' }, stream).error(
+      { err: new Error('Failed query', { cause: root }) },
+      'boom',
+    );
+
+    expect(JSON.stringify(lines[0])).toContain('Connection terminated unexpectedly');
+  });
+
   it('drops entries below the configured level', () => {
     const { lines, stream } = capture();
     const logger = createLogger({ service: 'mail', level: 'warn' }, stream);

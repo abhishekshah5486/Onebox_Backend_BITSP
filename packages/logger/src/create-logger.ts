@@ -1,4 +1,4 @@
-import { pino, stdTimeFunctions, type DestinationStream, type Logger } from 'pino';
+import { pino, stdSerializers, stdTimeFunctions, type DestinationStream, type Logger } from 'pino';
 
 export type { Logger };
 
@@ -39,6 +39,8 @@ export function createLogger(options: LoggerOptions, destination?: DestinationSt
       timestamp: stdTimeFunctions.isoTime,
       formatters: { level: (label) => ({ level: label }) },
       redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
+      // Wrapped errors (e.g. driver errors inside query errors) keep their root cause in the log.
+      serializers: { err: stdSerializers.errWithCause },
       ...(transport && { transport }),
     },
     destination,
