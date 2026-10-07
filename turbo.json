@@ -8,7 +8,8 @@
     "typecheck": {},
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "passThroughEnv": ["ALLOW_PRIVATE_MAIL_HOSTS", "ALLOW_PRIVATE_WEBHOOK_HOSTS"]
     }
   }
 }
