@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@onebox/errors": "*"
+    "@onebox/errors": "*",
+    "undici": "^8.11.2"
   }
 }
