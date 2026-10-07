@@ -100,6 +100,16 @@ describe('api gateway', () => {
     expect(res.json()).toMatchObject({ url: '/mail/threads', authorization: 'Bearer valid' });
   });
 
+  it.each(['/api/v1/auth/../internal/accounts', '/api/v1/auth/%2e%2e/internal/accounts'])(
+    'never lets %s escape the upstream prefix',
+    async (url) => {
+      const res = await gateway.inject({ url });
+      const reachedInternal =
+        res.statusCode === 200 && res.json<{ url: string }>().url.includes('internal');
+      expect(reachedInternal).toBe(false);
+    },
+  );
+
   it('returns 503 when an upstream is unreachable', async () => {
     const res = await gateway.inject({ url: '/api/v1/down/x' });
     expect(res.statusCode).toBe(503);
