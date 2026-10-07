@@ -24,6 +24,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@onebox/testing": "*"
+    "@onebox/testing": "*",
+    "@types/nodemailer": "^8.0.2",
+    "nodemailer": "^8.0.11"
   }
 }
