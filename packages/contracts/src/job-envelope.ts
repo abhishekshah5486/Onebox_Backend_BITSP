@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 export const QUEUES = {
   ingest: 'ingest',
+  history: 'history',
   ai: 'ai',
   index: 'index',
   embed: 'embed',

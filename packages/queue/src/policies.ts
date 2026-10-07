@@ -8,6 +8,7 @@ export interface RetryPolicy {
 // Per-queue retry budgets from the architecture spec (5.1.3); backoff is exponential.
 export const RETRY_POLICIES: Record<QueueName, RetryPolicy> = {
   ingest: { attempts: 5, backoffMs: 2_000 },
+  history: { attempts: 3, backoffMs: 3_000 },
   ai: { attempts: 3, backoffMs: 5_000 },
   index: { attempts: 5, backoffMs: 1_000 },
   embed: { attempts: 3, backoffMs: 5_000 },
