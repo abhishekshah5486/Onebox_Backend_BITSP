@@ -3,7 +3,7 @@ import { decrypt, encrypt } from '@onebox/crypto';
 import { isUniqueViolation } from '@onebox/db-pg';
 import { ConflictError, NotFoundError, UnprocessableError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
-import { and, asc, count, eq } from 'drizzle-orm';
+import { and, asc, count, eq, ne, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { emailAccounts, type EmailAccountRow } from '../db/schema';
 import { PRESETS, type PresetProvider, type ServerSettings } from '../imap/presets';
@@ -217,6 +217,57 @@ export function createAccountService({
         lastVerifiedAt: new Date(),
       });
       return { result, account: toView(updated) };
+    },
+
+    // Internal: accounts the connector should keep a live mailbox connection for.
+    async listActive() {
+      const rows = await db
+        .select()
+        .from(emailAccounts)
+        .where(ne(emailAccounts.status, 'DISABLED'));
+      return rows.map((row) => ({
+        id: row.id,
+        userId: row.userId,
+        provider: row.provider,
+        emailAddress: row.emailAddress,
+        status: row.status,
+        updatedAt: row.updatedAt.toISOString(),
+        syncState: row.syncState as Record<string, unknown>,
+      }));
+    },
+
+    async getCredentials(accountId: string) {
+      const [row] = await db.select().from(emailAccounts).where(eq(emailAccounts.id, accountId));
+      if (!row) throw new NotFoundError('Account not found');
+      return {
+        ...imapOf(row, decrypt(row.credentialsEncrypted, encryptionKey, aadFor(row.id))),
+        userId: row.userId,
+      };
+    },
+
+    async saveSyncState(accountId: string, folder: string, state: Record<string, unknown>) {
+      const updated = await db
+        .update(emailAccounts)
+        .set({
+          syncState: sql`jsonb_set(${emailAccounts.syncState}, ARRAY[${folder}]::text[], ${JSON.stringify(state)}::jsonb)`,
+        })
+        .where(eq(emailAccounts.id, accountId))
+        .returning({ id: emailAccounts.id });
+      if (updated.length === 0) throw new NotFoundError('Account not found');
+    },
+
+    // A paused account stays paused even if the connector reports on it.
+    async reportStatus(
+      accountId: string,
+      status: Exclude<EmailAccountRow['status'], 'DISABLED'>,
+      lastError: string | null,
+    ) {
+      const [row] = await db
+        .update(emailAccounts)
+        .set({ status, lastError, lastVerifiedAt: new Date() })
+        .where(and(eq(emailAccounts.id, accountId), ne(emailAccounts.status, 'DISABLED')))
+        .returning();
+      if (row) logger.info({ accountId, status }, 'account status reported by connector');
     },
 
     async remove(userId: string, accountId: string): Promise<void> {

@@ -2,17 +2,21 @@ import type { TokenVerifier } from '@onebox/auth-kit';
 import { createServer, registerHealthRoutes } from '@onebox/http';
 import type { Logger } from '@onebox/logger';
 import type { AccountService } from './accounts/account-service';
+import { registerInternalRoutes } from './accounts/internal-routes';
 import { registerAccountRoutes } from './accounts/routes';
 
 export interface AppDeps {
   logger: Logger;
   pingDatabase: () => Promise<void>;
-  routes?: { accounts: AccountService; verifyToken: TokenVerifier };
+  routes?: { accounts: AccountService; verifyToken: TokenVerifier; internalToken: string };
 }
 
 export function buildApp(deps: AppDeps) {
   const app = createServer({ logger: deps.logger });
   registerHealthRoutes(app, { postgres: deps.pingDatabase });
-  if (deps.routes) registerAccountRoutes(app, deps.routes);
+  if (deps.routes) {
+    registerAccountRoutes(app, deps.routes);
+    registerInternalRoutes(app, deps.routes.accounts, deps.routes.internalToken);
+  }
   return app;
 }

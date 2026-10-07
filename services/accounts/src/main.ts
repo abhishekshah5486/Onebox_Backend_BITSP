@@ -1,4 +1,4 @@
-import { createRemoteTokenVerifier } from '@onebox/auth-kit';
+import { createRemoteTokenVerifier, deriveInternalToken } from '@onebox/auth-kit';
 import { createPgClient } from '@onebox/db-pg';
 import { startServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
@@ -24,5 +24,13 @@ const accounts = createAccountService({
 });
 const verifyToken = createRemoteTokenVerifier(config.AUTH_SERVICE_URL);
 
-const app = buildApp({ logger, pingDatabase: pg.ping, routes: { accounts, verifyToken } });
+const app = buildApp({
+  logger,
+  pingDatabase: pg.ping,
+  routes: {
+    accounts,
+    verifyToken,
+    internalToken: deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
+  },
+});
 await startServer(app, { port: config.PORT, cleanups: [pg.close] });

@@ -45,7 +45,11 @@ beforeAll(async () => {
     logger,
     maxAccountsPerUser: 3,
   });
-  app = buildApp({ logger, pingDatabase: client.ping, routes: { accounts, verifyToken } });
+  app = buildApp({
+    logger,
+    pingDatabase: client.ping,
+    routes: { accounts, verifyToken, internalToken: 'test-internal-token' },
+  });
 });
 
 beforeEach(() => {
