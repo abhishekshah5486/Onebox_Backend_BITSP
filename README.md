@@ -19,6 +19,37 @@ npm test            # unit tests
 npm run test:int    # integration tests (needs Docker / .env)
 ```
 
+## Services
+
+| Service     | Port | Owns                                              |
+| ----------- | ---- | ------------------------------------------------- |
+| api-gateway | 4000 | Routing, JWT checks, Redis rate limits            |
+| auth        | 4001 | Users, sessions, signing keys (`identity` schema) |
+| accounts    | 4002 | Connected mailboxes (`accounts` schema)           |
+| settings    | 4004 | Preferences and integrations (`settings` schema)  |
+
+`npm run dev` starts every service with live reload (needs `.env` and `npm run infra:up`).
+
+## API (via the gateway, `/api/v1`)
+
+All routes except `auth` require `Authorization: Bearer <accessToken>`.
+
+| Method             | Path                                       | Purpose                                                                                 |
+| ------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------- |
+| POST               | `/auth/register`, `/auth/login`            | Create account / sign in                                                                |
+| POST               | `/auth/refresh`, `/auth/logout`            | Rotate or end the session                                                               |
+| GET                | `/auth/me`                                 | Current user                                                                            |
+| GET, POST          | `/accounts`                                | List / connect a mailbox (`GMAIL`, `OUTLOOK` or `IMAP`); credentials are verified first |
+| GET, PATCH, DELETE | `/accounts/:id`                            | Read, rename, change password, enable/disable, remove                                   |
+| POST               | `/accounts/:id/test`                       | Re-check the IMAP connection                                                            |
+| GET, PATCH         | `/settings/preferences`                    | Mark-as-seen, autonomy mode, signature, timezone                                        |
+| GET, POST          | `/settings/integrations`                   | List / add Slack or signed webhook integrations                                         |
+| GET, PATCH, DELETE | `/settings/integrations/:id`               | Manage an integration                                                                   |
+| POST               | `/settings/integrations/:id/test`          | Send a test message                                                                     |
+| POST               | `/settings/integrations/:id/rotate-secret` | New webhook signing secret (shown once)                                                 |
+
+Errors always look like `{ "error": { "code", "message", "details?" } }`.
+
 ## Local infrastructure
 
 ```bash
