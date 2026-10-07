@@ -1,3 +1,4 @@
+import { isUniqueViolation } from '@onebox/db-pg';
 import { ConflictError, NotFoundError, UnauthorizedError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import { eq } from 'drizzle-orm';
@@ -25,11 +26,6 @@ const toProfile = (user: UserRow) => ({
   name: user.name,
   createdAt: user.createdAt.toISOString(),
 });
-
-const isUniqueViolation = (err: unknown) =>
-  [err, (err as { cause?: unknown })?.cause].some(
-    (e) => (e as { code?: string } | undefined)?.code === '23505',
-  );
 
 const invalidCredentials = () =>
   new UnauthorizedError('Invalid email or password', { code: 'INVALID_CREDENTIALS' });
