@@ -51,16 +51,15 @@ const params = z.object({ id: z.string().regex(/^[0-9a-f]{64}$/, 'invalid conver
 const accountParams = z.object({ accountId: z.uuid() });
 
 const pageQuery = {
-  cursor: z.string().max(200).optional(),
-  direction: z.enum(['next', 'prev']).default('next'),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 };
 
 const threadPage = z.object({
   items: z.array(threadView),
-  nextCursor: z.string().nullable(),
-  prevCursor: z.string().nullable(),
-  endCursor: z.string().nullable(),
+  page: z.number(),
+  pageSize: z.number(),
+  total: z.number(),
 });
 
 const mailboxSummary = z.object({

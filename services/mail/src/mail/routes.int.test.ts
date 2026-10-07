@@ -122,34 +122,52 @@ describe('mail api', () => {
     ]);
   });
 
-  it('pages through every conversation exactly once', async () => {
+  it('pages through every conversation exactly once with page numbers', async () => {
     const userId = randomUUID();
     await seed(userId, 7);
-    const seen: string[] = [];
-    let cursor: string | null = null;
-    do {
-      const query: string = `?limit=3${cursor ? `&cursor=${cursor}` : ''}`;
-      const page = (await list(userId, query)).json<{
-        items: Thread[];
-        nextCursor: string | null;
-      }>();
-      seen.push(...page.items.map((t) => t.subject));
-      cursor = page.nextCursor;
-    } while (cursor);
+    const pages = await Promise.all(
+      [1, 2, 3].map(async (n) =>
+        (await list(userId, `?limit=3&page=${n}`)).json<{
+          items: Thread[];
+          total: number;
+          page: number;
+        }>(),
+      ),
+    );
 
-    expect(seen).toHaveLength(7);
+    expect(pages.map((p) => p.items.length)).toEqual([3, 3, 1]);
+    expect(pages.every((p) => p.total === 7)).toBe(true);
+    const seen = pages.flatMap((p) => p.items.map((t) => t.subject));
     expect(new Set(seen).size).toBe(7);
+    expect((await list(userId, '?limit=3&page=4')).json()).toMatchObject({ items: [], total: 7 });
+  });
+
+  it('shifts pages down when new mail arrives, like Gmail', async () => {
+    const userId = randomUUID();
+    const accountId = await seed(userId, 4);
+    const before = (await list(userId, '?limit=2&page=2'))
+      .json<{ items: Thread[] }>()
+      .items.map((t) => t.subject);
+    await ingest(
+      ingestJob({
+        userId,
+        accountId,
+        subject: 'Brand new',
+        messageId: `<${userId}-new@x>`,
+        date: 'Tue, 06 Oct 2026 11:00:00 +0000',
+      }),
+      context,
+    );
+    const after = (await list(userId, '?limit=2&page=2'))
+      .json<{ items: Thread[] }>()
+      .items.map((t) => t.subject);
+    expect(after).toEqual(['Subject 2', before[0]]);
   });
 
   it('never shows another user mail', async () => {
     const [alice, bob] = [randomUUID(), randomUUID()];
     await seed(alice, 2);
-    expect((await list(bob)).json()).toEqual({
-      items: [],
-      nextCursor: null,
-      prevCursor: null,
-      endCursor: null,
-    });
+    expect((await list(bob)).json()).toEqual({ items: [], page: 1, pageSize: 50, total: 0 });
 
     const aliceThread = (await list(alice)).json<{ items: Thread[] }>().items[0]!;
     const peek = await app.inject({ url: `/mail/threads/${aliceThread.id}`, headers: as(bob) });
@@ -206,37 +224,6 @@ describe('mail api', () => {
     expect(items.every((t) => t.accountId === work)).toBe(true);
   });
 
-  it('pages back with the previous cursor to exactly the earlier page', async () => {
-    const userId = randomUUID();
-    await seed(userId, 5);
-    const first = (await list(userId, '?limit=2')).json<{
-      items: Thread[];
-      nextCursor: string;
-      prevCursor: null;
-    }>();
-    const second = (await list(userId, `?limit=2&cursor=${first.nextCursor}`)).json<{
-      items: Thread[];
-      prevCursor: string;
-      endCursor: string;
-    }>();
-    const back = (await list(userId, `?limit=2&direction=prev&cursor=${second.prevCursor}`)).json<{
-      items: Thread[];
-      prevCursor: string | null;
-    }>();
-
-    expect(first.prevCursor).toBeNull();
-    const tail = (await list(userId, `?limit=10&cursor=${second.endCursor}`)).json<{
-      items: Thread[];
-      nextCursor: null;
-      endCursor: string;
-    }>();
-    expect(tail.items).toHaveLength(1);
-    expect(tail.nextCursor).toBeNull();
-    expect(tail.endCursor).toBeTruthy();
-    expect(back.items.map((t) => t.id)).toEqual(first.items.map((t) => t.id));
-    expect(back.prevCursor).toBeNull();
-  });
-
   it('orders conversations from the same second by uid so pages match fetch order', async () => {
     const userId = randomUUID();
     const accountId = randomUUID();
@@ -256,11 +243,8 @@ describe('mail api', () => {
     const page = (await list(userId, '?limit=10')).json<{ items: Thread[] }>();
     expect(page.items.map((t) => t.subject)).toEqual(['uid 9', 'uid 7', 'uid 5', 'uid 3', 'uid 1']);
 
-    const first = (await list(userId, '?limit=2')).json<{ nextCursor: string }>();
-    const rest = (await list(userId, `?limit=10&cursor=${first.nextCursor}`)).json<{
-      items: Thread[];
-    }>();
-    expect(rest.items.map((t) => t.subject)).toEqual(['uid 5', 'uid 3', 'uid 1']);
+    const rest = (await list(userId, '?limit=2&page=2')).json<{ items: Thread[] }>();
+    expect(rest.items.map((t) => t.subject)).toEqual(['uid 5', 'uid 3']);
   });
 
   it('lists one account at a time', async () => {
@@ -359,7 +343,7 @@ describe('mail api', () => {
 
   it.each([
     ['/mail/threads/not-a-thread-id', 400],
-    ['/mail/threads?cursor=garbage', 400],
+    ['/mail/threads?page=0', 400],
     ['/mail/threads?limit=500', 400],
     [`/mail/threads/${'a'.repeat(64)}`, 404],
   ])('%s -> %i', async (url, status) => {

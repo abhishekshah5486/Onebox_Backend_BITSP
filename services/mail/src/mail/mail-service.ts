@@ -2,15 +2,14 @@ import { NotFoundError } from '@onebox/errors';
 import type { Filter } from 'mongodb';
 import type { MailCollections, MessageDoc, ThreadDoc } from '../db/collections';
 import { refreshThread } from '../threads/thread-store';
-import { pageThreads, type Direction } from './paging';
+import { pageThreads } from './paging';
 
 export type ThreadFilter = 'all' | 'unread' | 'starred';
 
 export interface ListThreadsInput {
   accountId?: string | undefined;
   filter?: ThreadFilter | undefined;
-  cursor?: string | undefined;
-  direction?: Direction | undefined;
+  page?: number | undefined;
   limit?: number | undefined;
 }
 
