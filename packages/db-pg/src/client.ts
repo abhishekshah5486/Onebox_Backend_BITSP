@@ -13,8 +13,11 @@ export interface PgClient {
 
 export function createPgClient(url: string, { max = 10 }: { max?: number } = {}): PgClient {
   // Encrypt when the server supports it (Supabase); local containers fall back to plain TCP.
+  // Retire connections before Supabase's pooler drops them, so no query lands on a dead socket.
   const options = {
     onnotice: () => {},
+    idle_timeout: 20,
+    max_lifetime: 30 * 60,
     ...(!url.includes('sslmode=') && { ssl: 'prefer' as const }),
   };
   const sql = postgres(url, { ...options, max });
