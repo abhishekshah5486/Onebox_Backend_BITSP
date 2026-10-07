@@ -237,6 +237,32 @@ describe('mail api', () => {
     expect(back.prevCursor).toBeNull();
   });
 
+  it('orders conversations from the same second by uid so pages match fetch order', async () => {
+    const userId = randomUUID();
+    const accountId = randomUUID();
+    for (const uid of [5, 3, 9, 1, 7]) {
+      await ingest(
+        ingestJob({
+          userId,
+          accountId,
+          uid,
+          subject: `uid ${uid}`,
+          messageId: `<${userId}-${uid}@x>`,
+          date: 'Tue, 06 Oct 2026 10:00:00 +0000',
+        }),
+        context,
+      );
+    }
+    const page = (await list(userId, '?limit=10')).json<{ items: Thread[] }>();
+    expect(page.items.map((t) => t.subject)).toEqual(['uid 9', 'uid 7', 'uid 5', 'uid 3', 'uid 1']);
+
+    const first = (await list(userId, '?limit=2')).json<{ nextCursor: string }>();
+    const rest = (await list(userId, `?limit=10&cursor=${first.nextCursor}`)).json<{
+      items: Thread[];
+    }>();
+    expect(rest.items.map((t) => t.subject)).toEqual(['uid 5', 'uid 3', 'uid 1']);
+  });
+
   it('lists one account at a time', async () => {
     const userId = randomUUID();
     const work = await seed(userId, 2);

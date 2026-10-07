@@ -1,6 +1,6 @@
 import type { Collection, Filter } from 'mongodb';
 import type { ThreadDoc } from '../db/collections';
-import { decodeCursor, encodeCursor } from './cursor';
+import { decodeCursor, encodeCursor, type ThreadCursor } from './cursor';
 
 export type Direction = 'next' | 'prev';
 
@@ -22,7 +22,23 @@ export interface ThreadPage {
 }
 
 const anchor = (thread: ThreadDoc) =>
-  encodeCursor({ lastMessageAt: thread.lastMessageAt, id: thread._id });
+  encodeCursor({
+    lastMessageAt: thread.lastMessageAt,
+    lastUid: thread.lastUid ?? 0,
+    id: thread._id,
+  });
+
+// Keyset comparison on (lastMessageAt, lastUid, _id), the same order the list is sorted in.
+function beyond(position: ThreadCursor, op: '$lt' | '$gt'): Filter<ThreadDoc> {
+  const { lastMessageAt, lastUid, id } = position;
+  return {
+    $or: [
+      { lastMessageAt: { [op]: lastMessageAt } },
+      { lastMessageAt, lastUid: { [op]: lastUid } },
+      { lastMessageAt, lastUid, _id: { [op]: id } },
+    ],
+  };
+}
 
 export async function pageThreads(
   threads: Collection<ThreadDoc>,
@@ -33,14 +49,8 @@ export async function pageThreads(
 
   if (direction === 'prev' && position) {
     const newer = await threads
-      .find({
-        ...base,
-        $or: [
-          { lastMessageAt: { $gt: position.lastMessageAt } },
-          { lastMessageAt: position.lastMessageAt, _id: { $gt: position.id } },
-        ],
-      })
-      .sort({ lastMessageAt: 1, _id: 1 })
+      .find({ ...base, ...beyond(position, '$gt') })
+      .sort({ lastMessageAt: 1, lastUid: 1, _id: 1 })
       .limit(limit + 1)
       .toArray();
     const items = newer.slice(0, limit).reverse();
@@ -54,18 +64,8 @@ export async function pageThreads(
   }
 
   const older = await threads
-    .find(
-      position
-        ? {
-            ...base,
-            $or: [
-              { lastMessageAt: { $lt: position.lastMessageAt } },
-              { lastMessageAt: position.lastMessageAt, _id: { $lt: position.id } },
-            ],
-          }
-        : base,
-    )
-    .sort({ lastMessageAt: -1, _id: -1 })
+    .find(position ? { ...base, ...beyond(position, '$lt') } : base)
+    .sort({ lastMessageAt: -1, lastUid: -1, _id: -1 })
     .limit(limit + 1)
     .toArray();
   const items = older.slice(0, limit);

@@ -58,6 +58,8 @@ export interface ThreadDoc {
   snippet: string;
   lastFrom: Address | null;
   lastMessageAt: Date;
+  // UID of the newest message; orders conversations that share the same second.
+  lastUid: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -80,8 +82,8 @@ export async function ensureIndexes({ messages, threads }: MailCollections): Pro
     messages.createIndex({ userId: 1, accountId: 1, messageIdHeader: 1 }),
     messages.createIndex({ userId: 1, receivedAt: -1 }),
     messages.createIndex({ userId: 1, accountId: 1, folder: 1, uidValidity: 1, uid: 1 }),
-    threads.createIndex({ userId: 1, lastMessageAt: -1, _id: -1 }),
-    threads.createIndex({ userId: 1, accountId: 1, lastMessageAt: -1 }),
+    threads.createIndex({ userId: 1, lastMessageAt: -1, lastUid: -1, _id: -1 }),
+    threads.createIndex({ userId: 1, accountId: 1, lastMessageAt: -1, lastUid: -1, _id: -1 }),
     threads.createIndex({ userId: 1, accountId: 1, normalizedSubject: 1, lastMessageAt: -1 }),
   ]);
 }

@@ -116,7 +116,7 @@ function participantsOf(docs: Pick<MessageDoc, 'from' | 'to' | 'cc'>[]): Address
 export async function refreshThread({ messages, threads }: MailCollections, threadId: string) {
   const docs = await messages
     .find({ threadId })
-    .sort({ receivedAt: 1 })
+    .sort({ receivedAt: 1, uid: 1 })
     .project<
       Pick<
         MessageDoc,
@@ -131,6 +131,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
         | 'attachments'
         | 'snippet'
         | 'receivedAt'
+        | 'uid'
       >
     >({
       userId: 1,
@@ -144,6 +145,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
       attachments: 1,
       snippet: 1,
       receivedAt: 1,
+      uid: 1,
     })
     .toArray();
   if (docs.length === 0) {
@@ -172,10 +174,20 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
         snippet: last.snippet,
         lastFrom: last.from,
         lastMessageAt: last.receivedAt,
+        lastUid: last.uid,
         updatedAt: now,
       },
       $setOnInsert: { createdAt: now },
     },
     { upsert: true },
   );
+}
+
+// Conversations stored before lastUid existed get it recomputed once, at startup.
+export async function backfillThreadSortKeys(collections: MailCollections): Promise<number> {
+  const missing = await collections.threads
+    .find({ lastUid: { $exists: false } }, { projection: { _id: 1 } })
+    .toArray();
+  for (const thread of missing) await refreshThread(collections, thread._id);
+  return missing.length;
 }
