@@ -84,6 +84,8 @@ interface Thread {
   unreadCount: number;
   isStarred: boolean;
   accountId: string;
+  folders: string[];
+  messageCount: number;
 }
 
 async function seed(userId: string, count: number, accountId = randomUUID()) {
@@ -255,6 +257,134 @@ describe('mail api', () => {
     const items = res.json<{ items: Thread[] }>().items;
     expect(items).toHaveLength(2);
     expect(items.every((t) => t.accountId === work)).toBe(true);
+  });
+
+  describe('folders', () => {
+    const SENT = { path: '[Gmail]/Sent Mail', role: 'sent' as const };
+    const TRASH = { path: '[Gmail]/Bin', role: 'trash' as const };
+
+    async function seedFolders(userId: string, accountId: string) {
+      const put = (subject: string, folder?: typeof SENT | typeof TRASH, messageId = subject) =>
+        ingest(
+          ingestJob({
+            userId,
+            accountId,
+            subject,
+            messageId: `<${messageId}@x>`,
+            flags: ['\\Flagged'],
+            ...(folder && { folder }),
+          }),
+          context,
+        );
+      await put('Hello inbox');
+      await put('Report sent', SENT);
+      await put('Old junk', TRASH);
+      // Mail to yourself is stored in both Inbox and Sent.
+      await put('Note to self');
+      await put('Note to self', SENT);
+    }
+
+    const subjects = (res: { json: <T>() => T }) =>
+      res
+        .json<{ items: Thread[] }>()
+        .items.map((t) => t.subject)
+        .sort();
+
+    it('lists each folder separately and counts a message in two folders once', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await seedFolders(userId, accountId);
+
+      expect(subjects(await list(userId))).toEqual(['Hello inbox', 'Note to self']);
+      expect(subjects(await list(userId, '?folder=sent'))).toEqual(['Note to self', 'Report sent']);
+      expect(subjects(await list(userId, '?folder=trash'))).toEqual(['Old junk']);
+      expect(subjects(await list(userId, '?filter=starred'))).toEqual([
+        'Hello inbox',
+        'Note to self',
+        'Report sent',
+      ]);
+
+      const self = (await list(userId))
+        .json<{ items: Thread[] }>()
+        .items.find((t) => t.subject === 'Note to self')!;
+      expect(self).toMatchObject({ folders: ['inbox', 'sent'], messageCount: 1 });
+      const detail = await app.inject({ url: `/mail/threads/${self.id}`, headers: as(userId) });
+      expect(detail.json<{ messages: unknown[] }>().messages).toHaveLength(1);
+    });
+
+    it('lists the folders found on the server with their counts', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      for (const [role, folder, total] of [
+        ['inbox', 'INBOX', 120],
+        ['sent', '[Gmail]/Sent Mail', 40],
+      ] as const) {
+        await store.setCounts({
+          userId,
+          accountId,
+          role,
+          folder,
+          uidValidity: 1,
+          total,
+          unread: 0,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      const res = await app.inject({
+        url: `/mail/accounts/${accountId}/folders`,
+        headers: as(userId),
+      });
+      expect(res.json()).toMatchObject({
+        items: [
+          { role: 'inbox', path: 'INBOX', total: 120 },
+          { role: 'sent', path: '[Gmail]/Sent Mail', total: 40 },
+        ],
+      });
+      const other = await app.inject({
+        url: `/mail/accounts/${accountId}/folders`,
+        headers: as(randomUUID()),
+      });
+      expect(other.statusCode).toBe(404);
+    });
+
+    it('pages back through a folder using its own path', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await seedFolders(userId, accountId);
+      await store.setCounts({
+        userId,
+        accountId,
+        role: 'sent',
+        folder: SENT.path,
+        uidValidity: 1,
+        total: 300,
+        unread: 0,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const summary = await app.inject({
+        url: `/mail/accounts/${accountId}/summary?folder=sent`,
+        headers: as(userId),
+      });
+      expect(summary.json()).toMatchObject({
+        folder: 'sent',
+        server: { total: 300 },
+        fetched: { conversations: 2, messages: 2 },
+        hasMoreOnServer: true,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/mail/accounts/${accountId}/history?folder=sent`,
+        headers: as(userId),
+      });
+      expect(res.statusCode).toBe(202);
+      const [job] = (await historyQueue.getJobs(['waiting'])).filter(
+        (j) => (j.data as { accountId: string }).accountId === accountId,
+      );
+      expect(job!.data).toMatchObject({ payload: { folder: SENT.path, role: 'sent' } });
+    });
   });
 
   describe('mailbox history', () => {

@@ -29,12 +29,17 @@ export async function resolveThreadId({ messages, threads }: MailCollections, in
     if (parent) return parent.threadId;
   }
 
-  // During backfill a reply can be stored before the message it answers.
+  // Another copy of this message (e.g. in Sent as well as Inbox), or during backfill a reply
+  // stored before the message it answers.
   if (input.messageIdHeader) {
     const child = await messages.findOne(
       {
         ...scope,
-        $or: [{ inReplyTo: input.messageIdHeader }, { references: input.messageIdHeader }],
+        $or: [
+          { messageIdHeader: input.messageIdHeader },
+          { inReplyTo: input.messageIdHeader },
+          { references: input.messageIdHeader },
+        ],
       },
       { projection: { threadId: 1 } },
     );
@@ -74,7 +79,11 @@ export async function mergeRelatedThreads(
   const links = [
     ...(parents.length > 0 ? [{ messageIdHeader: { $in: parents } }] : []),
     ...(input.messageIdHeader
-      ? [{ inReplyTo: input.messageIdHeader }, { references: input.messageIdHeader }]
+      ? [
+          { messageIdHeader: input.messageIdHeader },
+          { inReplyTo: input.messageIdHeader },
+          { references: input.messageIdHeader },
+        ]
       : []),
   ];
   if (links.length === 0) return threadId;

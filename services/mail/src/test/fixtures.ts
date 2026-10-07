@@ -1,4 +1,9 @@
-import { createJobEnvelope, ingestDedupeKey, type IngestPayload } from '@onebox/contracts';
+import {
+  createJobEnvelope,
+  type FolderRole,
+  ingestDedupeKey,
+  type IngestPayload,
+} from '@onebox/contracts';
 
 let nextUid = 1;
 
@@ -41,14 +46,16 @@ export function ingestJob(
     flags?: string[];
     uid?: number;
     backfill?: boolean;
+    folder?: { path: string; role: FolderRole };
   },
 ) {
+  const folder = spec.folder ?? { path: 'INBOX', role: 'inbox' as const };
   const uid = spec.uid ?? nextUid++;
   const accountId = spec.accountId ?? 'acc-1';
   const raw = rawMessage(spec);
   const payload: IngestPayload = {
-    folder: 'INBOX',
-    role: 'inbox',
+    folder: folder.path,
+    role: folder.role,
     uid,
     uidValidity: 1,
     flags: spec.flags ?? [],
@@ -58,7 +65,7 @@ export function ingestJob(
     rawSource: Buffer.from(raw).toString('base64'),
   };
   return createJobEnvelope({
-    jobId: ingestDedupeKey({ accountId, folder: 'INBOX', uidValidity: 1, uid }),
+    jobId: ingestDedupeKey({ accountId, folder: folder.path, uidValidity: 1, uid }),
     userId: spec.userId ?? 'user-1',
     accountId,
     payload,

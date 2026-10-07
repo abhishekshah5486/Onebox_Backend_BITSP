@@ -1,5 +1,6 @@
 import {
   createJobEnvelope,
+  FOLDER_ROLES,
   type FolderRole,
   HISTORY_BATCH_SIZE,
   type HistoryPayload,
@@ -39,6 +40,7 @@ export function createMailboxService({ collections, store, historyProducer, logg
     const status = history?.status ?? 'idle';
     return {
       accountId,
+      folder: role,
       server: counts
         ? { total: counts.total, unread: counts.unread, updatedAt: counts.updatedAt }
         : null,
@@ -50,6 +52,24 @@ export function createMailboxService({ collections, store, historyProducer, logg
 
   return {
     summary,
+
+    // Folders the connector has found on the server, with their server-side counts.
+    async folders(userId: string, accountId: string) {
+      const all = await Promise.all(FOLDER_ROLES.map((role) => store.getCounts(accountId, role)));
+      const found = all.filter((counts) => counts !== null);
+      if (found.some((counts) => counts.userId !== userId)) {
+        throw new NotFoundError('Mailbox not found');
+      }
+      return {
+        items: found.map(({ role, folder, total, unread, updatedAt }) => ({
+          role,
+          path: folder,
+          total,
+          unread,
+          updatedAt,
+        })),
+      };
+    },
 
     // Asks the connector for the page of mail just older than the oldest message stored here.
     async requestHistory(userId: string, accountId: string, role: FolderRole = 'inbox') {

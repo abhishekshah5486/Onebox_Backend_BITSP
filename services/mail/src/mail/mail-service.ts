@@ -1,14 +1,19 @@
+import type { FolderRole } from '@onebox/contracts';
 import { NotFoundError } from '@onebox/errors';
 import type { Filter } from 'mongodb';
 import type { MailCollections, MessageDoc, ThreadDoc } from '../db/collections';
-import { refreshThread } from '../threads/thread-store';
+import { refreshThread, uniqueMessages } from '../threads/thread-store';
 import { pageThreads } from './paging';
 
 export type ThreadFilter = 'all' | 'unread' | 'starred';
 
+// Like Gmail, Starred spans every folder except spam and trash unless a folder is asked for.
+const STARRED_FOLDERS: FolderRole[] = ['inbox', 'sent', 'drafts'];
+
 export interface ListThreadsInput {
   accountId?: string | undefined;
   filter?: ThreadFilter | undefined;
+  folder?: FolderRole | undefined;
   page?: number | undefined;
   limit?: number | undefined;
 }
@@ -16,6 +21,7 @@ export interface ListThreadsInput {
 const toThreadView = (thread: ThreadDoc) => ({
   id: thread._id,
   accountId: thread.accountId,
+  folders: thread.folders,
   subject: thread.subject,
   snippet: thread.snippet,
   participants: thread.participants,
@@ -59,9 +65,13 @@ export function createMailService(collections: MailCollections) {
   }
 
   return {
-    async listThreads(userId: string, { accountId, filter = 'all', ...page }: ListThreadsInput) {
+    async listThreads(
+      userId: string,
+      { accountId, filter = 'all', folder, ...page }: ListThreadsInput,
+    ) {
       const query: Filter<ThreadDoc> = { userId };
       if (accountId) query.accountId = accountId;
+      query.folders = folder ?? (filter === 'starred' ? { $in: STARRED_FOLDERS } : 'inbox');
       if (filter === 'unread') query.unreadCount = { $gt: 0 };
       if (filter === 'starred') query.isStarred = true;
       const result = await pageThreads(threads, query, page);
@@ -70,8 +80,11 @@ export function createMailService(collections: MailCollections) {
 
     async getThread(userId: string, threadId: string) {
       const thread = await findOwnedThread(userId, threadId);
-      const docs = await messages.find({ userId, threadId }).sort({ receivedAt: 1 }).toArray();
-      return { thread: toThreadView(thread), messages: docs.map(toMessageView) };
+      const docs = await messages
+        .find({ userId, threadId })
+        .sort({ receivedAt: 1, uid: 1 })
+        .toArray();
+      return { thread: toThreadView(thread), messages: uniqueMessages(docs).map(toMessageView) };
     },
 
     async updateThread(
@@ -100,9 +113,9 @@ export function createMailService(collections: MailCollections) {
 
     async stats(userId: string) {
       const [unread, starred, total] = await Promise.all([
-        threads.countDocuments({ userId, unreadCount: { $gt: 0 } }),
-        threads.countDocuments({ userId, isStarred: true }),
-        threads.countDocuments({ userId }),
+        threads.countDocuments({ userId, folders: 'inbox', unreadCount: { $gt: 0 } }),
+        threads.countDocuments({ userId, folders: { $in: STARRED_FOLDERS }, isStarred: true }),
+        threads.countDocuments({ userId, folders: 'inbox' }),
       ]);
       return { unreadThreads: unread, starredThreads: starred, totalThreads: total };
     },
