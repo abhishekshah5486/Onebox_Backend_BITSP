@@ -47,7 +47,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: accounts
+  name: connector
 spec:
   selector: { app: connector }
   ports: [{ port: 4005 }]
