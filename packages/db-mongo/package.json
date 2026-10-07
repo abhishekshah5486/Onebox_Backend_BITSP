@@ -1,5 +1,5 @@
 {
-  "name": "@onebox/testing",
+  "name": "@onebox/db-mongo",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@testcontainers/mongodb": "^12.2.0",
-    "@testcontainers/postgresql": "^12.2.0",
-    "testcontainers": "^12.2.0"
+    "mongodb": "^7.7.0"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*"
   }
 }
