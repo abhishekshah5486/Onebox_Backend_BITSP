@@ -20,6 +20,8 @@ export interface ProviderResponse {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  // What the call cost, when the provider says so itself (fees included).
+  costUsd?: number | undefined;
 }
 
 export interface ProviderAdapter {

@@ -132,7 +132,7 @@ export function createCompleter({
       usage.outputTokens += reply.outputTokens;
       usage.cacheReadTokens += reply.cacheReadTokens;
       usage.cacheWriteTokens += reply.cacheWriteTokens;
-      usage.costUsd += costOf(model, reply);
+      usage.costUsd += reply.costUsd ?? costOf(model, reply);
     };
     const adapter = adapters[model.provider]!;
     const request = {

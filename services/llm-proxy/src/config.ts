@@ -17,6 +17,7 @@ const schema = z.object({
   OPENAI_API_KEY: optionalKey,
   GEMINI_API_KEY: optionalKey,
   ANTHROPIC_API_KEY: optionalKey,
+  PERPLEXITY_API_KEY: optionalKey,
   CACHE_TTL_SECONDS: z.coerce
     .number()
     .int()

@@ -22,6 +22,20 @@
       "when": 1791476535549,
       "tag": "0002_model_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791497671670,
+      "tag": "0003_perplexity",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791497870458,
+      "tag": "0004_perplexity_models",
+      "breakpoints": true
     }
   ]
 }

@@ -13,7 +13,7 @@ import {
 
 export const llmSchema = pgSchema('llm');
 
-export const PROVIDERS = ['OPENAI', 'GEMINI', 'ANTHROPIC'] as const;
+export const PROVIDERS = ['OPENAI', 'GEMINI', 'ANTHROPIC', 'PERPLEXITY'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 // What a call is for. Each purpose has its own "Auto" route and its own user choice.

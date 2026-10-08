@@ -13,6 +13,7 @@ import { createCompleter } from './llm/complete';
 import { createUsage } from './llm/usage';
 import { anthropicAdapter } from './providers/anthropic';
 import { geminiAdapter } from './providers/gemini';
+import { perplexityAdapter } from './providers/perplexity';
 import { openaiAdapter } from './providers/openai';
 import type { ProviderAdapter } from './providers/types';
 
@@ -29,6 +30,9 @@ const adapters: Partial<Record<Provider, ProviderAdapter>> = {
   ...(config.OPENAI_API_KEY && { OPENAI: openaiAdapter(config.OPENAI_API_KEY) }),
   ...(config.GEMINI_API_KEY && { GEMINI: geminiAdapter(config.GEMINI_API_KEY) }),
   ...(config.ANTHROPIC_API_KEY && { ANTHROPIC: anthropicAdapter(config.ANTHROPIC_API_KEY) }),
+  ...(config.PERPLEXITY_API_KEY && {
+    PERPLEXITY: perplexityAdapter(config.PERPLEXITY_API_KEY),
+  }),
 };
 // A provider whose key is rejected is left out, so its models show as unavailable.
 for (const [provider, adapter] of Object.entries(adapters) as [Provider, ProviderAdapter][]) {
