@@ -1,4 +1,5 @@
 import type { FolderRole, GmailCategory, MailboxRole } from '@onebox/contracts';
+import type { Authentication } from '../ingest/authentication';
 import type { Unsubscribe } from '../ingest/unsubscribe';
 import type { Collection, Db } from 'mongodb';
 
@@ -47,6 +48,8 @@ export interface MessageDoc {
   backfill: boolean;
   category: GmailCategory | null;
   unsubscribe: Unsubscribe | null;
+  // Missing on mail stored before it was recorded.
+  authentication?: Authentication;
   // Set while a change made in OneBox is on its way to the server, so a sync from the
   // server (taken before the change landed) does not undo it.
   pendingSince: Date | null;

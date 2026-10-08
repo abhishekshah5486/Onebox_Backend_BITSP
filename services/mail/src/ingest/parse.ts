@@ -1,5 +1,6 @@
 import { simpleParser, type AddressObject } from 'mailparser';
 import type { Address, AttachmentMeta } from '../db/collections';
+import { readAuthentication, type Authentication } from './authentication';
 import { sanitizeEmailHtml } from './sanitize';
 import { findUnsubscribe, type Unsubscribe } from './unsubscribe';
 
@@ -19,6 +20,7 @@ export interface ParsedMessage {
   snippet: string;
   attachments: AttachmentMeta[];
   unsubscribe: Unsubscribe | null;
+  authentication: Authentication;
 }
 
 const MAX_TEXT_CHARS = 200_000;
@@ -85,6 +87,7 @@ export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
       sizeBytes: attachment.size,
       inline: attachment.contentDisposition === 'inline',
     })),
+    authentication: readAuthentication(mail.headers),
     unsubscribe: findUnsubscribe(
       mail.headers.get('list'),
       typeof mail.html === 'string' ? mail.html : null,

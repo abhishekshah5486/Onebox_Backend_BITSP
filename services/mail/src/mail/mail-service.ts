@@ -57,6 +57,7 @@ const toMessageView = (message: MessageDoc) => ({
   isStarred: message.isStarred,
   receivedAt: message.receivedAt.toISOString(),
   sentAt: message.sentAt?.toISOString() ?? null,
+  authentication: message.authentication ?? null,
 });
 
 export type ThreadView = ReturnType<typeof toThreadView>;
