@@ -24,6 +24,14 @@ spec:
             - name: CREDENTIALS_ENCRYPTION_KEY
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: GOOGLE_CLIENT_ID, optional: true } }
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                {
+                  secretKeyRef: { name: onebox-secrets, key: GOOGLE_CLIENT_SECRET, optional: true },
+                }
           # Startup covers the remote database connect + migrations.
           startupProbe:
             httpGet: { path: /health/live, port: 4004 }

@@ -1,6 +1,8 @@
 import { requireInternal, requireUser, type TokenVerifier } from '@onebox/auth-kit';
 import { createServer, registerHealthRoutes } from '@onebox/http';
 import type { Logger } from '@onebox/logger';
+import type { GoogleService } from './google/google-service';
+import { registerGoogleCallback, registerGoogleRoutes } from './google/routes';
 import type { IntegrationService } from './integrations/integration-service';
 import { registerIntegrationRoutes } from './integrations/routes';
 import type { PreferencesService } from './preferences/preferences-service';
@@ -12,6 +14,7 @@ export interface AppDeps {
   routes?: {
     preferences: PreferencesService;
     integrations: IntegrationService;
+    google: GoogleService;
     verifyToken: TokenVerifier;
     internalToken: string;
   };
@@ -29,6 +32,7 @@ export function buildApp(deps: AppDeps) {
         scope.addHook('preHandler', requireUser(routes.verifyToken));
         registerPreferenceRoutes(scope, routes.preferences);
         registerIntegrationRoutes(scope, routes.integrations);
+        registerGoogleRoutes(scope, routes.google);
       },
       { prefix: '/settings' },
     );
@@ -38,6 +42,13 @@ export function buildApp(deps: AppDeps) {
       { preHandler: requireInternal(routes.internalToken) },
       async (request) => routes.preferences.get(request.params.userId),
     );
+    // The mail service fetches Drive access tokens here.
+    app.get<{ Params: { userId: string } }>(
+      '/internal/google/token/:userId',
+      { preHandler: requireInternal(routes.internalToken) },
+      async (request) => ({ accessToken: await routes.google.accessToken(request.params.userId) }),
+    );
+    registerGoogleCallback(app, routes.google);
   }
   return app;
 }

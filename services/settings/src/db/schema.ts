@@ -72,5 +72,15 @@ export const integrations = settingsSchema.table(
   ],
 );
 
+// One Google account per user, for Drive.
+export const googleConnections = settingsSchema.table('google_connections', {
+  userId: uuid('user_id').primaryKey(),
+  email: text('email').notNull(),
+  refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
+  scopes: text('scopes').array().notNull(),
+  ...timestamps,
+});
+
 export type IntegrationRow = typeof integrations.$inferSelect;
 export type PreferencesRow = typeof userPreferences.$inferSelect;
+export type GoogleConnectionRow = typeof googleConnections.$inferSelect;
