@@ -31,6 +31,7 @@ let redis: Redis;
 const calls: string[] = [];
 let script: Record<string, (request: ProviderRequest) => string> = {};
 const fake: ProviderAdapter = {
+  checkKey: async () => true,
   async complete(request) {
     calls.push(request.model);
     const answer = script[request.model];

@@ -21,6 +21,17 @@ export interface ProviderResponse {
 
 export interface ProviderAdapter {
   complete(request: ProviderRequest): Promise<ProviderResponse>;
+  // False when the provider rejects the key; network trouble counts as usable.
+  checkKey(): Promise<boolean>;
+}
+
+export async function keyAccepted(url: string, headers: Record<string, string>) {
+  try {
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
+    return response.status !== 401 && response.status !== 403;
+  } catch {
+    return true;
+  }
 }
 
 // Retryable: rate limits, outages and timeouts. Anything else (a bad key, a bad request) is not.

@@ -1,4 +1,4 @@
-import { postJson, ProviderError, type ProviderAdapter } from './types';
+import { keyAccepted, postJson, ProviderError, type ProviderAdapter } from './types';
 
 interface ResponsesResult {
   output?: { type: string; content?: { type: string; text?: string }[] }[];
@@ -12,6 +12,8 @@ export function openaiAdapter(
   baseUrl = 'https://api.openai.com/v1',
 ): ProviderAdapter {
   return {
+    checkKey: () => keyAccepted(`${baseUrl}/models`, { authorization: `Bearer ${apiKey}` }),
+
     async complete({ model, messages, schema, maxOutputTokens, temperature, timeoutMs }) {
       const body = {
         model,

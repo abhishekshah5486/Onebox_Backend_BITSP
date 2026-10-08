@@ -1,4 +1,4 @@
-import { postJson, ProviderError, type ProviderAdapter } from './types';
+import { keyAccepted, postJson, ProviderError, type ProviderAdapter } from './types';
 
 interface GenerateResult {
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
@@ -12,6 +12,8 @@ export function geminiAdapter(
   baseUrl = 'https://generativelanguage.googleapis.com/v1beta',
 ): ProviderAdapter {
   return {
+    checkKey: () => keyAccepted(`${baseUrl}/models?pageSize=1`, { 'x-goog-api-key': apiKey }),
+
     async complete({ model, messages, schema, maxOutputTokens, temperature, timeoutMs }) {
       const system = messages.filter((m) => m.role === 'system').map((m) => m.content);
       const body = {

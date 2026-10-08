@@ -30,6 +30,13 @@ const adapters: Partial<Record<Provider, ProviderAdapter>> = {
   ...(config.GEMINI_API_KEY && { GEMINI: geminiAdapter(config.GEMINI_API_KEY) }),
   ...(config.ANTHROPIC_API_KEY && { ANTHROPIC: anthropicAdapter(config.ANTHROPIC_API_KEY) }),
 };
+// A provider whose key is rejected is left out, so its models show as unavailable.
+for (const [provider, adapter] of Object.entries(adapters) as [Provider, ProviderAdapter][]) {
+  if (!(await adapter.checkKey())) {
+    logger.warn({ provider }, 'api key rejected, leaving this provider out');
+    delete adapters[provider];
+  }
+}
 const catalog = createCatalog(pg.db, new Set(Object.keys(adapters) as Provider[]));
 logger.info({ providers: Object.keys(adapters) }, 'language model providers configured');
 

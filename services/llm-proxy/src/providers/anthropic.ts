@@ -1,4 +1,4 @@
-import { postJson, ProviderError, type ProviderAdapter } from './types';
+import { keyAccepted, postJson, ProviderError, type ProviderAdapter } from './types';
 
 interface MessagesResult {
   content?: { type: string; text?: string; input?: unknown }[];
@@ -11,6 +11,12 @@ export function anthropicAdapter(
   baseUrl = 'https://api.anthropic.com/v1',
 ): ProviderAdapter {
   return {
+    checkKey: () =>
+      keyAccepted(`${baseUrl}/models?limit=1`, {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      }),
+
     async complete({ model, messages, schema, maxOutputTokens, temperature, timeoutMs }) {
       const system = messages.filter((m) => m.role === 'system').map((m) => m.content);
       const body = {
