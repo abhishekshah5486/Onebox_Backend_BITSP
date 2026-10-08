@@ -13,6 +13,19 @@ export interface AttachmentMeta {
   contentType: string;
   sizeBytes: number;
   inline: boolean;
+  // SHA-256 of the contents, which name it in the blob store.
+  sha256?: string;
+  // True once the contents are in the blob store; mail stored earlier fetches them on demand.
+  stored?: boolean;
+}
+
+// An attachment of one of a conversation's messages, for the list's file chips.
+export interface AttachmentRef {
+  messageId: string;
+  index: number;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
 }
 
 // _id is the ingest dedupe key, which makes storing a message idempotent.
@@ -73,6 +86,8 @@ export interface ThreadDoc {
   unreadCount: number;
   isStarred: boolean;
   hasAttachments: boolean;
+  // Its first few attachments (not inline images), oldest first; missing on older threads.
+  attachments?: AttachmentRef[];
   snippet: string;
   lastFrom: Address | null;
   lastMessageAt: Date;

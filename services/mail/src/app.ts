@@ -1,6 +1,7 @@
 import type { TokenVerifier } from '@onebox/auth-kit';
 import { createServer, registerHealthRoutes, type HealthCheck } from '@onebox/http';
 import type { Logger } from '@onebox/logger';
+import type { AttachmentService } from './attachments/attachments';
 import type { LabelService } from './mail/label-service';
 import type { MailService } from './mail/mail-service';
 import type { MailboxService } from './mail/mailbox-service';
@@ -15,6 +16,7 @@ export interface AppDeps {
     mailboxes: MailboxService;
     actions: ThreadActions;
     labels: LabelService;
+    attachments?: AttachmentService;
     verifyToken: TokenVerifier;
   };
 }

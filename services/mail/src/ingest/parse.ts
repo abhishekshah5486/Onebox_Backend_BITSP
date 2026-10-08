@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { simpleParser, type AddressObject } from 'mailparser';
 import type { Address, AttachmentMeta } from '../db/collections';
 import { readAuthentication, type Authentication } from './authentication';
@@ -56,6 +57,11 @@ export function makeSnippet(text: string): string {
 }
 
 export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
+  return (await parseMail(raw)).message;
+}
+
+// The message, plus its attachments' contents in the same order as message.attachments.
+export async function parseMail(raw: Buffer): Promise<{ message: ParsedMessage; files: Buffer[] }> {
   // skipHtmlToText: mailparser's own conversion uppercases headings and inlines URLs.
   const mail = await simpleParser(raw, {
     skipHtmlToText: true,
@@ -67,7 +73,7 @@ export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
     mail.text || (typeof mail.html === 'string' ? htmlToText(mail.html) : '')
   ).slice(0, MAX_TEXT_CHARS);
 
-  return {
+  const message: ParsedMessage = {
     messageIdHeader: mail.messageId ?? null,
     inReplyTo: ids(mail.inReplyTo)[0] ?? null,
     references: ids(mail.references),
@@ -86,6 +92,7 @@ export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
       contentType: attachment.contentType,
       sizeBytes: attachment.size,
       inline: attachment.contentDisposition === 'inline',
+      sha256: createHash('sha256').update(attachment.content).digest('hex'),
     })),
     authentication: readAuthentication(mail.headers),
     unsubscribe: findUnsubscribe(
@@ -94,4 +101,5 @@ export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
       textBody,
     ),
   };
+  return { message, files: mail.attachments.map((attachment) => attachment.content) };
 }

@@ -7,6 +7,8 @@ describe('loadMailConfig', () => {
       loadMailConfig({
         MONGO_URI: 'mongodb+srv://u:p@cluster.example',
         REDIS_URL: 'redis://localhost:6379',
+        BLOB_ACCESS_KEY: 'key',
+        BLOB_SECRET_KEY: 'secret',
       }),
     ).toMatchObject({
       PORT: 4003,

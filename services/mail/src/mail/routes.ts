@@ -10,9 +10,14 @@ import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { MailService } from './mail-service';
+import type { AttachmentService } from '../attachments/attachments';
 import type { LabelService } from './label-service';
 import type { MailboxService } from './mailbox-service';
 import { THREAD_ACTIONS, type MailboxView, type ThreadActions } from './thread-actions';
+
+// Shown in place (images, PDFs, plain text, audio, video); everything else downloads.
+const INLINE_TYPES =
+  /^(image\/(png|jpeg|gif|webp|bmp|avif)|application\/pdf|text\/plain|audio\/[\w.+-]+|video\/[\w.+-]+)$/;
 
 const address = z.object({ name: z.string(), address: z.string() });
 
@@ -34,6 +39,15 @@ const threadView = z.object({
   unreadCount: z.number(),
   isStarred: z.boolean(),
   hasAttachments: z.boolean(),
+  attachments: z.array(
+    z.object({
+      messageId: z.string(),
+      index: z.number(),
+      filename: z.string(),
+      contentType: z.string(),
+      sizeBytes: z.number(),
+    }),
+  ),
   lastMessageAt: z.string(),
 });
 
@@ -123,12 +137,14 @@ export function registerMailRoutes(
     mailboxes,
     actions,
     labels,
+    attachments,
     verifyToken,
   }: {
     mail: MailService;
     mailboxes: MailboxService;
     actions: ThreadActions;
     labels: LabelService;
+    attachments?: AttachmentService;
     verifyToken: TokenVerifier;
   },
 ) {
@@ -195,6 +211,47 @@ export function registerMailRoutes(
           return view!;
         },
       );
+
+      // One attachment's contents. Only types a browser shows safely are offered inline; anything
+      // else (HTML, SVG, scripts) is always a download and is never sniffed.
+      if (attachments) {
+        routes.get(
+          '/messages/:messageId/attachments/:index',
+          {
+            schema: {
+              params: z.object({
+                messageId: z.string().min(1).max(128),
+                index: z.coerce.number().int().min(0).max(500),
+              }),
+              querystring: z.object({ inline: z.coerce.boolean().default(false) }),
+            },
+          },
+          async (request, reply) => {
+            const { meta, blob } = await attachments.open(
+              userId(request),
+              request.params.messageId,
+              request.params.index,
+            );
+            const type = meta.contentType.toLowerCase();
+            const inline = request.query.inline && INLINE_TYPES.test(type);
+            const name = encodeURIComponent(meta.filename).replace(
+              /['()*]/g,
+              (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+            );
+            void reply
+              .header('content-type', inline ? type : 'application/octet-stream')
+              .header(
+                'content-disposition',
+                `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
+              )
+              .header('x-content-type-options', 'nosniff')
+              .header('content-security-policy', "sandbox; default-src 'none'")
+              .header('cache-control', 'private, max-age=3600');
+            if (blob.sizeBytes !== undefined) void reply.header('content-length', blob.sizeBytes);
+            return reply.send(blob.body);
+          },
+        );
+      }
 
       // Several conversations by id, e.g. to show the mail behind AI suggestions.
       routes.post(

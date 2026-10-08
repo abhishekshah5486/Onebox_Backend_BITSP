@@ -1,3 +1,4 @@
+import { createBlobStore } from '@onebox/blob-store';
 import { createRemoteTokenVerifier } from '@onebox/auth-kit';
 import {
   type AiClassifyPayload,
@@ -17,16 +18,21 @@ import { buildApp } from './app';
 import { loadMailConfig } from './config';
 import { ensureIndexes, mailCollections } from './db/collections';
 import { aiJob } from './ingest/ai-job';
+import { createAttachmentService } from './attachments/attachments';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
 import { createMailboxService } from './mail/mailbox-service';
 import { createLabelService } from './mail/label-service';
 import { createThreadActions } from './mail/thread-actions';
 import { createChangesHandler } from './sync/apply-changes';
-import { migrateFolderRoles } from './threads/thread-store';
+import { backfillAttachmentRefs, migrateFolderRoles } from './threads/thread-store';
 
 const logger = createLogger({ service: 'mail', pretty: process.stdout.isTTY });
 const config = loadMailConfig();
+
+// Attachment contents live in an S3-compatible store (SeaweedFS locally).
+const blobs = createBlobStore(config);
+await blobs.ensureBucket();
 
 const mongo = await connectMongo(config.MONGO_URI, config.MONGO_DB);
 const collections = mailCollections(mongo.db);
@@ -46,9 +52,13 @@ if (config.MAIL_ROLE !== 'api') {
   const consumer = createConsumer(
     QUEUES.ingest,
     ingestPayloadSchema,
-    createIngestHandler(collections, async (doc) => {
-      await aiProducer.enqueue(aiJob(doc));
-    }),
+    createIngestHandler(
+      collections,
+      async (doc) => {
+        await aiProducer.enqueue(aiJob(doc));
+      },
+      blobs,
+    ),
     {
       redisUrl: config.REDIS_URL,
       logger,
@@ -64,6 +74,9 @@ if (config.MAIL_ROLE !== 'api') {
   );
   cleanups.push(consumer.close, changes.close);
   logger.info({ concurrency: config.INGEST_CONCURRENCY }, 'ingest worker started');
+  void backfillAttachmentRefs(collections)
+    .then((count) => count > 0 && logger.info({ count }, 'attachment lists added to older threads'))
+    .catch((err: unknown) => logger.warn({ err }, 'attachment list backfill failed'));
 }
 cleanups.push(mongo.close);
 
@@ -95,6 +108,7 @@ const app = buildApp({
       }),
       actions: createThreadActions({ collections, ops: opsProducer, logger }),
       labels: createLabelService({ store: mailboxStore, ops: opsProducer, logger }),
+      attachments: createAttachmentService({ collections, blobs, ops: opsProducer, logger }),
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     },
   }),

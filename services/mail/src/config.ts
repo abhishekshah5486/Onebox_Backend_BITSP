@@ -1,4 +1,5 @@
 import { envPort, loadConfig } from '@onebox/config';
+import { blobConfigSchema } from '@onebox/blob-store';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -10,6 +11,7 @@ const schema = z.object({
   // api = HTTP only, worker = ingest queue only, all = both (local dev).
   MAIL_ROLE: z.enum(['all', 'api', 'worker']).default('all'),
   INGEST_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+  ...blobConfigSchema,
 });
 
 export type MailConfig = z.infer<typeof schema>;

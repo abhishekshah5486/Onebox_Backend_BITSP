@@ -41,6 +41,7 @@ const toThreadView = (thread: ThreadDoc) => ({
   unreadCount: thread.unreadCount,
   isStarred: thread.isStarred,
   hasAttachments: thread.hasAttachments,
+  attachments: thread.attachments ?? [],
   lastMessageAt: thread.lastMessageAt.toISOString(),
 });
 

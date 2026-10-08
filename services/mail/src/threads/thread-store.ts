@@ -4,6 +4,8 @@ import { findUnsubscribe } from '../ingest/unsubscribe';
 import { isReplySubject, normalizeSubject } from './subject';
 
 const SUBJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+// The list shows a few file chips per conversation, like Gmail.
+const MAX_ATTACHMENT_REFS = 10;
 const MAX_PARTICIPANTS = 20;
 
 export interface ThreadLookup {
@@ -222,6 +224,21 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
         unreadCount: docs.filter((doc) => !doc.isRead).length,
         isStarred: docs.some((doc) => doc.isStarred),
         hasAttachments: docs.some((doc) => doc.attachments.some((a) => !a.inline)),
+        attachments: docs
+          .flatMap((doc) =>
+            doc.attachments
+              .map((a, index) => ({
+                messageId: doc._id,
+                index,
+                filename: a.filename,
+                contentType: a.contentType,
+                sizeBytes: a.sizeBytes,
+                inline: a.inline,
+              }))
+              .filter((a) => !a.inline)
+              .map(({ inline: _inline, ...ref }) => ref),
+          )
+          .slice(0, MAX_ATTACHMENT_REFS),
         snippet: last.snippet,
         lastFrom: last.from,
         lastMessageAt: last.receivedAt,
@@ -287,4 +304,27 @@ export async function migrateFolderRoles(collections: MailCollections): Promise<
     .toArray();
   for (const thread of stale) await refreshThread(collections, thread._id);
   return stale.length;
+}
+
+// Conversations stored before attachment lists were kept get theirs, a batch at a time, so the
+// list can show file chips for older mail too.
+export async function backfillAttachmentRefs(collections: MailCollections, batchSize = 200) {
+  let refreshed = 0;
+  for (;;) {
+    const batch = await collections.threads
+      .find({ hasAttachments: true, attachments: { $exists: false } })
+      .project<{ _id: string }>({ _id: 1 })
+      .limit(batchSize)
+      .toArray();
+    if (batch.length === 0) return refreshed;
+    for (const { _id } of batch) {
+      await refreshThread(collections, _id);
+      // A thread whose files all vanished keeps none, so it is not picked up again.
+      await collections.threads.updateOne(
+        { _id, attachments: { $exists: false } },
+        { $set: { attachments: [] } },
+      );
+    }
+    refreshed += batch.length;
+  }
 }

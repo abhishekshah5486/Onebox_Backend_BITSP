@@ -4,12 +4,19 @@ import { ValidationError } from '@onebox/errors';
 import type { JobContext } from '@onebox/queue';
 import type { MailCollections, MessageDoc } from '../db/collections';
 import { mergeRelatedThreads, refreshThread, resolveThreadId } from '../threads/thread-store';
-import { parseMessage } from './parse';
+import type { BlobStore } from '@onebox/blob-store';
+import { storeAttachments } from '../attachments/attachments';
+import { parseMail } from './parse';
 
 // Called once for each message newly stored from the inbox as it arrives (not history).
 export type OnNewMail = (doc: MessageDoc) => Promise<void>;
 
-export function createIngestHandler(collections: MailCollections, onNewMail?: OnNewMail) {
+// With a blob store, attachment contents are kept as mail arrives.
+export function createIngestHandler(
+  collections: MailCollections,
+  onNewMail?: OnNewMail,
+  blobs?: BlobStore,
+) {
   const { messages } = collections;
 
   return async (envelope: JobEnvelope<IngestPayload>, { logger }: JobContext) => {
@@ -24,10 +31,14 @@ export function createIngestHandler(collections: MailCollections, onNewMail?: On
     }
 
     let parsed;
+    let files: Buffer[];
     try {
-      parsed = await parseMessage(Buffer.from(payload.rawSource, 'base64'));
+      ({ message: parsed, files } = await parseMail(Buffer.from(payload.rawSource, 'base64')));
     } catch (err) {
       throw new ValidationError('Message could not be parsed', { cause: err });
+    }
+    if (blobs && parsed.attachments.length > 0) {
+      parsed.attachments = await storeAttachments(blobs, userId, parsed.attachments, files, logger);
     }
 
     const receivedAt = payload.internalDate

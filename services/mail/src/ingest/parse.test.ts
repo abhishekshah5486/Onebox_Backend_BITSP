@@ -74,9 +74,10 @@ describe('parseMessage', () => {
     expect(parsed.htmlBody).not.toMatch(/onclick|script/);
     expect(parsed.hasRemoteImages).toBe(true);
     expect(parsed.snippet).toBe('Your invoice');
-    expect(parsed.attachments).toEqual([
+    expect(parsed.attachments).toMatchObject([
       { filename: 'invoice.pdf', contentType: 'application/pdf', sizeBytes: 13, inline: false },
     ]);
+    expect(parsed.attachments[0]!.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('builds a clean snippet from html-only mail', async () => {

@@ -19,6 +19,8 @@ import { Redis } from 'ioredis';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app';
 import { ensureIndexes, mailCollections, type MailCollections } from '../db/collections';
+import { createMemoryBlobStore } from '@onebox/blob-store';
+import { createAttachmentService } from '../attachments/attachments';
 import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
 import { createMailService } from './mail-service';
@@ -38,6 +40,7 @@ let handle: MongoHandle;
 let collections: MailCollections;
 let app: HttpServer;
 let ingest: ReturnType<typeof createIngestHandler>;
+const blobs = createMemoryBlobStore();
 let redisContainer: TestRedis;
 let redis: Redis;
 let store: MailboxStore;
@@ -83,6 +86,7 @@ beforeAll(async () => {
         },
       }),
       labels: createLabelService({ store, ops: opsProducer, logger, waitMs: 300 }),
+      attachments: createAttachmentService({ collections, blobs, ops: opsProducer, logger }),
       verifyToken,
     },
   });
@@ -115,6 +119,7 @@ interface Thread {
   accountId: string;
   folders: string[];
   messageCount: number;
+  attachments: { messageId: string; index: number; filename: string }[];
 }
 
 async function seed(userId: string, count: number, accountId = randomUUID()) {
@@ -777,5 +782,66 @@ describe('mail api', () => {
     [`/mail/threads/${'a'.repeat(64)}`, 404],
   ])('%s -> %i', async (url, status) => {
     expect((await app.inject({ url, headers: as(randomUUID()) })).statusCode).toBe(status);
+  });
+
+  describe('attachments', () => {
+    const pdf = Buffer.from('%PDF-1.4 marks');
+    const multipart = [
+      '--b1',
+      'Content-Type: text/plain',
+      '',
+      'Marksheets attached',
+      '--b1',
+      'Content-Type: application/pdf; name="marks.pdf"',
+      'Content-Disposition: attachment; filename="marks.pdf"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      pdf.toString('base64'),
+      '--b1',
+      'Content-Type: text/html; name="page.html"',
+      'Content-Disposition: attachment; filename="page.html"',
+      '',
+      '<script>alert(1)</script>',
+      '--b1--',
+    ].join('\r\n');
+
+    it('keeps attachment contents and serves them only to their owner, safely', async () => {
+      const userId = randomUUID();
+      await createIngestHandler(
+        collections,
+        undefined,
+        blobs,
+      )(
+        ingestJob({
+          userId,
+          subject: 'Marksheets',
+          headers: ['MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="b1"'],
+          body: multipart,
+        }),
+        context,
+      );
+      const [thread] = (await list(userId)).json<{ items: Thread[] }>().items;
+      expect(thread!.attachments.map((a) => a.filename)).toEqual(['marks.pdf', 'page.html']);
+      const { messageId } = thread!.attachments[0]!;
+      const get = (who: string, index: number) =>
+        app.inject({
+          url: `/mail/messages/${messageId}/attachments/${index}?inline=true`,
+          headers: as(who),
+        });
+
+      const shown = await get(userId, 0);
+      expect(shown.statusCode).toBe(200);
+      expect(shown.headers['content-type']).toBe('application/pdf');
+      expect(shown.headers['content-disposition']).toBe("inline; filename*=UTF-8''marks.pdf");
+      expect(shown.rawPayload.equals(pdf)).toBe(true);
+
+      // A web page is never rendered in place.
+      const page = await get(userId, 1);
+      expect(page.headers['content-type']).toBe('application/octet-stream');
+      expect(page.headers['content-disposition']).toMatch(/^attachment;/);
+      expect(page.headers['x-content-type-options']).toBe('nosniff');
+
+      expect((await get(randomUUID(), 0)).statusCode).toBe(404);
+    });
   });
 });
