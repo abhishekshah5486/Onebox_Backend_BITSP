@@ -158,6 +158,17 @@ describe('mailbox changes', () => {
     expect(await thread('Stuck')).toMatchObject({ folders: ['inbox'] });
   });
 
+  it('follows a renamed label and forgets a deleted one', async () => {
+    const work = { path: 'Work', role: 'label' as const };
+    await put('Plan', 3, { folder: work });
+    await put('Draft plan', 4, { folder: { path: 'Old', role: 'label' } });
+    await change({ type: 'folderRenamed', folder: 'Work', to: 'Clients' });
+    await change({ type: 'folderGone', folder: 'Old' });
+
+    expect(await thread('Plan')).toMatchObject({ labels: ['Clients'] });
+    expect(await thread('Draft plan')).toBeNull();
+  });
+
   it('forgets a renumbered folder and removed messages', async () => {
     await put('Old numbering', 1, { uidValidity: 7 });
     await put('Removed', 2);

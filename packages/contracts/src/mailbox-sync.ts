@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { folderRoleSchema, gmailCategorySchema, mailboxRoleSchema } from './folders';
+import { folderRoleSchema, mailboxRoleSchema, mailCategorySchema } from './folders';
 
 const uid = z.number().int().positive();
 const uidValidity = z.number().int().nonnegative();
@@ -40,7 +40,7 @@ export type MailboxTarget = z.infer<typeof mailboxTargetSchema>;
 export const SYNCED_FLAGS = ['\\Seen', '\\Flagged'] as const;
 
 // OneBox -> mail server: one change to a set of messages in one folder.
-export const mailboxOpPayloadSchema = z.object({
+export const messageOpSchema = z.object({
   folder: path,
   uidValidity,
   uids: z.array(uid).min(1).max(1000),
@@ -56,6 +56,20 @@ export const mailboxOpPayloadSchema = z.object({
   ]),
 });
 
+// OneBox -> mail server: create, rename or delete one of the user's labels (folders).
+export const labelOpSchema = z.object({
+  kind: z.literal('label'),
+  op: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('create'), name: path }),
+    z.object({ type: z.literal('rename'), path, name: path }),
+    z.object({ type: z.literal('delete'), path }),
+  ]),
+});
+
+export const mailboxOpPayloadSchema = z.union([messageOpSchema, labelOpSchema]);
+
+export type MessageOpPayload = z.infer<typeof messageOpSchema>;
+export type LabelOpPayload = z.infer<typeof labelOpSchema>;
 export type MailboxOpPayload = z.infer<typeof mailboxOpPayloadSchema>;
 
 const flagUpdate = z.object({ uid, flags: z.array(z.string()) });
@@ -75,6 +89,9 @@ export const mailboxChangePayloadSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('flags'), folder: path, uidValidity, flags: z.array(flagUpdate) }),
   // An operation finished (or failed for good): the server is authoritative again.
   z.object({ type: z.literal('settled'), folder: path, uidValidity, uids: z.array(uid) }),
+  // A label was renamed or deleted, so every stored message in it moves with it or goes.
+  z.object({ type: z.literal('folderRenamed'), folder: path, to: path }),
+  z.object({ type: z.literal('folderGone'), folder: path }),
   // Everything in a folder right now; stored messages missing from it were moved or deleted.
   z.object({
     type: z.literal('snapshot'),
@@ -85,7 +102,7 @@ export const mailboxChangePayloadSchema = z.discriminatedUnion('type', [
     uidNext: uid,
     present: uidSetSchema,
     flags: z.array(flagUpdate).default([]),
-    categories: z.partialRecord(gmailCategorySchema, uidSetSchema).optional(),
+    categories: z.partialRecord(mailCategorySchema, uidSetSchema).optional(),
   }),
 ]);
 

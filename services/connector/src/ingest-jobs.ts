@@ -1,7 +1,8 @@
 import {
   createJobEnvelope,
-  type GmailCategory,
+  tabOf,
   ingestDedupeKey,
+  type MailCategory,
   type MailboxRole,
   MAX_RAW_MESSAGE_BYTES,
   type IngestPayload,
@@ -10,7 +11,7 @@ import {
 import type { Logger } from '@onebox/logger';
 import type { Producer } from '@onebox/queue';
 import type { FetchMessageObject, ImapFlow } from 'imapflow';
-import { isGmail, readCategories } from './gmail';
+import { hasCategories, readCategories } from './gmail';
 
 export interface FolderRef {
   path: string;
@@ -23,7 +24,8 @@ export function toIngestEnvelope(
   uidValidity: number,
   message: FetchMessageObject,
   backfill: boolean,
-  category: GmailCategory | null = null,
+  // Gmail categories, or null where the folder has none.
+  categories: MailCategory[] | null = null,
 ): JobEnvelope<IngestPayload> | null {
   if (!message.source || message.source.length > MAX_RAW_MESSAGE_BYTES) return null;
   return createJobEnvelope({
@@ -38,7 +40,8 @@ export function toIngestEnvelope(
     payload: {
       folder: folder.path,
       role: folder.role,
-      category,
+      category: categories && folder.role === 'inbox' ? tabOf(categories) : null,
+      categories: categories ?? [],
       uid: message.uid,
       uidValidity,
       flags: [...(message.flags ?? [])],
@@ -64,12 +67,10 @@ export async function fetchAndEnqueue(
     logger: Logger;
   },
 ): Promise<{ uids: number[]; jobIds: string[] }> {
-  // Gmail tags inbox mail with a tab; anything untagged is Primary.
   const set = Array.isArray(range) ? range.join(',') : range;
-  const tabs =
-    options.folder.role === 'inbox' && isGmail(client)
-      ? await readCategories(client, options.byUid ? { uid: set } : { seq: set })
-      : null;
+  const tagged = hasCategories(client, options.folder.role)
+    ? await readCategories(client, options.byUid ? { uid: set } : { seq: set })
+    : null;
   const uids: number[] = [];
   const jobIds: string[] = [];
   for await (const message of client.fetch(
@@ -84,7 +85,7 @@ export async function fetchAndEnqueue(
       options.uidValidity,
       message,
       options.backfill,
-      tabs ? (tabs.get(message.uid) ?? 'primary') : null,
+      tagged ? (tagged.get(message.uid) ?? []) : null,
     );
     if (!envelope) {
       options.logger.warn(

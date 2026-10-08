@@ -60,6 +60,7 @@ const ops = createConsumer(
   createOpsHandler({
     internal,
     changes,
+    store,
     allowPrivateHosts: config.ALLOW_PRIVATE_MAIL_HOSTS,
     maxAttempts: RETRY_POLICIES[QUEUES.mailboxOps].attempts,
   }),

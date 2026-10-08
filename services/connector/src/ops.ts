@@ -5,6 +5,7 @@ import type {
   MailboxOpPayload,
   MailboxTarget,
 } from '@onebox/contracts';
+import type { MailboxStore } from '@onebox/mailbox-state';
 import { ValidationError } from '@onebox/errors';
 import type { JobContext, Producer } from '@onebox/queue';
 import type { ImapFlow, ListResponse } from 'imapflow';
@@ -12,10 +13,12 @@ import { changeEnvelope } from './folder-sync';
 import { discoverFolders } from './folders';
 import { AuthenticationFailedError, openImapClient } from './imap-client';
 import type { InternalClient } from './internal-client';
+import { runLabelOp } from './label-ops';
 
 export interface OpsDeps {
   internal: InternalClient;
   changes: Producer<MailboxChangePayload>;
+  store: MailboxStore;
   allowPrivateHosts: boolean;
   connectTimeoutMs?: number;
   // After this many attempts the op is given up and the server state wins again.
@@ -50,9 +53,26 @@ export function createOpsHandler(deps: OpsDeps) {
     const { accountId, userId, payload } = envelope;
     if (!accountId) throw new ValidationError('Mailbox op is missing accountId');
     const account = { id: accountId, userId };
-    const { folder, uidValidity, uids, op } = payload;
     const emit = (change: MailboxChangePayload) =>
       deps.changes.enqueue(changeEnvelope(account, change));
+
+    if ('kind' in payload) {
+      let client: ImapFlow | undefined;
+      try {
+        client = await openImapClient(accountId, { ...deps, idle: 'off' });
+        await runLabelOp(client, { accountId, payload, store: deps.store, emit, logger });
+      } catch (err) {
+        if (err instanceof AuthenticationFailedError) {
+          throw new ValidationError('Mailbox credentials rejected', { cause: err });
+        }
+        throw err;
+      } finally {
+        if (client?.usable) await client.logout().catch(() => client?.close());
+      }
+      return;
+    }
+
+    const { folder, uidValidity, uids, op } = payload;
     const settle = () => emit({ type: 'settled', folder, uidValidity, uids });
 
     let client: ImapFlow | undefined;

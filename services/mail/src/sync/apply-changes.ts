@@ -1,8 +1,9 @@
 import {
   decodeUidSet,
-  GMAIL_CATEGORIES,
   ingestDedupeKey,
-  type GmailCategory,
+  MAIL_CATEGORIES,
+  tabOf,
+  type MailCategory,
   type JobEnvelope,
   type MailboxChangePayload,
 } from '@onebox/contracts';
@@ -31,7 +32,7 @@ export function createChangesHandler(collections: MailCollections) {
     const at = (uids: number[]): Filter<MessageDoc> => ({
       accountId,
       folder: change.folder,
-      uidValidity: change.uidValidity,
+      ...('uidValidity' in change && { uidValidity: change.uidValidity }),
       uid: { $in: uids },
     });
     const settled = (doc: Pick<MessageDoc, 'pendingSince'>) =>
@@ -65,7 +66,7 @@ export function createChangesHandler(collections: MailCollections) {
               role: to.role,
               uid,
               uidValidity: to.uidValidity,
-              category: to.role === 'inbox' ? doc.category : null,
+              category: to.role === 'inbox' ? tabOf(doc.categories ?? []) : null,
               pendingSince: null,
               movingTo: null,
             });
@@ -83,6 +84,41 @@ export function createChangesHandler(collections: MailCollections) {
         } else {
           await messages.deleteMany({ _id: { $in: moved } });
         }
+        break;
+      }
+
+      // Stored copies take the label's new path, keyed as the destination's own sync would key them.
+      case 'folderRenamed': {
+        const docs = await messages.find({ accountId, folder: change.folder }).toArray();
+        for (const doc of docs) {
+          touched.add(doc.threadId);
+          try {
+            await messages.insertOne({
+              ...doc,
+              _id: ingestDedupeKey({
+                accountId,
+                folder: change.to,
+                uidValidity: doc.uidValidity,
+                uid: doc.uid,
+              }),
+              folder: change.to,
+            });
+          } catch (err) {
+            if (!isDuplicateKeyError(err)) throw err;
+          }
+        }
+        await messages.deleteMany({ _id: { $in: docs.map((doc) => doc._id) } });
+        await messages.updateMany(
+          { accountId, 'movingTo.folder': change.folder },
+          { $set: { 'movingTo.folder': change.to } },
+        );
+        break;
+      }
+
+      case 'folderGone': {
+        const gone = { accountId, folder: change.folder };
+        await threadsOf(gone);
+        await messages.deleteMany(gone);
         break;
       }
 
@@ -117,9 +153,11 @@ export function createChangesHandler(collections: MailCollections) {
       case 'snapshot': {
         const present = decodeUidSet(change.present);
         const flagsOf = new Map(change.flags.map((f) => [f.uid, f.flags]));
-        const tabOf = new Map<number, GmailCategory>();
-        for (const tab of GMAIL_CATEGORIES) {
-          for (const uid of decodeUidSet(change.categories?.[tab] ?? '')) tabOf.set(uid, tab);
+        const tagsOf = new Map<number, MailCategory[]>();
+        for (const tag of MAIL_CATEGORIES) {
+          for (const uid of decodeUidSet(change.categories?.[tag] ?? '')) {
+            tagsOf.set(uid, [...(tagsOf.get(uid) ?? []), tag]);
+          }
         }
         const writes: AnyBulkWriteOperation<MessageDoc>[] = [];
         // A renumbered folder is re-fetched from scratch by the connector.
@@ -167,7 +205,9 @@ export function createChangesHandler(collections: MailCollections) {
               Object.assign(set, next);
           }
           if (change.categories) {
-            const tab = tabOf.get(doc.uid) ?? 'primary';
+            const tags = tagsOf.get(doc.uid) ?? [];
+            if (tags.join() !== (doc.categories ?? []).join()) set.categories = tags;
+            const tab = change.role === 'inbox' ? tabOf(tags) : null;
             if (tab !== doc.category) set.category = tab;
           }
           if (Object.keys(set).length > 0) {

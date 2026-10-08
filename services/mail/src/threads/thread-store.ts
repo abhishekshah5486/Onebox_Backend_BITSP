@@ -132,6 +132,7 @@ type ThreadMessage = Pick<
   | 'uid'
   | 'folder'
   | 'category'
+  | 'categories'
   | 'unsubscribe'
   | 'movingTo'
 >;
@@ -189,6 +190,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
       uid: 1,
       folder: 1,
       category: 1,
+      categories: 1,
       unsubscribe: 1,
       movingTo: 1,
     })
@@ -232,6 +234,13 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
           ),
         ].sort(),
         category: visible.findLast((doc) => locationOf(doc).role === 'inbox')?.category ?? null,
+        categories: [
+          ...new Set(
+            visible
+              .filter((doc) => !['spam', 'trash'].includes(locationOf(doc).role))
+              .flatMap((doc) => doc.categories ?? []),
+          ),
+        ].sort(),
         canUnsubscribe: docs.some((doc) => doc.unsubscribe),
         lastUid: last.uid,
         updatedAt: now,
@@ -266,6 +275,7 @@ export async function migrateFolderRoles(collections: MailCollections): Promise<
           { folders: { $exists: false } },
           { lastUid: { $exists: false } },
           { labels: { $exists: false } },
+          { categories: { $exists: false } },
         ],
       },
       { projection: { _id: 1 } },

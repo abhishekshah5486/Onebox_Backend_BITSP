@@ -1,4 +1,4 @@
-import type { FolderRole, GmailCategory, MailboxRole } from '@onebox/contracts';
+import type { FolderRole, GmailCategory, MailboxRole, MailCategory } from '@onebox/contracts';
 import type { Authentication } from '../ingest/authentication';
 import type { Unsubscribe } from '../ingest/unsubscribe';
 import type { Collection, Db } from 'mongodb';
@@ -47,6 +47,8 @@ export interface MessageDoc {
   sizeBytes: number;
   backfill: boolean;
   category: GmailCategory | null;
+  // Every Gmail category (tabs, Purchases, Travel); missing on mail stored before them.
+  categories?: MailCategory[];
   unsubscribe: Unsubscribe | null;
   // Missing on mail stored before it was recorded.
   authentication?: Authentication;
@@ -78,6 +80,8 @@ export interface ThreadDoc {
   labels: string[];
   // Gmail inbox tab of the newest inbox message; null elsewhere.
   category: GmailCategory | null;
+  // Every category any of its messages carries, for the sidebar's category views.
+  categories: MailCategory[];
   canUnsubscribe: boolean;
   unsubscribedAt: Date | null;
   // UID of the newest message; orders conversations that share the same second.
@@ -116,6 +120,7 @@ export async function ensureIndexes({ messages, threads }: MailCollections): Pro
     threads.createIndex({ userId: 1, accountId: 1, normalizedSubject: 1, lastMessageAt: -1 }),
     threads.createIndex({ userId: 1, accountId: 1, labels: 1, lastMessageAt: -1, lastUid: -1 }),
     threads.createIndex({ userId: 1, folders: 1, category: 1, lastMessageAt: -1, lastUid: -1 }),
+    threads.createIndex({ userId: 1, categories: 1, lastMessageAt: -1, lastUid: -1 }),
     messages.createIndex({ accountId: 1, folder: 1, uidValidity: 1, uid: 1 }),
   ]);
 }

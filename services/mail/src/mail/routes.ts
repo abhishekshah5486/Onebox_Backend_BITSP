@@ -4,11 +4,13 @@ import {
   gmailCategorySchema,
   mailboxRoleSchema,
   mailboxTargetSchema,
+  mailCategorySchema,
 } from '@onebox/contracts';
 import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { MailService } from './mail-service';
+import type { LabelService } from './label-service';
 import type { MailboxService } from './mailbox-service';
 import { THREAD_ACTIONS, type MailboxView, type ThreadActions } from './thread-actions';
 
@@ -20,6 +22,7 @@ const threadView = z.object({
   folders: z.array(folderRoleSchema),
   labels: z.array(z.string()),
   category: gmailCategorySchema.nullable(),
+  categories: z.array(mailCategorySchema),
   canUnsubscribe: z.boolean(),
   unsubscribedAt: z.string().nullable(),
   subject: z.string(),
@@ -81,6 +84,7 @@ const filterQuery = {
   folder: folderRoleSchema.optional(),
   label: labelPath.optional(),
   category: gmailCategorySchema.optional(),
+  tagged: mailCategorySchema.optional(),
 };
 const folderQuery = z.object({
   folder: folderRoleSchema.default('inbox'),
@@ -117,11 +121,13 @@ export function registerMailRoutes(
     mail,
     mailboxes,
     actions,
+    labels,
     verifyToken,
   }: {
     mail: MailService;
     mailboxes: MailboxService;
     actions: ThreadActions;
+    labels: LabelService;
     verifyToken: TokenVerifier;
   },
 ) {
@@ -319,6 +325,59 @@ export function registerMailRoutes(
                 viewOf(request.query),
               ),
             ),
+      );
+
+      const labelList = {
+        200: z.object({ items: z.array(z.object({ path: z.string(), name: z.string() })) }),
+      };
+      const labelName = z.string().min(1).max(200);
+
+      routes.post(
+        '/accounts/:accountId/labels',
+        {
+          schema: {
+            params: accountParams,
+            body: z.object({ name: labelName }),
+            response: { 201: labelList[200] },
+          },
+        },
+        async (request, reply) =>
+          reply
+            .status(201)
+            .send(
+              await labels.create(userId(request), request.params.accountId, request.body.name),
+            ),
+      );
+
+      routes.patch(
+        '/accounts/:accountId/labels',
+        {
+          schema: {
+            params: accountParams,
+            body: z.object({ path: labelPath, name: labelName }),
+            response: labelList,
+          },
+        },
+        async (request) =>
+          labels.rename(
+            userId(request),
+            request.params.accountId,
+            request.body.path,
+            request.body.name,
+          ),
+      );
+
+      routes.post(
+        '/accounts/:accountId/labels/delete',
+        {
+          schema: {
+            params: accountParams,
+            body: z.object({ path: labelPath }),
+            response: labelList,
+          },
+        },
+        async (request) =>
+          labels.remove(userId(request), request.params.accountId, request.body.path),
       );
 
       routes.get(

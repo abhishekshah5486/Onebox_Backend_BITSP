@@ -25,3 +25,22 @@ export const GMAIL_CATEGORIES = ['primary', 'social', 'promotions', 'updates', '
 export type GmailCategory = (typeof GMAIL_CATEGORIES)[number];
 
 export const gmailCategorySchema = z.enum(GMAIL_CATEGORIES);
+
+// Every category Gmail can tag mail with. The four tabs plus Purchases and Travel, which Gmail
+// adds on top of a tab, so one message can carry several.
+export const MAIL_CATEGORIES = [
+  'social',
+  'promotions',
+  'updates',
+  'forums',
+  'purchases',
+  'travel',
+] as const;
+
+export type MailCategory = (typeof MAIL_CATEGORIES)[number];
+
+export const mailCategorySchema = z.enum(MAIL_CATEGORIES);
+
+// The inbox tab a message shows under: its first tab category, else Primary.
+export const tabOf = (categories: readonly string[]): GmailCategory =>
+  GMAIL_CATEGORIES.find((tab) => tab !== 'primary' && categories.includes(tab)) ?? 'primary';

@@ -59,6 +59,7 @@ export function createIngestHandler(collections: MailCollections) {
         sizeBytes: payload.sizeBytes,
         backfill: payload.backfill,
         category: payload.category,
+        categories: payload.categories,
         pendingSince: null,
         movingTo: null,
         createdAt: new Date(),

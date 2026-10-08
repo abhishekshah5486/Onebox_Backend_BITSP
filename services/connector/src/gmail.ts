@@ -1,20 +1,22 @@
-import type { GmailCategory } from '@onebox/contracts';
+import { MAIL_CATEGORIES, type MailCategory } from '@onebox/contracts';
 import type { ImapFlow } from 'imapflow';
 
 export const isGmail = (client: ImapFlow) => client.capabilities.has('X-GM-EXT-1');
 
-// Primary is whatever is in none of the others.
-const TABS = ['social', 'promotions', 'updates', 'forums'] as const;
+// Gmail's inbox and All Mail carry categories (tabs, Purchases, Travel).
+export const hasCategories = (client: ImapFlow, role: string) =>
+  (role === 'inbox' || role === 'archive') && isGmail(client);
 
-// Gmail exposes inbox tabs only through its own search syntax. Caller holds the INBOX lock.
+// Gmail exposes categories only through its own search syntax. Caller holds the folder lock.
 export async function readCategories(
   client: ImapFlow,
   scope: { uid: string } | { seq: string } | { all: true },
-): Promise<Map<number, GmailCategory>> {
-  const result = new Map<number, GmailCategory>();
-  for (const tab of TABS) {
-    const uids = (await client.search({ ...scope, gmraw: `category:${tab}` }, { uid: true })) || [];
-    for (const uid of uids) if (!result.has(uid)) result.set(uid, tab);
+): Promise<Map<number, MailCategory[]>> {
+  const result = new Map<number, MailCategory[]>();
+  for (const category of MAIL_CATEGORIES) {
+    const uids =
+      (await client.search({ ...scope, gmraw: `category:${category}` }, { uid: true })) || [];
+    for (const uid of uids) result.set(uid, [...(result.get(uid) ?? []), category]);
   }
   return result;
 }

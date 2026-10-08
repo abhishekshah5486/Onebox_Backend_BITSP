@@ -203,6 +203,7 @@ beforeAll(async () => {
     createOpsHandler({
       internal: fakeInternal(),
       changes: changeProducer,
+      store,
       allowPrivateHosts: true,
       connectTimeoutMs: 5000,
       maxAttempts: 1,
@@ -480,6 +481,30 @@ describe('imap connector', () => {
       uidValidity: archive.uidValidity,
       uids: [archivedUid],
     });
+  });
+
+  it('creates, renames and deletes labels, keeping non-empty folders on plain imap', async () => {
+    const labelOp = (op: object) =>
+      opProducer.enqueue(
+        createJobEnvelope({
+          jobId: `label-${Math.random()}`,
+          userId: 'user-1',
+          accountId: 'acc-1',
+          payload: { kind: 'label', op } as MailboxOpPayload,
+        }),
+      );
+    const paths = async () => (await store.getLabels('acc-1')).map((label) => label.path);
+
+    await labelOp({ type: 'create', name: 'Projects' });
+    await vi.waitFor(async () => expect(await paths()).toContain('Projects'));
+    await labelOp({ type: 'rename', path: 'Projects', name: 'Clients' });
+    await vi.waitFor(async () => expect(await paths()).toContain('Clients'));
+    expect(changes).toContainEqual({ type: 'folderRenamed', folder: 'Projects', to: 'Clients' });
+
+    await labelOp({ type: 'delete', path: 'Receipts' });
+    await labelOp({ type: 'delete', path: 'Clients' });
+    await vi.waitFor(async () => expect(await paths()).not.toContain('Clients'));
+    expect(await paths()).toContain('Receipts');
   });
 
   it('resumes from the cursor after a restart without duplicating work', async () => {

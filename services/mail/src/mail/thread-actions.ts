@@ -4,6 +4,7 @@ import {
   type FolderRole,
   type MailboxOpPayload,
   type MailboxTarget,
+  type MessageOpPayload,
 } from '@onebox/contracts';
 import { ConflictError, NotFoundError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
@@ -52,7 +53,7 @@ const oneClickPost: OneClickPost = (url) =>
     timeoutMs: 10_000,
   });
 
-type Op = MailboxOpPayload['op'];
+type Op = MessageOpPayload['op'];
 
 export function createThreadActions({
   collections,
@@ -84,7 +85,7 @@ export function createThreadActions({
         const jobId = randomUUID();
         jobIds.push(jobId);
         await ops.enqueue(
-          createJobEnvelope({
+          createJobEnvelope<MailboxOpPayload>({
             jobId,
             userId,
             accountId,
@@ -221,6 +222,7 @@ export function createThreadActions({
       }
       const touched = new Set<string>();
       for (const { accountId, payload } of withdrawn) {
+        if ('kind' in payload) continue;
         const filter = {
           userId,
           accountId,

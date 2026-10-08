@@ -9,6 +9,7 @@ import {
   QUEUES,
   type HistoryPayload,
   type MailboxOpPayload,
+  type MessageOpPayload,
 } from '@onebox/contracts';
 import { createMailboxStore, type MailboxStore } from '@onebox/mailbox-state';
 import { createProducer } from '@onebox/queue';
@@ -22,6 +23,7 @@ import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
 import { createMailService } from './mail-service';
 import { createMailboxService } from './mailbox-service';
+import { createLabelService } from './label-service';
 import { createThreadActions } from './thread-actions';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
@@ -80,6 +82,7 @@ beforeAll(async () => {
           return { ok: oneClickWorks, status: oneClickWorks ? 200 : 500 };
         },
       }),
+      labels: createLabelService({ store, ops: opsProducer, logger, waitMs: 300 }),
       verifyToken,
     },
   });
@@ -421,7 +424,7 @@ describe('mail api', () => {
       (await opsQueue.getJobs(['waiting', 'delayed', 'active', 'completed']))
         .map((job) => job.data as { accountId: string; payload: MailboxOpPayload })
         .filter((data) => data.accountId === accountId)
-        .map((data) => data.payload);
+        .map((data) => data.payload as MessageOpPayload);
     const put = (userId: string, accountId: string, spec: Parameters<typeof ingestJob>[0]) =>
       ingest(ingestJob({ userId, accountId, ...spec }), context);
     const ids = async (userId: string, query = '') =>
@@ -587,6 +590,29 @@ describe('mail api', () => {
 
       expect(await ids(userId, '?category=promotions')).toEqual(['Sale']);
       expect(await ids(userId, '?category=primary')).toEqual(['Mum', 'Yahoo mail']);
+    });
+
+    it('lists a category from every folder but spam and trash', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, {
+        subject: 'Order shipped',
+        messageId: '<o@x>',
+        categories: ['updates', 'purchases'],
+      });
+      await put(userId, accountId, {
+        subject: 'Old receipt',
+        messageId: '<r@x>',
+        categories: ['purchases'],
+        folder: { path: '[Gmail]/All Mail', role: 'archive' },
+      });
+      await put(userId, accountId, {
+        subject: 'Fake receipt',
+        messageId: '<f@x>',
+        categories: ['purchases'],
+        folder: { path: '[Gmail]/Spam', role: 'spam' },
+      });
+      expect(await ids(userId, '?tagged=purchases')).toEqual(['Old receipt', 'Order shipped']);
     });
 
     it('unsubscribes with one click, or hands back the link', async () => {

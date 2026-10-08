@@ -3,6 +3,7 @@ import {
   type GmailCategory,
   ingestDedupeKey,
   type MailboxRole,
+  type MailCategory,
   type IngestPayload,
 } from '@onebox/contracts';
 
@@ -53,6 +54,7 @@ export function ingestJob(
     folder?: { path: string; role: MailboxRole };
     uidValidity?: number;
     category?: GmailCategory | null;
+    categories?: MailCategory[];
   },
 ) {
   const folder = spec.folder ?? { path: 'INBOX', role: 'inbox' as const };
@@ -64,6 +66,7 @@ export function ingestJob(
     folder: folder.path,
     role: folder.role,
     category: spec.category ?? null,
+    categories: spec.categories ?? [],
     uid,
     uidValidity,
     flags: spec.flags ?? [],

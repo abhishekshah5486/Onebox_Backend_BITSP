@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   createJobEnvelope,
   encodeUidSet,
-  type GmailCategory,
+  type MailCategory,
   type IngestPayload,
   type MailboxChangePayload,
   mailboxKey,
@@ -12,7 +12,7 @@ import type { MailboxStore } from '@onebox/mailbox-state';
 import type { Producer } from '@onebox/queue';
 import type { ImapFlow } from 'imapflow';
 import { discoverFolders } from './folders';
-import { isGmail, readCategories } from './gmail';
+import { hasCategories, readCategories } from './gmail';
 import { FOLDER, openImapClient } from './imap-client';
 import { fetchAndEnqueue, type FolderRef } from './ingest-jobs';
 import type { ActiveAccount, InternalClient } from './internal-client';
@@ -74,11 +74,11 @@ async function snapshot(
   }
   if (highest) modseqs.set(folder.path, highest);
 
-  let categories: Partial<Record<GmailCategory, string>> | undefined;
-  if (folder.role === 'inbox' && isGmail(client)) {
+  let categories: Partial<Record<MailCategory, string>> | undefined;
+  if (hasCategories(client, folder.role)) {
     const byUid = await readCategories(client, { all: true });
-    const grouped: Partial<Record<GmailCategory, number[]>> = {};
-    for (const [uid, tab] of byUid) (grouped[tab] ??= []).push(uid);
+    const grouped: Partial<Record<MailCategory, number[]>> = {};
+    for (const [uid, tags] of byUid) for (const tag of tags) (grouped[tag] ??= []).push(uid);
     categories = Object.fromEntries(
       Object.entries(grouped).map(([tab, uids]) => [tab, encodeUidSet(uids)]),
     );

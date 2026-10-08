@@ -1,4 +1,4 @@
-import type { FolderRole, GmailCategory } from '@onebox/contracts';
+import type { FolderRole, GmailCategory, MailCategory } from '@onebox/contracts';
 import { NotFoundError } from '@onebox/errors';
 import type { Filter } from 'mongodb';
 import type { MailCollections, MessageDoc, ThreadDoc } from '../db/collections';
@@ -17,6 +17,8 @@ export interface ListThreadsInput {
   label?: string | undefined;
   // Gmail inbox tab; other providers' mail counts as Primary.
   category?: GmailCategory | undefined;
+  // A category view from the sidebar: mail with it in any folder but Spam and Trash.
+  tagged?: MailCategory | undefined;
   page?: number | undefined;
   limit?: number | undefined;
 }
@@ -27,6 +29,7 @@ const toThreadView = (thread: ThreadDoc) => ({
   folders: thread.folders,
   labels: thread.labels ?? [],
   category: thread.category ?? null,
+  categories: thread.categories ?? [],
   canUnsubscribe: thread.canUnsubscribe ?? false,
   unsubscribedAt: thread.unsubscribedAt?.toISOString() ?? null,
   subject: thread.subject,
@@ -75,12 +78,15 @@ export function createMailService(collections: MailCollections) {
   return {
     async listThreads(
       userId: string,
-      { accountId, filter = 'all', folder, label, category, ...page }: ListThreadsInput,
+      { accountId, filter = 'all', folder, label, category, tagged, ...page }: ListThreadsInput,
     ) {
       const query: Filter<ThreadDoc> = { userId };
       if (accountId) query.accountId = accountId;
       if (label) query.labels = label;
-      else query.folders = folder ?? (filter === 'starred' ? { $in: STARRED_FOLDERS } : 'inbox');
+      else if (tagged) {
+        query.categories = tagged;
+        query.folders = folder ?? { $nin: ['spam', 'trash'] };
+      } else query.folders = folder ?? (filter === 'starred' ? { $in: STARRED_FOLDERS } : 'inbox');
       if (category) query.category = category === 'primary' ? { $in: ['primary', null] } : category;
       if (filter === 'unread') query.unreadCount = { $gt: 0 };
       if (filter === 'starred') query.isStarred = true;

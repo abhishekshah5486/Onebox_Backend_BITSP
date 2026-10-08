@@ -18,6 +18,7 @@ import { ensureIndexes, mailCollections } from './db/collections';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
 import { createMailboxService } from './mail/mailbox-service';
+import { createLabelService } from './mail/label-service';
 import { createThreadActions } from './mail/thread-actions';
 import { createChangesHandler } from './sync/apply-changes';
 import { migrateFolderRoles } from './threads/thread-store';
@@ -68,6 +69,8 @@ const opsProducer = createProducer<MailboxOpPayload>(QUEUES.mailboxOps, {
 });
 cleanups.push(historyProducer.close, opsProducer.close, () => redis.quit());
 
+const mailboxStore = createMailboxStore(redis);
+
 const app = buildApp({
   logger,
   checks: { mongodb: mongo.ping, redis: () => redis.ping() },
@@ -76,11 +79,12 @@ const app = buildApp({
       mail: createMailService(collections),
       mailboxes: createMailboxService({
         collections,
-        store: createMailboxStore(redis),
+        store: mailboxStore,
         historyProducer,
         logger,
       }),
       actions: createThreadActions({ collections, ops: opsProducer, logger }),
+      labels: createLabelService({ store: mailboxStore, ops: opsProducer, logger }),
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     },
   }),
