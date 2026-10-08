@@ -1,9 +1,9 @@
-import type { IngestPayload } from '@onebox/contracts';
+import type { IngestPayload, MailboxChangePayload } from '@onebox/contracts';
 import type { Logger } from '@onebox/logger';
 import type { MailboxStore } from '@onebox/mailbox-state';
 import type { Producer } from '@onebox/queue';
-import type { ImapFlow } from 'imapflow';
-import { createFolderSync } from './folder-sync';
+import type { FlagsEvent, ImapFlow } from 'imapflow';
+import { changeEnvelope, createFolderSync } from './folder-sync';
 import { FOLDER, openImapClient } from './imap-client';
 import { fetchAndEnqueue } from './ingest-jobs';
 import type { ActiveAccount, InternalClient } from './internal-client';
@@ -17,6 +17,7 @@ const INBOX = { path: FOLDER, role: 'inbox' } as const;
 export interface SessionDeps {
   internal: InternalClient;
   producer: Producer<IngestPayload>;
+  changes: Producer<MailboxChangePayload>;
   store: MailboxStore;
   logger: Logger;
   allowPrivateHosts: boolean;
@@ -184,10 +185,29 @@ export async function runMailboxSession(
         );
     };
 
+    // Deletions elsewhere only report sequence numbers, so a snapshot works out what went.
+    const resyncSoon = debounce(runFolderSync, 3000);
+    const onFlags = (event: FlagsEvent) => {
+      refreshCounts();
+      if (!event.uid) return resyncSoon();
+      deps.changes
+        .enqueue(
+          changeEnvelope(account, {
+            type: 'flags',
+            folder: FOLDER,
+            uidValidity,
+            flags: [{ uid: event.uid, flags: [...event.flags] }],
+          }),
+        )
+        .catch((err: unknown) => logger.warn({ err }, 'could not forward a flag change'));
+    };
+
     client.on('exists', fetchNew);
-    // Deletions and read/unread changes made elsewhere change the server counts.
-    client.on('expunge', refreshCounts);
-    client.on('flags', refreshCounts);
+    client.on('expunge', () => {
+      refreshCounts();
+      resyncSoon();
+    });
+    client.on('flags', onFlags);
     const poll = setInterval(
       () => {
         fetchNew();
@@ -202,6 +222,7 @@ export async function runMailboxSession(
     clearInterval(poll);
     clearInterval(folderPoll);
     refreshCounts.cancel();
+    resyncSoon.cancel();
     await Promise.all([pending, folderRun]);
   } finally {
     signal.removeEventListener('abort', onAbort);

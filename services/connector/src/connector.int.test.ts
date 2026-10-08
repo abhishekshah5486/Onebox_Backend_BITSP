@@ -1,11 +1,16 @@
 import {
   createJobEnvelope,
+  decodeUidSet,
   historyPayloadSchema,
   ingestPayloadSchema,
+  mailboxChangePayloadSchema,
+  mailboxOpPayloadSchema,
   QUEUES,
   type HistoryPayload,
   type IngestPayload,
   type JobEnvelope,
+  type MailboxChangePayload,
+  type MailboxOpPayload,
 } from '@onebox/contracts';
 import { createLogger } from '@onebox/logger';
 import { createMailboxStore, type MailboxStore } from '@onebox/mailbox-state';
@@ -17,6 +22,7 @@ import nodemailer from 'nodemailer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHistoryHandler } from './history';
 import type { ActiveAccount, InternalClient, ReportedStatus } from './internal-client';
+import { createOpsHandler } from './ops';
 import { createSupervisor, type Supervisor } from './supervisor';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
@@ -27,6 +33,9 @@ let redisContainer: TestRedis;
 let redis: Redis;
 let store: MailboxStore;
 const jobs: JobEnvelope<IngestPayload>[] = [];
+const changes: MailboxChangePayload[] = [];
+let changeProducer: ReturnType<typeof createProducer<MailboxChangePayload>>;
+let opProducer: ReturnType<typeof createProducer<MailboxOpPayload>>;
 const statuses: { accountId: string; status: ReportedStatus }[] = [];
 const closers: (() => Promise<unknown>)[] = [];
 
@@ -112,6 +121,35 @@ async function seenFlags() {
   return result;
 }
 
+async function serverState(path: string) {
+  const client = await imap();
+  const lock = await client.getMailboxLock(path);
+  const result: Record<string, { uid: number; flags: Set<string> }> = {};
+  const uidValidity = Number(client.mailbox && client.mailbox.uidValidity);
+  if (client.mailbox && client.mailbox.exists > 0) {
+    for await (const message of client.fetch('1:*', { envelope: true, flags: true, uid: true })) {
+      result[message.envelope?.subject ?? ''] = {
+        uid: message.uid,
+        flags: message.flags ?? new Set(),
+      };
+    }
+  }
+  lock.release();
+  await client.logout();
+  return { uidValidity, messages: result };
+}
+
+async function runOp(payload: MailboxOpPayload) {
+  await opProducer.enqueue(
+    createJobEnvelope({
+      jobId: `op-${Math.random()}`,
+      userId: 'user-1',
+      accountId: 'acc-1',
+      payload,
+    }),
+  );
+}
+
 function supervisor(internal: InternalClient): Supervisor {
   const producer = createProducer<IngestPayload>(QUEUES.ingest, {
     redisUrl: redisContainer.url,
@@ -126,6 +164,7 @@ function supervisor(internal: InternalClient): Supervisor {
     leaseTtlMs: 3000,
     sessionDeps: {
       producer,
+      changes: changeProducer,
       store,
       allowPrivateHosts: true,
       initialBatch: 2,
@@ -142,6 +181,35 @@ beforeAll(async () => {
   [mail, redisContainer] = await Promise.all([startGreenMail([user]), startRedis()]);
   redis = new Redis(redisContainer.url);
   store = createMailboxStore(redis);
+  changeProducer = createProducer<MailboxChangePayload>(QUEUES.mailboxChanges, {
+    redisUrl: redisContainer.url,
+    logger,
+  });
+  opProducer = createProducer<MailboxOpPayload>(QUEUES.mailboxOps, {
+    redisUrl: redisContainer.url,
+    logger,
+  });
+  const changeConsumer = createConsumer(
+    QUEUES.mailboxChanges,
+    mailboxChangePayloadSchema,
+    async (envelope) => {
+      changes.push(envelope.payload);
+    },
+    { redisUrl: redisContainer.url, logger, concurrency: 1 },
+  );
+  const ops = createConsumer(
+    QUEUES.mailboxOps,
+    mailboxOpPayloadSchema,
+    createOpsHandler({
+      internal: fakeInternal(),
+      changes: changeProducer,
+      allowPrivateHosts: true,
+      connectTimeoutMs: 5000,
+      maxAttempts: 1,
+    }),
+    { redisUrl: redisContainer.url, logger, concurrency: 1 },
+  );
+  closers.push(changeConsumer.close, ops.close, changeProducer.close, opProducer.close);
   const historyProducer = createProducer<IngestPayload>(QUEUES.ingest, {
     redisUrl: redisContainer.url,
     logger,
@@ -291,6 +359,114 @@ describe('imap connector', () => {
     expect(
       jobs.filter((job) => job.payload.role === 'inbox' && job.payload.uid === 1),
     ).toHaveLength(1);
+  });
+
+  it('syncs the archive folder and labels, and lists the labels', async () => {
+    await appendTo('Archive', 'Archived one');
+    await appendTo('Receipts', 'Receipt one');
+
+    await vi.waitFor(
+      () => {
+        expect(subjects(true, 'archive')).toEqual(['Archived one']);
+        expect(subjects(true, 'label')).toEqual(['Receipt one']);
+      },
+      { timeout: 15_000 },
+    );
+    expect(await store.getLabels('acc-1')).toEqual([{ path: 'Receipts', name: 'Receipts' }]);
+    await vi.waitFor(async () =>
+      expect(await store.getCounts('acc-1', 'label:Receipts')).toMatchObject({ total: 1 }),
+    );
+  });
+
+  it('reports deletions and flag changes made in another mail app', async () => {
+    const before = await serverState('INBOX');
+    const flagged = before.messages['Old one']!.uid;
+    const gone = before.messages['Old two']!.uid;
+    const client = await imap();
+    const lock = await client.getMailboxLock('INBOX');
+    await client.messageFlagsAdd(String(flagged), ['\\Flagged'], { uid: true });
+    await client.messageDelete(String(gone), { uid: true });
+    lock.release();
+    await client.logout();
+
+    await vi.waitFor(
+      () => {
+        const inbox = changes.filter(
+          (change) => change.type === 'snapshot' && change.folder === 'INBOX',
+        );
+        const latest = inbox.at(-1);
+        expect(latest?.type === 'snapshot' && decodeUidSet(latest.present).has(gone)).toBe(false);
+        const sawFlag = changes.some(
+          (change) =>
+            (change.type === 'flags' || change.type === 'snapshot') &&
+            change.folder === 'INBOX' &&
+            change.flags.some((f) => f.uid === flagged && f.flags.includes('\\Flagged')),
+        );
+        expect(sawFlag).toBe(true);
+      },
+      { timeout: 15_000 },
+    );
+  });
+
+  it('applies flag changes, moves and permanent deletions to the server', async () => {
+    const inbox = await serverState('INBOX');
+    const fresh = inbox.messages['Fresh news']!.uid;
+    const old = inbox.messages['Old three']!.uid;
+    const base = { folder: 'INBOX', uidValidity: inbox.uidValidity };
+
+    await runOp({
+      ...base,
+      uids: [fresh],
+      op: { type: 'flags', add: ['\\Flagged'], remove: ['\\Seen'] },
+    });
+    await vi.waitFor(async () => {
+      const flags = (await serverState('INBOX')).messages['Fresh news']!.flags;
+      expect(flags.has('\\Flagged')).toBe(true);
+      expect(flags.has('\\Seen')).toBe(false);
+    });
+    expect(changes).toContainEqual({ type: 'settled', ...base, uids: [fresh] });
+
+    await runOp({ ...base, uids: [old], op: { type: 'move', to: { role: 'archive' } } });
+    await vi.waitFor(async () => {
+      expect((await serverState('INBOX')).messages['Old three']).toBeUndefined();
+      expect((await serverState('Archive')).messages['Old three']).toBeDefined();
+    });
+    const archive = await serverState('Archive');
+    const archivedUid = archive.messages['Old three']!.uid;
+    await vi.waitFor(() =>
+      expect(changes).toContainEqual({
+        type: 'moved',
+        ...base,
+        to: { folder: 'Archive', role: 'archive', uidValidity: archive.uidValidity },
+        uidMap: [[old, archivedUid]],
+        keepSource: false,
+      }),
+    );
+
+    await runOp({ ...base, uids: [fresh], op: { type: 'move', to: { label: 'Receipts' } } });
+    await vi.waitFor(async () =>
+      expect((await serverState('Receipts')).messages['Fresh news']).toBeDefined(),
+    );
+    // The label's next sync sees it as new mail there; the mail service dedupes it by key.
+    await vi.waitFor(() => expect(subjects(false, 'label')).toEqual(['Fresh news']), {
+      timeout: 15_000,
+    });
+
+    await runOp({
+      folder: 'Archive',
+      uidValidity: archive.uidValidity,
+      uids: [archivedUid],
+      op: { type: 'expunge' },
+    });
+    await vi.waitFor(async () =>
+      expect((await serverState('Archive')).messages['Old three']).toBeUndefined(),
+    );
+    expect(changes).toContainEqual({
+      type: 'removed',
+      folder: 'Archive',
+      uidValidity: archive.uidValidity,
+      uids: [archivedUid],
+    });
   });
 
   it('resumes from the cursor after a restart without duplicating work', async () => {
