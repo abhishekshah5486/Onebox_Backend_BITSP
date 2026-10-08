@@ -2,7 +2,12 @@ import { keyAccepted, postJson, ProviderError, type ProviderAdapter } from './ty
 
 interface MessagesResult {
   content?: { type: string; text?: string; input?: unknown }[];
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
 }
 
 // Anthropic Messages API. Structured output goes through a forced tool whose input is the schema.
@@ -49,10 +54,15 @@ export function anthropicAdapter(
             .map((block) => block.text ?? '')
             .join('');
       if (!text) throw new ProviderError('The model returned no text', 'EMPTY', true);
+      // Anthropic counts cached input separately; fold it in so input means all input everywhere.
+      const cacheReadTokens = result.usage?.cache_read_input_tokens ?? 0;
+      const cacheWriteTokens = result.usage?.cache_creation_input_tokens ?? 0;
       return {
         text,
-        inputTokens: result.usage?.input_tokens ?? 0,
+        inputTokens: (result.usage?.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens,
         outputTokens: result.usage?.output_tokens ?? 0,
+        cacheReadTokens,
+        cacheWriteTokens,
       };
     },
   };

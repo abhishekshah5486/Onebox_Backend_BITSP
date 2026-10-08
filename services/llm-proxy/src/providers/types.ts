@@ -15,8 +15,11 @@ export interface ProviderRequest {
 
 export interface ProviderResponse {
   text: string;
+  // All input tokens, including those read from or written to the provider's prompt cache.
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
 }
 
 export interface ProviderAdapter {

@@ -36,7 +36,13 @@ const fake: ProviderAdapter = {
     calls.push(request.model);
     const answer = script[request.model];
     if (!answer) throw new ProviderError('HTTP 503', 'PROVIDER_DOWN', true, 503);
-    return { text: answer(request), inputTokens: 100, outputTokens: 10 };
+    return {
+      text: answer(request),
+      inputTokens: 100,
+      outputTokens: 10,
+      cacheReadTokens: 40,
+      cacheWriteTokens: 0,
+    };
   },
 };
 
@@ -111,7 +117,10 @@ describe('llm proxy', () => {
       status: 'ok',
       inputTokens: 100,
       outputTokens: 10,
+      cacheReadTokens: 40,
     });
+    // 60 fresh input at $2, 40 cached at $0.20 and 10 output at $10 per million.
+    expect(row!.costUsd).toBeCloseTo(0.000228, 9);
     expect(row!.attempts.map((a) => a.outcome)).toEqual(['error', 'error', 'error', 'error', 'ok']);
   });
 
@@ -138,7 +147,10 @@ describe('llm proxy', () => {
       cacheHits: 1,
       inputTokens: 200,
       outputTokens: 20,
+      cacheReadTokens: 80,
     });
+    expect(usage.totals.costUsd).toBeCloseTo(0.000171, 9);
+    expect(usage.calls.map((call) => call.cacheHit)).toEqual([true, false]);
   });
 
   it('skips a model that keeps failing, and reports when nothing can answer', async () => {

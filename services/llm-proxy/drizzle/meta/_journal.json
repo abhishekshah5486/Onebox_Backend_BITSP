@@ -15,6 +15,13 @@
       "when": 1791470921899,
       "tag": "0001_seed_models",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791476535549,
+      "tag": "0002_model_prices",
+      "breakpoints": true
     }
   ]
 }

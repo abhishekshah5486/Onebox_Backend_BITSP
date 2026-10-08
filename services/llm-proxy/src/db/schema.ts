@@ -3,6 +3,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgSchema,
   primaryKey,
   text,
@@ -28,6 +29,11 @@ export const models = llmSchema.table('models', {
   name: text('name').notNull(),
   description: text('description').notNull(),
   rank: integer('rank').notNull(),
+  // USD per million tokens, from the provider's price list.
+  inputPrice: numeric('input_price', { mode: 'number' }).notNull().default(0),
+  outputPrice: numeric('output_price', { mode: 'number' }).notNull().default(0),
+  cacheReadPrice: numeric('cache_read_price', { mode: 'number' }).notNull().default(0),
+  cacheWritePrice: numeric('cache_write_price', { mode: 'number' }).notNull().default(0),
   enabled: boolean('enabled').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -87,6 +93,10 @@ export const llmCalls = llmSchema.table(
     cacheHit: boolean('cache_hit').notNull().default(false),
     inputTokens: integer('input_tokens').notNull().default(0),
     outputTokens: integer('output_tokens').notNull().default(0),
+    // Part of input tokens served from or written to the provider's prompt cache.
+    cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
+    cacheWriteTokens: integer('cache_write_tokens').notNull().default(0),
+    costUsd: numeric('cost_usd', { precision: 14, scale: 8, mode: 'number' }).notNull().default(0),
     latencyMs: integer('latency_ms').notNull(),
     attempts: jsonb('attempts').$type<AttemptRecord[]>().notNull(),
     requestHash: text('request_hash').notNull(),

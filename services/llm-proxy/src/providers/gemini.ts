@@ -2,7 +2,12 @@ import { keyAccepted, postJson, ProviderError, type ProviderAdapter } from './ty
 
 interface GenerateResult {
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    cachedContentTokenCount?: number;
+  };
   promptFeedback?: { blockReason?: string };
 }
 
@@ -47,7 +52,12 @@ export function geminiAdapter(
       return {
         text,
         inputTokens: result.usageMetadata?.promptTokenCount ?? 0,
-        outputTokens: result.usageMetadata?.candidatesTokenCount ?? 0,
+        // Thinking is billed as output.
+        outputTokens:
+          (result.usageMetadata?.candidatesTokenCount ?? 0) +
+          (result.usageMetadata?.thoughtsTokenCount ?? 0),
+        cacheReadTokens: result.usageMetadata?.cachedContentTokenCount ?? 0,
+        cacheWriteTokens: 0,
       };
     },
   };

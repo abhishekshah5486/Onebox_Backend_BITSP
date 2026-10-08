@@ -12,13 +12,35 @@ import {
 
 export const AUTO = 'auto';
 
+// The catalogue and Auto routes change only with a migration, and the database is a slow
+// round trip away, so they are read once a minute rather than on every request.
+const CATALOG_TTL_MS = 60_000;
+
 // The catalogue, the user's pick per purpose, and the order models are tried in.
 export function createCatalog(db: PostgresJsDatabase, configured: Set<Provider>) {
   const available = (model: ModelRow) => model.enabled && configured.has(model.provider);
 
-  async function all() {
-    return db.select().from(models).orderBy(asc(models.provider), asc(models.rank));
+  let cached: { at: number; models: Promise<ModelRow[]>; routes: Promise<RouteRow[]> } | null =
+    null;
+  function load() {
+    if (!cached || Date.now() - cached.at > CATALOG_TTL_MS) {
+      const fresh = {
+        at: Date.now(),
+        models: db.select().from(models).orderBy(asc(models.provider), asc(models.rank)),
+        routes: db
+          .select()
+          .from(purposeRoutes)
+          .orderBy(asc(purposeRoutes.purpose), asc(purposeRoutes.position)),
+      };
+      // A failed read is not kept, so the next request tries again.
+      Promise.all([fresh.models, fresh.routes]).catch(() => {
+        if (cached === fresh) cached = null;
+      });
+      cached = fresh;
+    }
+    return cached;
   }
+  const all = () => load().models;
 
   async function choiceOf(userId: string, purpose: Purpose) {
     const [row] = await db
@@ -36,6 +58,12 @@ export function createCatalog(db: PostgresJsDatabase, configured: Set<Provider>)
         name: model.name,
         description: model.description,
         available: available(model),
+        prices: {
+          input: model.inputPrice,
+          output: model.outputPrice,
+          cacheRead: model.cacheReadPrice,
+          cacheWrite: model.cacheWritePrice,
+        },
       }));
     },
 
@@ -56,7 +84,7 @@ export function createCatalog(db: PostgresJsDatabase, configured: Set<Provider>)
           .where(and(eq(userModelChoices.userId, userId), eq(userModelChoices.purpose, purpose)));
         return;
       }
-      const [model] = await db.select().from(models).where(eq(models.id, modelId));
+      const model = (await all()).find((row) => row.id === modelId);
       if (!model) throw new NotFoundError('Unknown model');
       if (!available(model)) throw new ValidationError(`${model.name} is not available right now`);
       await db
@@ -73,13 +101,9 @@ export function createCatalog(db: PostgresJsDatabase, configured: Set<Provider>)
     async chain(purpose: Purpose, requested: string): Promise<ModelRow[]> {
       const catalogue = await all();
       const byId = new Map(catalogue.map((model) => [model.id, model]));
-      const route = (
-        await db
-          .select()
-          .from(purposeRoutes)
-          .where(eq(purposeRoutes.purpose, purpose))
-          .orderBy(asc(purposeRoutes.position))
-      ).map((row) => byId.get(row.modelId)!);
+      const route = (await load().routes)
+        .filter((row) => row.purpose === purpose)
+        .map((row) => byId.get(row.modelId)!);
 
       const picked = byId.get(requested);
       const ordered =
@@ -99,5 +123,7 @@ export function createCatalog(db: PostgresJsDatabase, configured: Set<Provider>)
     },
   };
 }
+
+type RouteRow = typeof purposeRoutes.$inferSelect;
 
 export type Catalog = ReturnType<typeof createCatalog>;

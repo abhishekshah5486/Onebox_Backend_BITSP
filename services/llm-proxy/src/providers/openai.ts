@@ -2,7 +2,11 @@ import { keyAccepted, postJson, ProviderError, type ProviderAdapter } from './ty
 
 interface ResponsesResult {
   output?: { type: string; content?: { type: string; text?: string }[] }[];
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number };
+  };
   status?: string;
 }
 
@@ -50,6 +54,8 @@ export function openaiAdapter(
         text,
         inputTokens: result.usage?.input_tokens ?? 0,
         outputTokens: result.usage?.output_tokens ?? 0,
+        cacheReadTokens: result.usage?.input_tokens_details?.cached_tokens ?? 0,
+        cacheWriteTokens: 0,
       };
     },
   };

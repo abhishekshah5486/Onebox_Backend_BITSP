@@ -71,6 +71,12 @@ export function registerLlmRoutes(
                     name: z.string(),
                     description: z.string(),
                     available: z.boolean(),
+                    prices: z.object({
+                      input: z.number(),
+                      output: z.number(),
+                      cacheRead: z.number(),
+                      cacheWrite: z.number(),
+                    }),
                   }),
                 ),
                 purposes: z.array(z.enum(PURPOSES)),
@@ -79,11 +85,13 @@ export function registerLlmRoutes(
             },
           },
         },
-        async (request) => ({
-          items: await catalog.list(),
-          purposes: [...PURPOSES],
-          choices: await catalog.choices(userId(request)),
-        }),
+        async (request) => {
+          const [items, choices] = await Promise.all([
+            catalog.list(),
+            catalog.choices(userId(request)),
+          ]);
+          return { items, purposes: [...PURPOSES], choices };
+        },
       );
 
       routes.put(

@@ -11,7 +11,12 @@ import {
   type Provider,
   type Purpose,
 } from '../db/schema';
-import { ProviderError, type ChatMessage, type ProviderAdapter } from '../providers/types';
+import {
+  ProviderError,
+  type ChatMessage,
+  type ProviderAdapter,
+  type ProviderResponse,
+} from '../providers/types';
 import type { Breaker } from './breaker';
 import type { Catalog } from './catalog';
 
@@ -35,9 +40,31 @@ export interface CompleteResult {
   output: unknown;
   model: string;
   provider: Provider;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: CallUsage;
   cached: boolean;
   attempts: AttemptRecord[];
+}
+
+export interface CallUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}
+
+type Prices = Pick<ModelRow, 'inputPrice' | 'outputPrice' | 'cacheReadPrice' | 'cacheWritePrice'>;
+
+// What one reply cost in USD; prices are per million tokens and cached input is billed at its own rate.
+export function costOf(prices: Prices, reply: Omit<ProviderResponse, 'text'>) {
+  const fresh = Math.max(reply.inputTokens - reply.cacheReadTokens - reply.cacheWriteTokens, 0);
+  return (
+    (fresh * prices.inputPrice +
+      reply.cacheReadTokens * prices.cacheReadPrice +
+      reply.cacheWriteTokens * prices.cacheWritePrice +
+      reply.outputTokens * prices.outputPrice) /
+    1_000_000
+  );
 }
 
 const RETRY_DELAY_MS = 800;
@@ -98,8 +125,15 @@ export function createCompleter({
     model: ModelRow,
     input: CompleteInput,
     attempts: AttemptRecord[],
-    usage: CompleteResult['usage'],
+    usage: CallUsage,
   ) {
+    const count = (reply: ProviderResponse) => {
+      usage.inputTokens += reply.inputTokens;
+      usage.outputTokens += reply.outputTokens;
+      usage.cacheReadTokens += reply.cacheReadTokens;
+      usage.cacheWriteTokens += reply.cacheWriteTokens;
+      usage.costUsd += costOf(model, reply);
+    };
     const adapter = adapters[model.provider]!;
     const request = {
       model: model.id,
@@ -114,8 +148,7 @@ export function createCompleter({
       const started = Date.now();
       try {
         const reply = await adapter.complete(request);
-        usage.inputTokens += reply.inputTokens;
-        usage.outputTokens += reply.outputTokens;
+        count(reply);
         let checked = check(reply.text, input.schema);
         // One repair round: show the model its own answer and what was wrong with it.
         if (!checked.ok) {
@@ -130,8 +163,7 @@ export function createCompleter({
               },
             ],
           });
-          usage.inputTokens += repaired.inputTokens;
-          usage.outputTokens += repaired.outputTokens;
+          count(repaired);
           checked = check(repaired.text, input.schema);
         }
         if (!checked.ok) {
@@ -187,7 +219,13 @@ export function createCompleter({
       .digest('hex');
     const cacheKey = `llm:cache:${requestHash}`;
     const attempts: AttemptRecord[] = [];
-    const usage = { inputTokens: 0, outputTokens: 0 };
+    const usage: CallUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+    };
 
     const record = (row: Partial<typeof llmCalls.$inferInsert> & { status: string }) =>
       db
@@ -198,8 +236,7 @@ export function createCompleter({
           subject: input.subject ?? null,
           traceId: input.traceId ?? null,
           requestedModel: requested,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
+          ...usage,
           latencyMs: Date.now() - started,
           attempts,
           requestHash,
@@ -218,6 +255,9 @@ export function createCompleter({
           provider: cached.provider,
           inputTokens: 0,
           outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costUsd: 0,
         });
         return { ...cached, cached: true, attempts };
       }
