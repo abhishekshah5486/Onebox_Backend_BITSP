@@ -5,7 +5,7 @@ import {
   type MailboxOpPayload,
   type MailboxTarget,
 } from '@onebox/contracts';
-import { NotFoundError, ValidationError } from '@onebox/errors';
+import { ConflictError, NotFoundError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import { safeFetch } from '@onebox/net-guard';
 import type { Producer } from '@onebox/queue';
@@ -38,6 +38,9 @@ export interface ThreadActionInput {
 
 const MAX_UIDS_PER_OP = 1000;
 
+// Like Gmail, moves wait this long before reaching the server, so they can be undone.
+export const UNDO_WINDOW_MS = 6000;
+
 export type OneClickPost = (url: string) => Promise<{ ok: boolean; status: number }>;
 
 // RFC 8058: the sender's endpoint unsubscribes on this exact POST, no page or cookies needed.
@@ -56,16 +59,19 @@ export function createThreadActions({
   ops,
   logger,
   post = oneClickPost,
+  undoWindowMs = UNDO_WINDOW_MS,
 }: {
   collections: MailCollections;
   ops: Producer<MailboxOpPayload>;
   logger: Logger;
   post?: OneClickPost;
+  undoWindowMs?: number;
 }) {
   const { messages, threads } = collections;
 
-  // One job per server folder, so each runs as a single IMAP command.
-  async function send(userId: string, docs: MessageDoc[], op: Op) {
+  // One job per server folder, so each runs as a single IMAP command. Returns the job ids.
+  async function send(userId: string, docs: MessageDoc[], op: Op, delayMs = 0) {
+    const jobIds: string[] = [];
     const groups = new Map<string, MessageDoc[]>();
     for (const doc of docs) {
       const key = JSON.stringify([doc.accountId, doc.folder, doc.uidValidity]);
@@ -75,16 +81,20 @@ export function createThreadActions({
       const { accountId, folder, uidValidity } = group[0]!;
       const uids = [...new Set(group.map((doc) => doc.uid))];
       for (let i = 0; i < uids.length; i += MAX_UIDS_PER_OP) {
+        const jobId = randomUUID();
+        jobIds.push(jobId);
         await ops.enqueue(
           createJobEnvelope({
-            jobId: randomUUID(),
+            jobId,
             userId,
             accountId,
             payload: { folder, uidValidity, uids: uids.slice(i, i + MAX_UIDS_PER_OP), op },
           }),
+          { delayMs },
         );
       }
     }
+    return jobIds;
   }
 
   const inView = (view: MailboxView) => (doc: MessageDoc) => {
@@ -183,7 +193,8 @@ export function createThreadActions({
 
       if (writes.length > 0) await messages.bulkWrite(writes);
       // Moves act on where the server has the message, not where OneBox shows it.
-      await send(userId, targets, op);
+      const undoable = op.type === 'move' && targets.length > 0;
+      const jobIds = await send(userId, targets, op, undoable ? undoWindowMs : 0);
       for (const id of ids) await refreshThread(collections, id);
       if (targets.length > 0) {
         logger.info(
@@ -191,7 +202,40 @@ export function createThreadActions({
           'conversation action queued',
         );
       }
-      return threads.find({ _id: { $in: ids }, userId }).toArray();
+      return {
+        threads: await threads.find({ _id: { $in: ids }, userId }).toArray(),
+        undoToken: undoable ? jobIds.join(',') : null,
+      };
+    },
+
+    // Withdraws a move still inside its undo window and puts the mail back where it was shown.
+    async undo(userId: string, undoToken: string) {
+      const withdrawn = await ops.cancel(
+        undoToken.split(','),
+        (envelope) => envelope.userId === userId,
+      );
+      if (!withdrawn) {
+        throw new ConflictError('Too late to undo: the change already reached the server.', {
+          code: 'UNDO_EXPIRED',
+        });
+      }
+      const touched = new Set<string>();
+      for (const { accountId, payload } of withdrawn) {
+        const filter = {
+          userId,
+          accountId,
+          folder: payload.folder,
+          uidValidity: payload.uidValidity,
+          uid: { $in: payload.uids },
+        };
+        for (const doc of await messages.find(filter, { projection: { threadId: 1 } }).toArray()) {
+          touched.add(doc.threadId);
+        }
+        await messages.updateMany(filter, { $set: { movingTo: null, pendingSince: null } });
+      }
+      for (const id of touched) await refreshThread(collections, id);
+      logger.info({ conversations: touched.size }, 'conversation action undone');
+      return [...touched];
     },
 
     // One-click where the sender supports it; otherwise the link or address for the user to use.

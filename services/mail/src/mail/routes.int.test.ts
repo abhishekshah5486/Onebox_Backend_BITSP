@@ -454,6 +454,41 @@ describe('mail api', () => {
       ]);
     });
 
+    it('undoes a move inside the undo window, once, and only for its owner', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, { subject: 'Oops', messageId: '<oops@x>', uid: 551 });
+      const [oops] = (await list(userId)).json<{ items: Thread[] }>().items;
+
+      const archived = await act(userId, { threadIds: [oops!.id], action: 'archive' });
+      const { undoToken } = archived.json<{ undoToken: string }>();
+      expect(undoToken).toEqual(expect.any(String));
+      expect(await ids(userId)).toEqual([]);
+
+      const undo = (who: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/mail/threads/undo',
+          headers: as(who),
+          payload: { undoToken },
+        });
+      expect((await undo(randomUUID())).statusCode).toBe(409);
+      const undone = await undo(userId);
+      expect(undone.statusCode).toBe(200);
+      expect(undone.json()).toMatchObject({ items: [{ id: oops!.id, folders: ['inbox'] }] });
+      expect(await ids(userId)).toEqual(['Oops']);
+      expect(await opsFor(accountId)).toEqual([]);
+      expect((await undo(userId)).json()).toMatchObject({ error: { code: 'UNDO_EXPIRED' } });
+    });
+
+    it('does not offer undo for read, star or permanent deletion', async () => {
+      const userId = randomUUID();
+      await put(userId, randomUUID(), { subject: 'Flag me', messageId: '<f@x>', uid: 561 });
+      const [thread] = (await list(userId)).json<{ items: Thread[] }>().items;
+      const res = await act(userId, { threadIds: [thread!.id], action: 'star' });
+      expect(res.json()).toMatchObject({ undoToken: null });
+    });
+
     it('syncs read and starred changes to the server', async () => {
       const userId = randomUUID();
       const accountId = randomUUID();

@@ -57,6 +57,13 @@ const messageView = z.object({
   isStarred: z.boolean(),
   receivedAt: z.string(),
   sentAt: z.string().nullable(),
+  authentication: z
+    .object({
+      mailedBy: z.string().nullable(),
+      signedBy: z.string().nullable(),
+      encrypted: z.boolean().nullable(),
+    })
+    .nullable(),
 });
 
 const params = z.object({ id: z.string().regex(/^[0-9a-f]{64}$/, 'invalid conversation id') });
@@ -196,12 +203,31 @@ export function registerMailRoutes(
               .refine((body) => body.action !== 'move' || body.to, {
                 message: 'Choose where to move the conversations',
               }),
+            response: {
+              200: z.object({ items: z.array(threadView), undoToken: z.string().nullable() }),
+            },
+          },
+        },
+        async (request) => {
+          const { undoToken } = await actions.apply(userId(request), request.body);
+          return {
+            items: await mail.threadViews(userId(request), request.body.threadIds),
+            undoToken,
+          };
+        },
+      );
+
+      routes.post(
+        '/threads/undo',
+        {
+          schema: {
+            body: z.object({ undoToken: z.string().min(1).max(20_000) }),
             response: { 200: z.object({ items: z.array(threadView) }) },
           },
         },
         async (request) => {
-          await actions.apply(userId(request), request.body);
-          return { items: await mail.threadViews(userId(request), request.body.threadIds) };
+          const ids = await actions.undo(userId(request), request.body.undoToken);
+          return { items: await mail.threadViews(userId(request), ids) };
         },
       );
 
