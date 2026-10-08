@@ -16,7 +16,10 @@ import { createSuggestions } from './suggestions/suggestions';
 const logger = createLogger({ service: 'ai', pretty: process.stdout.isTTY });
 const config = loadAiConfig();
 
-const mongo = await connectMongo(config.MONGO_URI, config.MONGO_AI_DB);
+const mongo = await connectMongo(config.MONGO_URI, config.MONGO_AI_DB, {
+  onRetry: (err, attempt) =>
+    logger.warn({ err: (err as Error).message, attempt }, 'mongodb not reachable yet, retrying'),
+});
 const collections = aiCollections(mongo.db);
 await ensureIndexes(collections);
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 3 });

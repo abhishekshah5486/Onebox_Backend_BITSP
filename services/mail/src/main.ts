@@ -34,7 +34,10 @@ const config = loadMailConfig();
 const blobs = createBlobStore(config);
 await blobs.ensureBucket();
 
-const mongo = await connectMongo(config.MONGO_URI, config.MONGO_DB);
+const mongo = await connectMongo(config.MONGO_URI, config.MONGO_DB, {
+  onRetry: (err, attempt) =>
+    logger.warn({ err: (err as Error).message, attempt }, 'mongodb not reachable yet, retrying'),
+});
 const collections = mailCollections(mongo.db);
 await ensureIndexes(collections);
 logger.info({ db: config.MONGO_DB }, 'mongodb connected');
