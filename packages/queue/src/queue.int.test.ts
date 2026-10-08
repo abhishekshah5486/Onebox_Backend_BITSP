@@ -171,6 +171,20 @@ describe('queue', () => {
     );
   });
 
+  it('holds a delayed job until its delay passes, and can withdraw it before then', async () => {
+    const handler = vi.fn(async (_envelope: JobEnvelope<{ uid: number }>) => {});
+    const { producer } = setup(handler);
+
+    await producer.enqueue(envelope('later', 1), { delayMs: 60_000 });
+    await producer.enqueue(envelope('soon', 2), { delayMs: 200 });
+    expect(await producer.cancel(['later'])).toEqual([expect.objectContaining({ jobId: 'later' })]);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0]![0].payload.uid).toBe(2);
+    // Too late: it already ran, so nothing is withdrawn.
+    expect(await producer.cancel(['soon'])).toBeNull();
+    expect(await producer.cancel(['missing'])).toBeNull();
+  });
+
   it('reports pending work for backpressure', async () => {
     const producer = createProducer<{ uid: number }>('ingest', {
       redisUrl: redis.url,
