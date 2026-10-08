@@ -23,6 +23,9 @@ spec:
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: MONGO_URI } }
             - { name: REDIS_URL, value: 'redis://redis:6379' }
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - { name: SETTINGS_SERVICE_URL, value: 'http://settings:4004' }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
             - { name: BLOB_ENDPOINT, value: 'http://objects:8333' }
             - name: BLOB_ACCESS_KEY
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_ACCESS_KEY } }

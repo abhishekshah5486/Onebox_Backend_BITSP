@@ -1,5 +1,5 @@
 import { createBlobStore } from '@onebox/blob-store';
-import { createRemoteTokenVerifier } from '@onebox/auth-kit';
+import { createRemoteTokenVerifier, deriveInternalToken } from '@onebox/auth-kit';
 import {
   type AiClassifyPayload,
   ingestPayloadSchema,
@@ -19,6 +19,7 @@ import { loadMailConfig } from './config';
 import { ensureIndexes, mailCollections } from './db/collections';
 import { aiJob } from './ingest/ai-job';
 import { createAttachmentService } from './attachments/attachments';
+import { createDriveService } from './drive/drive';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
 import { createMailboxService } from './mail/mailbox-service';
@@ -97,6 +98,8 @@ cleanups.push(historyProducer.close, opsProducer.close, () => redis.quit());
 
 const mailboxStore = createMailboxStore(redis);
 
+const attachments = createAttachmentService({ collections, blobs, ops: opsProducer, logger });
+
 const app = buildApp({
   logger,
   checks: { mongodb: mongo.ping, redis: () => redis.ping() },
@@ -111,7 +114,15 @@ const app = buildApp({
       }),
       actions: createThreadActions({ collections, ops: opsProducer, logger }),
       labels: createLabelService({ store: mailboxStore, ops: opsProducer, logger }),
-      attachments: createAttachmentService({ collections, blobs, ops: opsProducer, logger }),
+      attachments,
+      ...(config.CREDENTIALS_ENCRYPTION_KEY && {
+        drive: createDriveService({
+          attachments,
+          settingsUrl: config.SETTINGS_SERVICE_URL,
+          internalToken: deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
+          logger,
+        }),
+      }),
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     },
   }),

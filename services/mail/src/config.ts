@@ -1,5 +1,6 @@
 import { envPort, loadConfig } from '@onebox/config';
 import { blobConfigSchema } from '@onebox/blob-store';
+import { encryptionKeySchema } from '@onebox/crypto';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -11,6 +12,9 @@ const schema = z.object({
   // api = HTTP only, worker = ingest queue only, all = both (local dev).
   MAIL_ROLE: z.enum(['all', 'api', 'worker']).default('all'),
   INGEST_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+  // Signs calls to other services; Save to Drive stays off without it.
+  CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema.optional(),
+  SETTINGS_SERVICE_URL: z.url().default('http://localhost:4004'),
   ...blobConfigSchema,
 });
 

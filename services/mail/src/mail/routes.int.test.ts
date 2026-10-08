@@ -21,6 +21,7 @@ import { buildApp } from '../app';
 import { ensureIndexes, mailCollections, type MailCollections } from '../db/collections';
 import { createMemoryBlobStore } from '@onebox/blob-store';
 import { createAttachmentService } from '../attachments/attachments';
+import { createDriveService } from '../drive/drive';
 import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
 import { createMailService } from './mail-service';
@@ -70,6 +71,7 @@ beforeAll(async () => {
     redisUrl: redisContainer.url,
     logger,
   });
+  const attachments = createAttachmentService({ collections, blobs, ops: opsProducer, logger });
   app = buildApp({
     logger,
     checks: {},
@@ -86,11 +88,37 @@ beforeAll(async () => {
         },
       }),
       labels: createLabelService({ store, ops: opsProducer, logger, waitMs: 300 }),
-      attachments: createAttachmentService({ collections, blobs, ops: opsProducer, logger }),
+      attachments,
+      drive: createDriveService({
+        attachments,
+        settingsUrl: 'http://settings',
+        internalToken: 'internal',
+        logger,
+        fetch: driveFetch,
+      }),
       verifyToken,
     },
   });
 });
+
+// Stands in for settings' token route and the Google Drive API.
+const driveCalls: { url: string; method: string; body?: unknown }[] = [];
+const driveFetch: typeof fetch = async (input, init) => {
+  const url = String(input instanceof Request ? input.url : input);
+  const method = init?.method ?? 'GET';
+  driveCalls.push({ url, method, body: init?.body });
+  const json = (body: unknown, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { headers });
+  if (url.includes('/internal/google/token/')) return json({ accessToken: 'at' });
+  if (url.includes('/upload/drive/v3/files')) {
+    return json({}, { location: 'https://upload.example/session-1' });
+  }
+  if (url === 'https://upload.example/session-1') {
+    return json({ id: 'file-1', name: 'marks.pdf', webViewLink: 'https://drive.example/file-1' });
+  }
+  if (method === 'POST') return json({ id: 'folder-1' });
+  return json({ files: [] });
+};
 
 beforeEach(async () => {
   await collections.messages.deleteMany({});
@@ -842,6 +870,21 @@ describe('mail api', () => {
       expect(page.headers['x-content-type-options']).toBe('nosniff');
 
       expect((await get(randomUUID(), 0)).statusCode).toBe(404);
+
+      const saved = await app.inject({
+        method: 'POST',
+        url: `/mail/messages/${messageId}/attachments/drive`,
+        headers: as(userId),
+        payload: { indexes: [0] },
+      });
+      expect(saved.json()).toEqual({
+        files: [{ index: 0, name: 'marks.pdf', link: 'https://drive.example/file-1' }],
+      });
+      const put = driveCalls.find((call) => call.method === 'PUT');
+      expect(Buffer.from(put!.body as Uint8Array).equals(pdf)).toBe(true);
+      expect(driveCalls.some((call) => call.url.includes(`/internal/google/token/${userId}`))).toBe(
+        true,
+      );
     });
   });
 });
