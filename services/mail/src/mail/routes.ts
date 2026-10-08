@@ -196,6 +196,20 @@ export function registerMailRoutes(
         },
       );
 
+      // Several conversations by id, e.g. to show the mail behind AI suggestions.
+      routes.post(
+        '/threads/lookup',
+        {
+          schema: {
+            body: z.object({ threadIds: z.array(params.shape.id).min(1).max(100) }),
+            response: { 200: z.object({ items: z.array(threadView) }) },
+          },
+        },
+        async (request) => ({
+          items: await mail.threadViews(userId(request), request.body.threadIds),
+        }),
+      );
+
       routes.post(
         '/threads/actions',
         {

@@ -433,6 +433,23 @@ describe('mail api', () => {
         .items.map((t) => t.subject)
         .sort();
 
+    it('looks up conversations by id, only the caller’s own', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, { subject: 'Mine', messageId: '<mine@x>', uid: 491 });
+      const [mine] = (await list(userId)).json<{ items: Thread[] }>().items;
+      const lookup = (who: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/mail/threads/lookup',
+          headers: as(who),
+          payload: { threadIds: [mine!.id] },
+        });
+
+      expect((await lookup(userId)).json()).toMatchObject({ items: [{ subject: 'Mine' }] });
+      expect((await lookup(randomUUID())).json()).toEqual({ items: [] });
+    });
+
     it('archives at once and asks the connector to move the mail on the server', async () => {
       const userId = randomUUID();
       const accountId = randomUUID();

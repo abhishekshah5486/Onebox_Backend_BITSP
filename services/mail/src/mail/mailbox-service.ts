@@ -77,13 +77,29 @@ export function createMailboxService({ collections, store, historyProducer, logg
       if (found.some((counts) => counts.userId !== userId)) {
         throw new NotFoundError('Mailbox not found');
       }
-      // Labels are only listed once a folder of the same account proves who owns it.
-      const labelCounts =
-        found.length > 0
-          ? await Promise.all(
-              labels.map((label) => store.getCounts(accountId, keyOf({ label: label.path }))),
-            )
+      // Labels are only listed once a folder of the same account proves who owns it. Their
+      // counts are the conversations OneBox holds, so labels AI put on are counted too.
+      const counted =
+        found.length > 0 && labels.length > 0
+          ? await threads
+              .aggregate<{ _id: string; total: number; unread: number; updatedAt: Date }>([
+                {
+                  $match: { userId, accountId, labels: { $in: labels.map((label) => label.path) } },
+                },
+                { $unwind: '$labels' },
+                {
+                  $group: {
+                    _id: '$labels',
+                    total: { $sum: 1 },
+                    unread: { $sum: { $cond: [{ $gt: ['$unreadCount', 0] }, 1, 0] } },
+                    updatedAt: { $max: '$lastMessageAt' },
+                  },
+                },
+              ])
+              .toArray()
           : [];
+      const countOf = new Map(counted.map((row) => [row._id, row]));
+      const labelCounts = found.length > 0 ? labels.map((label) => countOf.get(label.path)) : [];
       return {
         items: [
           ...found.map(({ role, folder, total, unread, updatedAt }) => ({
@@ -100,7 +116,7 @@ export function createMailboxService({ collections, store, historyProducer, logg
             name: labels[i]!.name,
             total: counts?.total ?? 0,
             unread: counts?.unread ?? 0,
-            updatedAt: counts?.updatedAt ?? new Date(0).toISOString(),
+            updatedAt: (counts?.updatedAt ?? new Date(0)).toISOString(),
           })),
         ],
       };
