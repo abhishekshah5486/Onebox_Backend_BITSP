@@ -453,6 +453,19 @@ describe('imap connector', () => {
     });
 
     await runOp({
+      ...base,
+      uids: [inbox.messages['Old one']!.uid],
+      op: { type: 'move', to: { role: 'trash' } },
+    });
+    await vi.waitFor(async () =>
+      expect((await serverState('Trash')).messages['Old one']).toBeDefined(),
+    );
+    // A folder created on first use is then synced like any other.
+    await vi.waitFor(() => expect(subjects(true, 'trash')).toEqual(['Old one']), {
+      timeout: 15_000,
+    });
+
+    await runOp({
       folder: 'Archive',
       uidValidity: archive.uidValidity,
       uids: [archivedUid],

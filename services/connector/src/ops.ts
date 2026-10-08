@@ -1,4 +1,5 @@
 import type {
+  FolderRole,
   JobEnvelope,
   MailboxChangePayload,
   MailboxOpPayload,
@@ -21,8 +22,12 @@ export interface OpsDeps {
   maxAttempts: number;
 }
 
-// Providers without an archive folder (plain IMAP) get one, like most mail apps create.
-const ARCHIVE_FALLBACK = 'Archive';
+// Plain IMAP servers may lack these; like most mail apps, OneBox creates them on first use.
+const CREATED: Partial<Record<FolderRole, string>> = {
+  archive: 'Archive',
+  trash: 'Trash',
+  spam: 'Junk',
+};
 
 async function resolveTarget(client: ImapFlow, entries: ListResponse[], target: MailboxTarget) {
   if ('label' in target) {
@@ -34,9 +39,10 @@ async function resolveTarget(client: ImapFlow, entries: ListResponse[], target: 
   if (target.role === 'inbox') return { path: 'INBOX', role: 'inbox' as const };
   const found = discoverFolders(entries).folders.find((folder) => folder.role === target.role);
   if (found) return { path: found.path, role: target.role };
-  if (target.role !== 'archive') throw new ValidationError(`This mailbox has no ${target.role}`);
-  await client.mailboxCreate(ARCHIVE_FALLBACK);
-  return { path: ARCHIVE_FALLBACK, role: 'archive' as const };
+  const path = CREATED[target.role];
+  if (!path) throw new ValidationError(`This mailbox has no ${target.role} folder`);
+  await client.mailboxCreate(path);
+  return { path, role: target.role };
 }
 
 export function createOpsHandler(deps: OpsDeps) {
