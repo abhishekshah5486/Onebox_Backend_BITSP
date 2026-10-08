@@ -36,7 +36,7 @@ describe('ingestPayloadSchema', () => {
   };
 
   it('accepts a well-formed payload, defaulting the folder role to inbox', () => {
-    expect(ingestPayloadSchema.parse(valid)).toEqual({ ...valid, role: 'inbox' });
+    expect(ingestPayloadSchema.parse(valid)).toEqual({ ...valid, role: 'inbox', category: null });
     expect(ingestPayloadSchema.parse({ ...valid, role: 'sent' }).role).toBe('sent');
   });
 

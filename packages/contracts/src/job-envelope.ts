@@ -4,6 +4,8 @@ import { z } from 'zod';
 export const QUEUES = {
   ingest: 'ingest',
   history: 'history',
+  mailboxOps: 'mailbox-ops',
+  mailboxChanges: 'mailbox-changes',
   ai: 'ai',
   index: 'index',
   embed: 'embed',

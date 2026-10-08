@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { folderRoleSchema } from './folders';
+import { gmailCategorySchema, mailboxRoleSchema } from './folders';
 
 // Messages above this size are skipped by the connector rather than queued.
 export const MAX_RAW_MESSAGE_BYTES = 25 * 1024 * 1024;
@@ -8,7 +8,9 @@ export const MAX_RAW_MESSAGE_BYTES = 25 * 1024 * 1024;
 export const ingestPayloadSchema = z.object({
   folder: z.string().min(1),
   // Defaults keep jobs queued before folders existed (all from INBOX) valid.
-  role: folderRoleSchema.default('inbox'),
+  role: mailboxRoleSchema.default('inbox'),
+  // Gmail inbox tab; null for other providers and folders.
+  category: gmailCategorySchema.nullable().default(null),
   uid: z.number().int().positive(),
   uidValidity: z.number().int().nonnegative(),
   flags: z.array(z.string()),

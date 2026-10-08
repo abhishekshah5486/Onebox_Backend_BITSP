@@ -1,13 +1,15 @@
 import {
-  type FolderRole,
   historyStateSchema,
   mailboxCountsSchema,
+  mailboxKey,
   mailboxKeys,
+  mailboxLabelSchema,
   type HistoryState,
   type MailboxCounts,
+  type MailboxLabel,
 } from '@onebox/contracts';
 import type { Redis } from 'ioredis';
-import type { z } from 'zod';
+import { z } from 'zod';
 
 // Derived, rebuildable state: losing it only means counts refresh on the next connector sync.
 const TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -27,30 +29,37 @@ export function createMailboxStore(redis: Redis) {
   return {
     setCounts: (counts: MailboxCounts) =>
       redis.set(
-        mailboxKeys.counts(counts.accountId, counts.role),
+        mailboxKeys.counts(counts.accountId, mailboxKey(counts.role, counts.folder)),
         JSON.stringify(counts),
         'EX',
         TTL_SECONDS,
       ),
 
-    getCounts: (accountId: string, role: FolderRole) =>
-      read(redis, mailboxKeys.counts(accountId, role), mailboxCountsSchema),
+    // `key` is a folder role or `label:<path>` (mailboxKey).
+    getCounts: (accountId: string, key: string) =>
+      read(redis, mailboxKeys.counts(accountId, key), mailboxCountsSchema),
 
     setHistory: (
       accountId: string,
-      role: FolderRole,
+      key: string,
       status: HistoryState['status'],
       error: string | null = null,
     ) =>
       redis.set(
-        mailboxKeys.history(accountId, role),
+        mailboxKeys.history(accountId, key),
         JSON.stringify({ status, error, updatedAt: new Date().toISOString() }),
         'EX',
         TTL_SECONDS,
       ),
 
-    getHistory: (accountId: string, role: FolderRole) =>
-      read(redis, mailboxKeys.history(accountId, role), historyStateSchema),
+    getHistory: (accountId: string, key: string) =>
+      read(redis, mailboxKeys.history(accountId, key), historyStateSchema),
+
+    setLabels: (accountId: string, labels: MailboxLabel[]) =>
+      redis.set(mailboxKeys.labels(accountId), JSON.stringify(labels), 'EX', TTL_SECONDS),
+
+    getLabels: async (accountId: string) =>
+      (await read(redis, mailboxKeys.labels(accountId), z.array(mailboxLabelSchema))) ?? [],
   };
 }
 

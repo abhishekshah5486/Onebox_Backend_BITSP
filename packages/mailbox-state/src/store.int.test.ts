@@ -41,6 +41,31 @@ describe('mailbox store', () => {
     expect(await redis.ttl(mailboxKeys.counts('a1', 'inbox'))).toBeGreaterThan(0);
   });
 
+  it('keeps label counts apart by path and stores the label list', async () => {
+    const store = createMailboxStore(redis);
+    const label = (folder: string, total: number) => ({
+      userId: 'u1',
+      accountId: 'a3',
+      role: 'label' as const,
+      folder,
+      uidValidity: 1,
+      total,
+      unread: 0,
+      updatedAt: '2026-10-07T10:00:00.000Z',
+    });
+    await store.setCounts(label('Work', 3));
+    await store.setCounts(label('Travel', 9));
+    await store.setLabels('a3', [
+      { path: 'Work', name: 'Work' },
+      { path: 'Travel', name: 'Travel' },
+    ]);
+
+    expect(await store.getCounts('a3', 'label:Work')).toMatchObject({ total: 3 });
+    expect(await store.getCounts('a3', 'label:Travel')).toMatchObject({ total: 9 });
+    expect((await store.getLabels('a3')).map((l) => l.path)).toEqual(['Work', 'Travel']);
+    expect(await store.getLabels('none')).toEqual([]);
+  });
+
   it('returns null for missing or corrupted entries', async () => {
     const store = createMailboxStore(redis);
     expect(await store.getCounts('missing', 'inbox')).toBeNull();
