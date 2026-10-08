@@ -52,6 +52,21 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
       }
     },
 
+    // Waits for one job and reports how it ended; 'pending' if it is still running at the timeout.
+    async outcome(jobId: string, { timeoutMs = 20_000, intervalMs = 200 } = {}) {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const job = await bull.getJob(jobId);
+        const state = job ? await job.getState() : 'unknown';
+        if (state === 'completed') return { status: 'completed' as const };
+        if (state === 'failed') {
+          return { status: 'failed' as const, error: job?.failedReason ?? 'failed' };
+        }
+        if (Date.now() >= deadline) return { status: 'pending' as const };
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    },
+
     // Withdraws jobs that have not started yet. Returns the envelopes withdrawn, or null if any
     // had already started or finished, in which case none are withdrawn.
     // `accept` vets each envelope first (e.g. that it belongs to the caller).
