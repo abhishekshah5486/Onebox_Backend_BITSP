@@ -12,8 +12,16 @@ describe('defineUpstreams', () => {
     });
   });
 
+  it('keeps only the Google callback public besides auth', () => {
+    expect(upstreams.find((u) => u.prefix === '/api/v1/integrations')).toMatchObject({
+      access: 'public',
+      rewritePrefix: '/integrations',
+    });
+  });
+
   it('protects every other upstream', () => {
-    const others = upstreams.filter((u) => u.prefix !== '/api/v1/auth');
+    const publicPrefixes = ['/api/v1/auth', '/api/v1/integrations'];
+    const others = upstreams.filter((u) => !publicPrefixes.includes(u.prefix));
     expect(others.map((u) => u.prefix)).toEqual([
       '/api/v1/accounts',
       '/api/v1/settings',

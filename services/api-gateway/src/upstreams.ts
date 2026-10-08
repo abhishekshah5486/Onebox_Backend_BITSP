@@ -36,6 +36,14 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       access: 'authenticated',
     },
     {
+      // Only the Google OAuth callback lives here; the signed state identifies the user.
+      prefix: '/api/v1/integrations',
+      url: config.SETTINGS_SERVICE_URL,
+      rewritePrefix: '/integrations',
+      access: 'public',
+      rateLimit: { max: 20, timeWindow: '1 minute' },
+    },
+    {
       prefix: '/api/v1/mail',
       url: config.MAIL_SERVICE_URL,
       rewritePrefix: '/mail',
