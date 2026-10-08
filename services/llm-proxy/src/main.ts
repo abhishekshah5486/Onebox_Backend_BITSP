@@ -37,6 +37,11 @@ for (const [provider, adapter] of Object.entries(adapters) as [Provider, Provide
     delete adapters[provider];
   }
 }
+// Postgres is a slow round trip away and idle connections are retired after 20s, so two are kept
+// warm; otherwise a settings page waits seconds for a fresh connection.
+const warm = setInterval(() => void Promise.all([pg.ping(), pg.ping()]).catch(() => {}), 15_000);
+warm.unref();
+
 const catalog = createCatalog(pg.db, new Set(Object.keys(adapters) as Provider[]));
 logger.info({ providers: Object.keys(adapters) }, 'language model providers configured');
 

@@ -42,6 +42,8 @@ export function createUsage(db: PostgresJsDatabase) {
           costUsd: sql<number>`${llmCalls.costUsd}::float8`,
           latencyMs: llmCalls.latencyMs,
           fallbacks: sql<number>`greatest(jsonb_array_length(${llmCalls.attempts}) - 1, 0)::int`,
+          // Answered by a later model than the first one tried; retrying the same model is not.
+          fellBack: sql<boolean>`coalesce(jsonb_array_length(${llmCalls.attempts}) > 0 and ${llmCalls.attempts}->0->>'model' is distinct from ${llmCalls.modelUsed} and ${llmCalls.modelUsed} is not null, false)`,
           createdAt: sql<string>`to_char(${llmCalls.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
         })
         .from(llmCalls)

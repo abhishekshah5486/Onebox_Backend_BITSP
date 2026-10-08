@@ -151,6 +151,7 @@ describe('llm proxy', () => {
     });
     expect(usage.totals.costUsd).toBeCloseTo(0.000171, 9);
     expect(usage.calls.map((call) => call.cacheHit)).toEqual([true, false]);
+    expect(usage.calls.map((call) => call.fellBack)).toEqual([false, false]);
   });
 
   it('skips a model that keeps failing, and reports when nothing can answer', async () => {
