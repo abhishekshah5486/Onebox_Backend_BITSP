@@ -23,6 +23,11 @@ spec:
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: MONGO_URI } }
             - { name: REDIS_URL, value: 'redis://redis:6379' }
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - { name: BLOB_ENDPOINT, value: 'http://objects:8333' }
+            - name: BLOB_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_ACCESS_KEY } }
+            - name: BLOB_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_SECRET_KEY } }
           # Startup covers the remote database connect + migrations.
           startupProbe:
             httpGet: { path: /health/live, port: 4003 }

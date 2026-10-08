@@ -25,6 +25,16 @@ services:
       interval: 10s
       retries: 20
 
+  # S3-compatible object store for attachment contents (SeaweedFS; MinIO is no longer published).
+  objects:
+    image: chrislusf/seaweedfs:4.48
+    command: server -dir=/data -s3 -s3.port=8333 -ip.bind=0.0.0.0
+    environment:
+      AWS_ACCESS_KEY_ID: ${BLOB_ACCESS_KEY:?set BLOB_ACCESS_KEY in .env}
+      AWS_SECRET_ACCESS_KEY: ${BLOB_SECRET_KEY:?set BLOB_SECRET_KEY in .env}
+    ports: ['8333:8333']
+    volumes: [objects-data:/data]
+
   greenmail:
     image: greenmail/standalone:2.1.14
     profiles: [mail]
@@ -41,6 +51,7 @@ services:
     volumes: [qdrant-data:/qdrant/storage]
 
 volumes:
+  objects-data:
   redis-data:
   es-data:
   qdrant-data:

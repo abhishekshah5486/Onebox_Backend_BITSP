@@ -1,0 +1,52 @@
+# S3-compatible object store for attachment contents (SeaweedFS, single node).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: objects-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: objects
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: objects }
+  template:
+    metadata:
+      labels: { app: objects }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: objects
+          image: chrislusf/seaweedfs:4.48
+          args: ['server', '-dir=/data', '-s3', '-s3.port=8333', '-ip.bind=0.0.0.0']
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_ACCESS_KEY } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_SECRET_KEY } }
+          ports: [{ containerPort: 8333 }]
+          readinessProbe:
+            tcpSocket: { port: 8333 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts: [{ name: data, mountPath: /data }]
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: objects-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: objects
+spec:
+  selector: { app: objects }
+  ports: [{ port: 8333 }]

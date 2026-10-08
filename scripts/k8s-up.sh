@@ -20,7 +20,7 @@ kubectl --context "$CTX" -n onebox create secret generic onebox-secrets \
   --from-env-file=.env --dry-run=client -o yaml | kubectl --context "$CTX" apply -f -
 kubectl --context "$CTX" apply -k deploy/k8s
 
-for deployment in redis "${SERVICES[@]}"; do
+for deployment in redis objects "${SERVICES[@]}"; do
   kubectl --context "$CTX" -n onebox rollout restart "deployment/$deployment"
   kubectl --context "$CTX" -n onebox rollout status "deployment/$deployment" --timeout=180s
 done

@@ -4,6 +4,7 @@ namespace: onebox
 resources:
   - namespace.yaml
   - redis.yaml
+  - objects.yaml
   - auth.yaml
   - accounts.yaml
   - settings.yaml
