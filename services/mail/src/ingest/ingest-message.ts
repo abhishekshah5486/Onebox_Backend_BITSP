@@ -2,11 +2,14 @@ import type { IngestPayload, JobEnvelope } from '@onebox/contracts';
 import { isDuplicateKeyError } from '@onebox/db-mongo';
 import { ValidationError } from '@onebox/errors';
 import type { JobContext } from '@onebox/queue';
-import type { MailCollections } from '../db/collections';
+import type { MailCollections, MessageDoc } from '../db/collections';
 import { mergeRelatedThreads, refreshThread, resolveThreadId } from '../threads/thread-store';
 import { parseMessage } from './parse';
 
-export function createIngestHandler(collections: MailCollections) {
+// Called once for each message newly stored from the inbox as it arrives (not history).
+export type OnNewMail = (doc: MessageDoc) => Promise<void>;
+
+export function createIngestHandler(collections: MailCollections, onNewMail?: OnNewMail) {
   const { messages } = collections;
 
   return async (envelope: JobEnvelope<IngestPayload>, { logger }: JobContext) => {
@@ -41,6 +44,7 @@ export function createIngestHandler(collections: MailCollections) {
       receivedAt,
     });
 
+    let inserted = false;
     try {
       await messages.insertOne({
         _id: dedupeKey,
@@ -64,6 +68,7 @@ export function createIngestHandler(collections: MailCollections) {
         movingTo: null,
         createdAt: new Date(),
       });
+      inserted = true;
     } catch (err) {
       // A concurrent delivery of the same job already stored it.
       if (!isDuplicateKeyError(err)) throw err;
@@ -75,6 +80,10 @@ export function createIngestHandler(collections: MailCollections) {
       threadId,
     );
     await refreshThread(collections, finalThreadId);
+    if (inserted && onNewMail && !payload.backfill && payload.role === 'inbox') {
+      const doc = await messages.findOne({ _id: dedupeKey });
+      if (doc) await onNewMail(doc);
+    }
     logger[payload.backfill ? 'debug' : 'info'](
       { threadId: finalThreadId, role: payload.role, backfill: payload.backfill },
       'message stored',

@@ -1,3 +1,4 @@
+export * from './ai';
 export * from './domain-event';
 export * from './folders';
 export * from './ingest';

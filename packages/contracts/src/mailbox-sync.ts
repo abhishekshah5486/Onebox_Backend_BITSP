@@ -92,6 +92,13 @@ export const mailboxChangePayloadSchema = z.discriminatedUnion('type', [
   // A label was renamed or deleted, so every stored message in it moves with it or goes.
   z.object({ type: z.literal('folderRenamed'), folder: path, to: path }),
   z.object({ type: z.literal('folderGone'), folder: path }),
+  // AI (or the user, from a suggestion) put labels on a message in OneBox.
+  z.object({
+    type: z.literal('tagged'),
+    messageId: z.string().min(1),
+    add: z.array(path),
+    remove: z.array(path).default([]),
+  }),
   // Everything in a folder right now; stored messages missing from it were moved or deleted.
   z.object({
     type: z.literal('snapshot'),

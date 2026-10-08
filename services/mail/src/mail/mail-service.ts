@@ -28,6 +28,7 @@ const toThreadView = (thread: ThreadDoc) => ({
   accountId: thread.accountId,
   folders: thread.folders,
   labels: thread.labels ?? [],
+  aiLabels: thread.aiLabels ?? [],
   category: thread.category ?? null,
   categories: thread.categories ?? [],
   canUnsubscribe: thread.canUnsubscribe ?? false,

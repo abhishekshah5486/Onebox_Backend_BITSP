@@ -47,6 +47,8 @@ export interface MessageDoc {
   sizeBytes: number;
   backfill: boolean;
   category: GmailCategory | null;
+  // Labels put on in OneBox by AI or from a suggestion, by label path.
+  aiLabels?: string[];
   // Every Gmail category (tabs, Purchases, Travel); missing on mail stored before them.
   categories?: MailCategory[];
   unsubscribe: Unsubscribe | null;
@@ -76,8 +78,10 @@ export interface ThreadDoc {
   lastMessageAt: Date;
   // Every folder holding at least one of its messages, so one conversation can show in several.
   folders: FolderRole[];
-  // Label paths (Gmail labels, or the provider's own folders).
+  // Label paths (Gmail labels, or the provider's own folders), including AI-applied ones.
   labels: string[];
+  // The subset of labels put on in OneBox by AI or from a suggestion.
+  aiLabels: string[];
   // Gmail inbox tab of the newest inbox message; null elsewhere.
   category: GmailCategory | null;
   // Every category any of its messages carries, for the sidebar's category views.

@@ -29,6 +29,31 @@ export function createChangesHandler(collections: MailCollections) {
   return async (envelope: JobEnvelope<MailboxChangePayload>, { logger }: JobContext) => {
     const { accountId, payload: change } = envelope;
     if (!accountId) throw new ValidationError('Mailbox change is missing accountId');
+
+    // Labels put on in OneBox (by AI or from a suggestion); every copy of the message gets them.
+    if (change.type === 'tagged') {
+      const doc = await messages.findOne({ _id: change.messageId, accountId });
+      if (!doc) return;
+      const copies = {
+        accountId,
+        threadId: doc.threadId,
+        messageIdHeader: doc.messageIdHeader ?? doc._id,
+      };
+      const filter = doc.messageIdHeader ? copies : { _id: doc._id };
+      if (change.add.length) {
+        await messages.updateMany(filter, { $addToSet: { aiLabels: { $each: change.add } } });
+      }
+      if (change.remove.length) {
+        await messages.updateMany(filter, { $pull: { aiLabels: { $in: change.remove } } });
+      }
+      await refreshThread(collections, doc.threadId);
+      logger.info(
+        { accountId, added: change.add.length, removed: change.remove.length },
+        'labels applied',
+      );
+      return;
+    }
+
     const at = (uids: number[]): Filter<MessageDoc> => ({
       accountId,
       folder: change.folder,

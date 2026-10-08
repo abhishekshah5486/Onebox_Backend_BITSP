@@ -169,6 +169,18 @@ describe('mailbox changes', () => {
     expect(await thread('Draft plan')).toBeNull();
   });
 
+  it('puts AI and suggested labels on a message and its conversation', async () => {
+    await put('Pricing question', 5);
+    const [doc] = await collections.messages.find({ subject: 'Pricing question' }).toArray();
+    await change({ type: 'tagged', messageId: doc!._id, add: ['Leads'], remove: [] });
+    expect(await thread('Pricing question')).toMatchObject({
+      labels: ['Leads'],
+      aiLabels: ['Leads'],
+    });
+    await change({ type: 'tagged', messageId: doc!._id, add: [], remove: ['Leads'] });
+    expect(await thread('Pricing question')).toMatchObject({ labels: [], aiLabels: [] });
+  });
+
   it('forgets a renumbered folder and removed messages', async () => {
     await put('Old numbering', 1, { uidValidity: 7 });
     await put('Removed', 2);

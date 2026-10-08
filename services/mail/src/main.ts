@@ -1,5 +1,6 @@
 import { createRemoteTokenVerifier } from '@onebox/auth-kit';
 import {
+  type AiClassifyPayload,
   ingestPayloadSchema,
   mailboxChangePayloadSchema,
   QUEUES,
@@ -15,6 +16,7 @@ import { Redis } from 'ioredis';
 import { buildApp } from './app';
 import { loadMailConfig } from './config';
 import { ensureIndexes, mailCollections } from './db/collections';
+import { aiJob } from './ingest/ai-job';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
 import { createMailboxService } from './mail/mailbox-service';
@@ -35,10 +37,18 @@ if (migrated > 0) logger.info({ threads: migrated }, 'conversations tagged with 
 
 const cleanups: Cleanup[] = [];
 if (config.MAIL_ROLE !== 'api') {
+  // New inbox mail goes to the ai service to be sorted into the user's labels.
+  const aiProducer = createProducer<AiClassifyPayload>(QUEUES.ai, {
+    redisUrl: config.REDIS_URL,
+    logger,
+  });
+  cleanups.push(aiProducer.close);
   const consumer = createConsumer(
     QUEUES.ingest,
     ingestPayloadSchema,
-    createIngestHandler(collections),
+    createIngestHandler(collections, async (doc) => {
+      await aiProducer.enqueue(aiJob(doc));
+    }),
     {
       redisUrl: config.REDIS_URL,
       logger,

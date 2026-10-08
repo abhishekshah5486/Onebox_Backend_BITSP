@@ -21,6 +21,7 @@ const threadView = z.object({
   accountId: z.string(),
   folders: z.array(folderRoleSchema),
   labels: z.array(z.string()),
+  aiLabels: z.array(z.string()),
   category: gmailCategorySchema.nullable(),
   categories: z.array(mailCategorySchema),
   canUnsubscribe: z.boolean(),

@@ -133,6 +133,7 @@ type ThreadMessage = Pick<
   | 'folder'
   | 'category'
   | 'categories'
+  | 'aiLabels'
   | 'unsubscribe'
   | 'movingTo'
 >;
@@ -191,6 +192,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
       folder: 1,
       category: 1,
       categories: 1,
+      aiLabels: 1,
       unsubscribe: 1,
       movingTo: 1,
     })
@@ -227,12 +229,14 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
           .filter((role): role is FolderRole => (FOLDER_ROLES as readonly string[]).includes(role))
           .sort(),
         labels: [
-          ...new Set(
-            visible
+          ...new Set([
+            ...visible
               .filter((doc) => locationOf(doc).role === 'label')
               .map((doc) => locationOf(doc).folder),
-          ),
+            ...visible.flatMap((doc) => doc.aiLabels ?? []),
+          ]),
         ].sort(),
+        aiLabels: [...new Set(visible.flatMap((doc) => doc.aiLabels ?? []))].sort(),
         category: visible.findLast((doc) => locationOf(doc).role === 'inbox')?.category ?? null,
         categories: [
           ...new Set(
