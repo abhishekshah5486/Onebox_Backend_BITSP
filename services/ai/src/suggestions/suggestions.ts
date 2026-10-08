@@ -13,7 +13,6 @@ const toView = (doc: ClassificationDoc) => ({
   accountId: doc.accountId,
   from: doc.from,
   subject: doc.subject,
-  snippet: doc.snippet,
   receivedAt: doc.receivedAt.toISOString(),
   model: doc.model,
   results: doc.results,
@@ -74,13 +73,16 @@ export function createSuggestions({
       path,
       verdict,
       subject: doc.subject,
-      snippet: doc.snippet,
       createdAt: new Date(),
     });
 
   return {
-    async list(userId: string, page = 1) {
-      const filter = { userId, pending: true };
+    // Waiting suggestions, or past ones: what was decided and what AI labelled on its own.
+    async list(userId: string, page = 1, view: 'waiting' | 'past' = 'waiting') {
+      const filter =
+        view === 'waiting'
+          ? { userId, pending: true }
+          : { userId, pending: false, 'results.0': { $exists: true } };
       const [items, total] = await Promise.all([
         classifications
           .find(filter)
@@ -108,6 +110,17 @@ export function createSuggestions({
       await remember(doc, path, verdict);
       logger.info({ verdict }, 'suggestion decided');
       return view;
+    },
+
+    // Dropped without a verdict: nothing is labelled and nothing is learned from it.
+    async discard(userId: string, messageId: string) {
+      const doc = await owned(userId, messageId);
+      return save(
+        doc,
+        doc.results.map((item) =>
+          item.status === 'pending' ? { ...item, status: 'discarded' as const } : item,
+        ),
+      );
     },
 
     // The user files it under another label instead: open suggestions are declined.

@@ -76,10 +76,14 @@ export function registerAiRoutes(
         '/suggestions',
         {
           schema: {
-            querystring: z.object({ page: z.coerce.number().int().min(1).max(1000).default(1) }),
+            querystring: z.object({
+              page: z.coerce.number().int().min(1).max(1000).default(1),
+              view: z.enum(['waiting', 'past']).default('waiting'),
+            }),
           },
         },
-        async (request) => suggestions.list(userId(request), request.query.page),
+        async (request) =>
+          suggestions.list(userId(request), request.query.page, request.query.view),
       );
 
       routes.get('/suggestions/count', async (request) => ({
@@ -97,6 +101,12 @@ export function registerAiRoutes(
             request.body.path,
             request.body.accept,
           ),
+      );
+
+      routes.post(
+        '/suggestions/:messageId/discard',
+        { schema: { params: messageParams } },
+        async (request) => suggestions.discard(userId(request), request.params.messageId),
       );
 
       routes.post(

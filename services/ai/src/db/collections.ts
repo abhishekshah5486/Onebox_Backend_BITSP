@@ -16,7 +16,14 @@ export interface LabelRuleDoc {
   updatedAt: Date;
 }
 
-export const RESULT_STATUSES = ['applied', 'pending', 'accepted', 'rejected', 'assigned'] as const;
+export const RESULT_STATUSES = [
+  'applied',
+  'pending',
+  'accepted',
+  'rejected',
+  'assigned',
+  'discarded',
+] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export interface LabelResult {
@@ -37,7 +44,6 @@ export interface ClassificationDoc {
   threadId: string;
   from: string;
   subject: string;
-  snippet: string;
   receivedAt: Date;
   model: string | null;
   results: LabelResult[];
@@ -55,7 +61,6 @@ export interface FeedbackDoc {
   path: string;
   verdict: 'accepted' | 'rejected' | 'assigned';
   subject: string;
-  snippet: string;
   createdAt: Date;
 }
 

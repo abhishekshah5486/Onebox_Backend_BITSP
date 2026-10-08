@@ -127,7 +127,6 @@ export function createClassifyHandler({
           threadId: payload.threadId,
           from: payload.from,
           subject: payload.subject,
-          snippet: payload.snippet,
           receivedAt: new Date(payload.receivedAt),
           model: reply.model,
           results,
