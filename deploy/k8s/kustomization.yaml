@@ -9,4 +9,5 @@ resources:
   - settings.yaml
   - mail.yaml
   - connector.yaml
+  - llm-proxy.yaml
   - api-gateway.yaml

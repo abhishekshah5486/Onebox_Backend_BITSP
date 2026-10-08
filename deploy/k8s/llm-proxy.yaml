@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: llm-proxy }
+  template:
+    metadata:
+      labels: { app: llm-proxy }
+    spec:
+      # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: llm-proxy
+          image: onebox/llm-proxy:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4006 }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: DATABASE_URL } }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+            - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - { name: REDIS_URL, value: 'redis://redis:6379' }
+            # A missing key leaves that provider's models unavailable rather than failing startup.
+            - name: OPENAI_API_KEY
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: OPENAI_API_KEY, optional: true } }
+            - name: GEMINI_API_KEY
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: GEMINI_API_KEY, optional: true } }
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: ANTHROPIC_API_KEY, optional: true } }
+          # Startup covers the remote database connect + migrations.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4006 }
+            periodSeconds: 2
+            failureThreshold: 45
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4006 }
+            periodSeconds: 10
+            timeoutSeconds: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4006 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-proxy
+spec:
+  selector: { app: llm-proxy }
+  ports: [{ port: 4006 }]

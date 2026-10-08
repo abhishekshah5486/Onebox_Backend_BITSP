@@ -23,6 +23,7 @@ spec:
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
             - { name: ACCOUNTS_SERVICE_URL, value: 'http://accounts:4002' }
             - { name: SETTINGS_SERVICE_URL, value: 'http://settings:4004' }
+            - { name: LLM_PROXY_SERVICE_URL, value: 'http://llm-proxy:4006' }
             - { name: MAIL_SERVICE_URL, value: 'http://mail:4003' }
           readinessProbe:
             httpGet: { path: /health/ready, port: 4000 }

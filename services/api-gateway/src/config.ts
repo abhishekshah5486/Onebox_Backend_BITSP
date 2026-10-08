@@ -8,6 +8,8 @@ const schema = z.object({
   ACCOUNTS_SERVICE_URL: z.url().default('http://localhost:4002'),
   SETTINGS_SERVICE_URL: z.url().default('http://localhost:4004'),
   MAIL_SERVICE_URL: z.url().default('http://localhost:4003'),
+  LLM_PROXY_SERVICE_URL: z.url().default('http://localhost:4006'),
+  AI_SERVICE_URL: z.url().default('http://localhost:4007'),
 });
 
 export type GatewayConfig = z.infer<typeof schema>;

@@ -41,5 +41,18 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       rewritePrefix: '/mail',
       access: 'authenticated',
     },
+    // Model choice and usage only; completions are internal and never routed here.
+    {
+      prefix: '/api/v1/llm',
+      url: config.LLM_PROXY_SERVICE_URL,
+      rewritePrefix: '/llm',
+      access: 'authenticated',
+    },
+    {
+      prefix: '/api/v1/ai',
+      url: config.AI_SERVICE_URL,
+      rewritePrefix: '/ai',
+      access: 'authenticated',
+    },
   ];
 }
