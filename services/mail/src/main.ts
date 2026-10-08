@@ -1,5 +1,11 @@
 import { createRemoteTokenVerifier } from '@onebox/auth-kit';
-import { ingestPayloadSchema, QUEUES, type HistoryPayload } from '@onebox/contracts';
+import {
+  ingestPayloadSchema,
+  mailboxChangePayloadSchema,
+  QUEUES,
+  type HistoryPayload,
+  type MailboxOpPayload,
+} from '@onebox/contracts';
 import { connectMongo } from '@onebox/db-mongo';
 import { startServer, type Cleanup } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
@@ -12,6 +18,8 @@ import { ensureIndexes, mailCollections } from './db/collections';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
 import { createMailboxService } from './mail/mailbox-service';
+import { createThreadActions } from './mail/thread-actions';
+import { createChangesHandler } from './sync/apply-changes';
 import { migrateFolderRoles } from './threads/thread-store';
 
 const logger = createLogger({ service: 'mail', pretty: process.stdout.isTTY });
@@ -36,7 +44,14 @@ if (config.MAIL_ROLE !== 'api') {
       concurrency: config.INGEST_CONCURRENCY,
     },
   );
-  cleanups.push(consumer.close);
+  // One at a time: changes for the same folder must apply in the order the server made them.
+  const changes = createConsumer(
+    QUEUES.mailboxChanges,
+    mailboxChangePayloadSchema,
+    createChangesHandler(collections),
+    { redisUrl: config.REDIS_URL, logger, concurrency: 1 },
+  );
+  cleanups.push(consumer.close, changes.close);
   logger.info({ concurrency: config.INGEST_CONCURRENCY }, 'ingest worker started');
 }
 cleanups.push(mongo.close);
@@ -47,7 +62,11 @@ const historyProducer = createProducer<HistoryPayload>(QUEUES.history, {
   redisUrl: config.REDIS_URL,
   logger,
 });
-cleanups.push(historyProducer.close, () => redis.quit());
+const opsProducer = createProducer<MailboxOpPayload>(QUEUES.mailboxOps, {
+  redisUrl: config.REDIS_URL,
+  logger,
+});
+cleanups.push(historyProducer.close, opsProducer.close, () => redis.quit());
 
 const app = buildApp({
   logger,
@@ -61,6 +80,7 @@ const app = buildApp({
         historyProducer,
         logger,
       }),
+      actions: createThreadActions({ collections, ops: opsProducer, logger }),
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     },
   }),

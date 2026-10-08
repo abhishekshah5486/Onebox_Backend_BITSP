@@ -1,4 +1,6 @@
+import { FOLDER_ROLES, type FolderRole, type MailboxRole } from '@onebox/contracts';
 import type { Address, MailCollections, MessageDoc } from '../db/collections';
+import { findUnsubscribe } from '../ingest/unsubscribe';
 import { isReplySubject, normalizeSubject } from './subject';
 
 const SUBJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -128,7 +130,21 @@ type ThreadMessage = Pick<
   | 'snippet'
   | 'receivedAt'
   | 'uid'
+  | 'folder'
+  | 'category'
+  | 'unsubscribe'
+  | 'movingTo'
 >;
+
+// Where a message shows right now: its pending destination, else where the server has it.
+export function locationOf(doc: Pick<MessageDoc, 'role' | 'folder' | 'movingTo'>): {
+  role: MailboxRole | 'deleted';
+  folder: string;
+} {
+  return doc.movingTo
+    ? { role: doc.movingTo.role, folder: doc.movingTo.folder ?? doc.folder }
+    : { role: doc.role, folder: doc.folder };
+}
 
 // The same message can sit in two folders (mail sent to yourself is in Sent and Inbox); count it once.
 export function uniqueMessages<T extends Pick<MessageDoc, '_id' | 'messageIdHeader'>>(docs: T[]) {
@@ -171,9 +187,14 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
       snippet: 1,
       receivedAt: 1,
       uid: 1,
+      folder: 1,
+      category: 1,
+      unsubscribe: 1,
+      movingTo: 1,
     })
     .toArray();
-  const docs = uniqueMessages(all);
+  const visible = all.filter((doc) => locationOf(doc).role !== 'deleted');
+  const docs = uniqueMessages(visible);
   if (docs.length === 0) {
     await threads.deleteOne({ _id: threadId });
     return;
@@ -200,11 +221,22 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
         snippet: last.snippet,
         lastFrom: last.from,
         lastMessageAt: last.receivedAt,
-        folders: [...new Set(all.map((doc) => doc.role))].sort(),
+        folders: [...new Set(visible.map((doc) => locationOf(doc).role))]
+          .filter((role): role is FolderRole => (FOLDER_ROLES as readonly string[]).includes(role))
+          .sort(),
+        labels: [
+          ...new Set(
+            visible
+              .filter((doc) => locationOf(doc).role === 'label')
+              .map((doc) => locationOf(doc).folder),
+          ),
+        ].sort(),
+        category: visible.findLast((doc) => locationOf(doc).role === 'inbox')?.category ?? null,
+        canUnsubscribe: docs.some((doc) => doc.unsubscribe),
         lastUid: last.uid,
         updatedAt: now,
       },
-      $setOnInsert: { createdAt: now },
+      $setOnInsert: { createdAt: now, unsubscribedAt: null },
     },
     { upsert: true },
   );
@@ -213,9 +245,29 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
 // Mail stored before folders existed all came from the inbox; it is tagged once, at startup.
 export async function migrateFolderRoles(collections: MailCollections): Promise<number> {
   await collections.messages.updateMany({ role: { $exists: false } }, { $set: { role: 'inbox' } });
+  await collections.messages.updateMany(
+    { pendingSince: { $exists: false } },
+    { $set: { pendingSince: null, movingTo: null } },
+  );
+  // Mail stored before unsubscribe detection: only its body can be checked now.
+  for await (const doc of collections.messages.find(
+    { unsubscribe: { $exists: false } },
+    { projection: { htmlBody: 1, textBody: 1 } },
+  )) {
+    await collections.messages.updateOne(
+      { _id: doc._id },
+      { $set: { unsubscribe: findUnsubscribe(undefined, doc.htmlBody, doc.textBody) } },
+    );
+  }
   const stale = await collections.threads
     .find(
-      { $or: [{ folders: { $exists: false } }, { lastUid: { $exists: false } }] },
+      {
+        $or: [
+          { folders: { $exists: false } },
+          { lastUid: { $exists: false } },
+          { labels: { $exists: false } },
+        ],
+      },
       { projection: { _id: 1 } },
     )
     .toArray();

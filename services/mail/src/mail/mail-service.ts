@@ -1,19 +1,22 @@
-import type { FolderRole } from '@onebox/contracts';
+import type { FolderRole, GmailCategory } from '@onebox/contracts';
 import { NotFoundError } from '@onebox/errors';
 import type { Filter } from 'mongodb';
 import type { MailCollections, MessageDoc, ThreadDoc } from '../db/collections';
-import { refreshThread, uniqueMessages } from '../threads/thread-store';
+import { locationOf, uniqueMessages } from '../threads/thread-store';
 import { pageThreads } from './paging';
 
 export type ThreadFilter = 'all' | 'unread' | 'starred';
 
 // Like Gmail, Starred spans every folder except spam and trash unless a folder is asked for.
-const STARRED_FOLDERS: FolderRole[] = ['inbox', 'sent', 'drafts'];
+const STARRED_FOLDERS: FolderRole[] = ['inbox', 'sent', 'drafts', 'archive'];
 
 export interface ListThreadsInput {
   accountId?: string | undefined;
   filter?: ThreadFilter | undefined;
   folder?: FolderRole | undefined;
+  label?: string | undefined;
+  // Gmail inbox tab; other providers' mail counts as Primary.
+  category?: GmailCategory | undefined;
   page?: number | undefined;
   limit?: number | undefined;
 }
@@ -22,6 +25,10 @@ const toThreadView = (thread: ThreadDoc) => ({
   id: thread._id,
   accountId: thread.accountId,
   folders: thread.folders,
+  labels: thread.labels ?? [],
+  category: thread.category ?? null,
+  canUnsubscribe: thread.canUnsubscribe ?? false,
+  unsubscribedAt: thread.unsubscribedAt?.toISOString() ?? null,
   subject: thread.subject,
   snippet: thread.snippet,
   participants: thread.participants,
@@ -67,11 +74,13 @@ export function createMailService(collections: MailCollections) {
   return {
     async listThreads(
       userId: string,
-      { accountId, filter = 'all', folder, ...page }: ListThreadsInput,
+      { accountId, filter = 'all', folder, label, category, ...page }: ListThreadsInput,
     ) {
       const query: Filter<ThreadDoc> = { userId };
       if (accountId) query.accountId = accountId;
-      query.folders = folder ?? (filter === 'starred' ? { $in: STARRED_FOLDERS } : 'inbox');
+      if (label) query.labels = label;
+      else query.folders = folder ?? (filter === 'starred' ? { $in: STARRED_FOLDERS } : 'inbox');
+      if (category) query.category = category === 'primary' ? { $in: ['primary', null] } : category;
       if (filter === 'unread') query.unreadCount = { $gt: 0 };
       if (filter === 'starred') query.isStarred = true;
       const result = await pageThreads(threads, query, page);
@@ -84,31 +93,13 @@ export function createMailService(collections: MailCollections) {
         .find({ userId, threadId })
         .sort({ receivedAt: 1, uid: 1 })
         .toArray();
-      return { thread: toThreadView(thread), messages: uniqueMessages(docs).map(toMessageView) };
+      const visible = docs.filter((doc) => locationOf(doc).role !== 'deleted');
+      return { thread: toThreadView(thread), messages: uniqueMessages(visible).map(toMessageView) };
     },
 
-    async updateThread(
-      userId: string,
-      threadId: string,
-      changes: { isRead?: boolean; isStarred?: boolean },
-    ) {
-      await findOwnedThread(userId, threadId);
-      if (changes.isRead !== undefined) {
-        await messages.updateMany({ userId, threadId }, { $set: { isRead: changes.isRead } });
-      }
-      if (changes.isStarred === false) {
-        await messages.updateMany({ userId, threadId }, { $set: { isStarred: false } });
-      } else if (changes.isStarred) {
-        // Like Gmail, starring a conversation stars its latest message.
-        const [latest] = await messages
-          .find({ userId, threadId })
-          .sort({ receivedAt: -1 })
-          .limit(1)
-          .toArray();
-        if (latest) await messages.updateOne({ _id: latest._id }, { $set: { isStarred: true } });
-      }
-      await refreshThread(collections, threadId);
-      return toThreadView(await findOwnedThread(userId, threadId));
+    async threadViews(userId: string, threadIds: string[]) {
+      const found = await threads.find({ _id: { $in: threadIds }, userId }).toArray();
+      return found.map(toThreadView);
     },
 
     async stats(userId: string) {

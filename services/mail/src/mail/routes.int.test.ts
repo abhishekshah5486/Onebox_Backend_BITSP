@@ -4,7 +4,12 @@ import { connectMongo, type MongoHandle } from '@onebox/db-mongo';
 import { UnauthorizedError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
-import { HISTORY_BATCH_SIZE, QUEUES, type HistoryPayload } from '@onebox/contracts';
+import {
+  HISTORY_BATCH_SIZE,
+  QUEUES,
+  type HistoryPayload,
+  type MailboxOpPayload,
+} from '@onebox/contracts';
 import { createMailboxStore, type MailboxStore } from '@onebox/mailbox-state';
 import { createProducer } from '@onebox/queue';
 import { startMongo, startRedis, type TestMongo, type TestRedis } from '@onebox/testing';
@@ -17,6 +22,7 @@ import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
 import { createMailService } from './mail-service';
 import { createMailboxService } from './mailbox-service';
+import { createThreadActions } from './thread-actions';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
 const context = { logger, attempt: 1 };
@@ -35,6 +41,10 @@ let redis: Redis;
 let store: MailboxStore;
 let historyQueue: Queue;
 let historyProducer: ReturnType<typeof createProducer<HistoryPayload>>;
+let opsQueue: Queue;
+let opsProducer: ReturnType<typeof createProducer<MailboxOpPayload>>;
+const oneClick: string[] = [];
+let oneClickWorks = true;
 
 beforeAll(async () => {
   mongo = await startMongo();
@@ -50,12 +60,26 @@ beforeAll(async () => {
     redisUrl: redisContainer.url,
     logger,
   });
+  opsQueue = new Queue(QUEUES.mailboxOps, { connection: { url: redisContainer.url } });
+  opsProducer = createProducer<MailboxOpPayload>(QUEUES.mailboxOps, {
+    redisUrl: redisContainer.url,
+    logger,
+  });
   app = buildApp({
     logger,
     checks: {},
     routes: {
       mail: createMailService(collections),
       mailboxes: createMailboxService({ collections, store, historyProducer, logger }),
+      actions: createThreadActions({
+        collections,
+        ops: opsProducer,
+        logger,
+        post: async (url) => {
+          oneClick.push(url);
+          return { ok: oneClickWorks, status: oneClickWorks ? 200 : 500 };
+        },
+      }),
       verifyToken,
     },
   });
@@ -69,6 +93,8 @@ beforeEach(async () => {
 afterAll(async () => {
   await historyProducer.close();
   await historyQueue.close();
+  await opsProducer.close();
+  await opsQueue.close();
   redis.disconnect();
   await redisContainer.stop();
   await app.close();
@@ -384,6 +410,200 @@ describe('mail api', () => {
         (j) => (j.data as { accountId: string }).accountId === accountId,
       );
       expect(job!.data).toMatchObject({ payload: { folder: SENT.path, role: 'sent' } });
+    });
+  });
+
+  describe('conversation actions', () => {
+    const LABEL = { path: 'Receipts', role: 'label' as const };
+    const act = (userId: string, payload: object) =>
+      app.inject({ method: 'POST', url: '/mail/threads/actions', headers: as(userId), payload });
+    const opsFor = async (accountId: string) =>
+      (await opsQueue.getJobs(['waiting', 'delayed', 'active', 'completed']))
+        .map((job) => job.data as { accountId: string; payload: MailboxOpPayload })
+        .filter((data) => data.accountId === accountId)
+        .map((data) => data.payload);
+    const put = (userId: string, accountId: string, spec: Parameters<typeof ingestJob>[0]) =>
+      ingest(ingestJob({ userId, accountId, ...spec }), context);
+    const ids = async (userId: string, query = '') =>
+      (await list(userId, query))
+        .json<{ items: Thread[] }>()
+        .items.map((t) => t.subject)
+        .sort();
+
+    it('archives at once and asks the connector to move the mail on the server', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, { subject: 'Keep', messageId: '<keep@x>', uid: 501 });
+      await put(userId, accountId, { subject: 'Done', messageId: '<done@x>', uid: 502 });
+      const done = (await list(userId))
+        .json<{ items: Thread[] }>()
+        .items.find((t) => t.subject === 'Done')!;
+
+      const res = await act(userId, { threadIds: [done.id], action: 'archive' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ items: [{ id: done.id, folders: ['archive'] }] });
+      expect(await ids(userId)).toEqual(['Keep']);
+      expect(await ids(userId, '?folder=archive')).toEqual(['Done']);
+      expect(await opsFor(accountId)).toEqual([
+        {
+          folder: 'INBOX',
+          uidValidity: 1,
+          uids: [502],
+          op: { type: 'move', to: { role: 'archive' } },
+        },
+      ]);
+    });
+
+    it('syncs read and starred changes to the server', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, { subject: 'Ping', messageId: '<ping@x>', uid: 601 });
+      const [thread] = (await list(userId)).json<{ items: Thread[] }>().items;
+
+      await act(userId, { threadIds: [thread!.id], action: 'read' });
+      await app.inject({
+        method: 'PATCH',
+        url: `/mail/threads/${thread!.id}`,
+        headers: as(userId),
+        payload: { isStarred: true },
+      });
+      const flagOps = (await opsFor(accountId)).map((op) => op.op);
+      expect(flagOps).toHaveLength(2);
+      expect(flagOps).toEqual(
+        expect.arrayContaining([
+          { type: 'flags', add: ['\\Seen'], remove: [] },
+          { type: 'flags', add: ['\\Flagged'], remove: [] },
+        ]),
+      );
+      // Already read: nothing more to send.
+      await act(userId, { threadIds: [thread!.id], action: 'read' });
+      expect(await opsFor(accountId)).toHaveLength(2);
+    });
+
+    it('moves to a label, lists it there and only deletes forever from trash', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, { subject: 'Invoice', messageId: '<inv@x>', uid: 701 });
+      await put(userId, accountId, {
+        subject: 'Old receipt',
+        messageId: '<old@x>',
+        uid: 9,
+        folder: LABEL,
+      });
+      const invoice = (await list(userId)).json<{ items: Thread[] }>().items[0]!;
+
+      expect(
+        (await act(userId, { threadIds: [invoice.id], action: 'move', to: { label: 'Receipts' } }))
+          .statusCode,
+      ).toBe(200);
+      expect(await ids(userId)).toEqual([]);
+      expect(
+        await ids(userId, `?accountId=${accountId}&label=${encodeURIComponent('Receipts')}`),
+      ).toEqual(['Invoice', 'Old receipt']);
+
+      const refused = await act(userId, { threadIds: [invoice.id], action: 'delete' });
+      expect(refused.statusCode).toBe(400);
+
+      await act(userId, {
+        threadIds: [invoice.id],
+        action: 'move',
+        from: { label: 'Receipts' },
+        to: { role: 'trash' },
+      });
+      expect(await ids(userId, '?folder=trash')).toEqual(['Invoice']);
+      expect((await act(userId, { threadIds: [invoice.id], action: 'delete' })).statusCode).toBe(
+        200,
+      );
+      expect(await ids(userId, '?folder=trash')).toEqual([]);
+      expect((await opsFor(accountId)).map((op) => op.op.type).sort()).toEqual([
+        'expunge',
+        'move',
+        'move',
+      ]);
+    });
+
+    it('trashes every copy of a conversation and refuses other users', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, { subject: 'Note', messageId: '<n@x>', uid: 801 });
+      await put(userId, accountId, {
+        subject: 'Note',
+        messageId: '<n@x>',
+        uid: 802,
+        folder: { path: 'Sent', role: 'sent' },
+      });
+      const [note] = (await list(userId)).json<{ items: Thread[] }>().items;
+
+      expect((await act(randomUUID(), { threadIds: [note!.id], action: 'trash' })).statusCode).toBe(
+        404,
+      );
+      await act(userId, { threadIds: [note!.id], action: 'trash' });
+      expect(await ids(userId, '?folder=sent')).toEqual([]);
+      expect(await ids(userId, '?folder=trash')).toEqual(['Note']);
+      expect((await opsFor(accountId)).map((op) => op.folder).sort()).toEqual(['INBOX', 'Sent']);
+    });
+
+    it('filters the inbox by gmail category, with other mail as primary', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, { subject: 'Sale', messageId: '<s@x>', category: 'promotions' });
+      await put(userId, accountId, { subject: 'Mum', messageId: '<m@x>', category: 'primary' });
+      await put(userId, randomUUID(), { subject: 'Yahoo mail', messageId: '<y@x>' });
+
+      expect(await ids(userId, '?category=promotions')).toEqual(['Sale']);
+      expect(await ids(userId, '?category=primary')).toEqual(['Mum', 'Yahoo mail']);
+    });
+
+    it('unsubscribes with one click, or hands back the link', async () => {
+      const userId = randomUUID();
+      const accountId = randomUUID();
+      await put(userId, accountId, {
+        subject: 'Weekly deals',
+        messageId: '<deals@x>',
+        headers: [
+          'List-Unsubscribe: <https://shop.example/u/1>, <mailto:stop@shop.example>',
+          'List-Unsubscribe-Post: List-Unsubscribe=One-Click',
+        ],
+      });
+      await put(userId, accountId, {
+        subject: 'Digest',
+        messageId: '<digest@x>',
+        headers: ['List-Unsubscribe: <https://news.example/out>'],
+      });
+      await put(userId, accountId, { subject: 'Personal', messageId: '<p@x>' });
+      const bySubject = Object.fromEntries(
+        (await list(userId))
+          .json<{ items: (Thread & { canUnsubscribe: boolean })[] }>()
+          .items.map((t) => [t.subject, t]),
+      );
+      expect(bySubject.Personal!.canUnsubscribe).toBe(false);
+      const unsubscribe = (id: string) =>
+        app.inject({ method: 'POST', url: `/mail/threads/${id}/unsubscribe`, headers: as(userId) });
+
+      expect((await unsubscribe(bySubject['Weekly deals']!.id)).json()).toEqual({
+        method: 'one-click',
+        url: null,
+      });
+      expect(oneClick).toContain('https://shop.example/u/1');
+      const detail = await app.inject({
+        url: `/mail/threads/${bySubject['Weekly deals']!.id}`,
+        headers: as(userId),
+      });
+      expect(
+        detail.json<{ thread: { unsubscribedAt: string | null } }>().thread.unsubscribedAt,
+      ).not.toBeNull();
+
+      expect((await unsubscribe(bySubject.Digest!.id)).json()).toEqual({
+        method: 'link',
+        url: 'https://news.example/out',
+      });
+      oneClickWorks = false;
+      expect((await unsubscribe(bySubject['Weekly deals']!.id)).json()).toEqual({
+        method: 'link',
+        url: 'https://shop.example/u/1',
+      });
+      oneClickWorks = true;
+      expect((await unsubscribe(bySubject.Personal!.id)).statusCode).toBe(400);
     });
   });
 

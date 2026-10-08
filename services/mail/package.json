@@ -18,6 +18,7 @@
     "@onebox/http": "*",
     "@onebox/logger": "*",
     "@onebox/mailbox-state": "*",
+    "@onebox/net-guard": "*",
     "@onebox/queue": "*",
     "fastify": "^5.12.5",
     "fastify-type-provider-zod": "^7.0.0",

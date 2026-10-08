@@ -1,10 +1,16 @@
 import { currentUser, requireUser, type TokenVerifier } from '@onebox/auth-kit';
-import { folderRoleSchema } from '@onebox/contracts';
+import {
+  folderRoleSchema,
+  gmailCategorySchema,
+  mailboxRoleSchema,
+  mailboxTargetSchema,
+} from '@onebox/contracts';
 import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { MailService } from './mail-service';
 import type { MailboxService } from './mailbox-service';
+import { THREAD_ACTIONS, type MailboxView, type ThreadActions } from './thread-actions';
 
 const address = z.object({ name: z.string(), address: z.string() });
 
@@ -12,6 +18,10 @@ const threadView = z.object({
   id: z.string(),
   accountId: z.string(),
   folders: z.array(folderRoleSchema),
+  labels: z.array(z.string()),
+  category: gmailCategorySchema.nullable(),
+  canUnsubscribe: z.boolean(),
+  unsubscribedAt: z.string().nullable(),
   subject: z.string(),
   snippet: z.string(),
   participants: z.array(address),
@@ -57,11 +67,22 @@ const pageQuery = {
   limit: z.coerce.number().int().min(1).max(100).default(50),
 };
 
+const labelPath = z.string().min(1).max(500);
+
 const filterQuery = {
   filter: z.enum(['all', 'unread', 'starred']).default('all'),
   folder: folderRoleSchema.optional(),
+  label: labelPath.optional(),
+  category: gmailCategorySchema.optional(),
 };
-const folderQuery = z.object({ folder: folderRoleSchema.default('inbox') });
+const folderQuery = z.object({
+  folder: folderRoleSchema.default('inbox'),
+  label: labelPath.optional(),
+});
+const viewOf = (query: z.infer<typeof folderQuery>): MailboxView =>
+  query.label ? { label: query.label } : { role: query.folder };
+
+const mailboxView = z.union([z.object({ role: folderRoleSchema }), z.object({ label: labelPath })]);
 
 const threadPage = z.object({
   items: z.array(threadView),
@@ -72,7 +93,8 @@ const threadPage = z.object({
 
 const mailboxSummary = z.object({
   accountId: z.string(),
-  folder: folderRoleSchema,
+  folder: mailboxRoleSchema,
+  label: z.string().nullable(),
   server: z.object({ total: z.number(), unread: z.number(), updatedAt: z.string() }).nullable(),
   fetched: z.object({ conversations: z.number(), messages: z.number() }),
   history: z.object({
@@ -87,8 +109,14 @@ export function registerMailRoutes(
   {
     mail,
     mailboxes,
+    actions,
     verifyToken,
-  }: { mail: MailService; mailboxes: MailboxService; verifyToken: TokenVerifier },
+  }: {
+    mail: MailService;
+    mailboxes: MailboxService;
+    actions: ThreadActions;
+    verifyToken: TokenVerifier;
+  },
 ) {
   app.decorateRequest('user', null);
 
@@ -137,7 +165,60 @@ export function registerMailRoutes(
             response: { 200: threadView },
           },
         },
-        async (request) => mail.updateThread(userId(request), request.params.id, request.body),
+        async (request) => {
+          const { isRead, isStarred } = request.body;
+          const threadIds = [request.params.id];
+          if (isRead !== undefined) {
+            await actions.apply(userId(request), { threadIds, action: isRead ? 'read' : 'unread' });
+          }
+          if (isStarred !== undefined) {
+            await actions.apply(userId(request), {
+              threadIds,
+              action: isStarred ? 'star' : 'unstar',
+            });
+          }
+          const [view] = await mail.threadViews(userId(request), threadIds);
+          return view!;
+        },
+      );
+
+      routes.post(
+        '/threads/actions',
+        {
+          schema: {
+            body: z
+              .object({
+                threadIds: z.array(params.shape.id).min(1).max(500),
+                action: z.enum(THREAD_ACTIONS),
+                from: mailboxView.optional(),
+                to: mailboxTargetSchema.optional(),
+              })
+              .refine((body) => body.action !== 'move' || body.to, {
+                message: 'Choose where to move the conversations',
+              }),
+            response: { 200: z.object({ items: z.array(threadView) }) },
+          },
+        },
+        async (request) => {
+          await actions.apply(userId(request), request.body);
+          return { items: await mail.threadViews(userId(request), request.body.threadIds) };
+        },
+      );
+
+      routes.post(
+        '/threads/:id/unsubscribe',
+        {
+          schema: {
+            params,
+            response: {
+              200: z.object({
+                method: z.enum(['one-click', 'link', 'mailto']),
+                url: z.string().nullable(),
+              }),
+            },
+          },
+        },
+        async (request) => actions.unsubscribe(userId(request), request.params.id),
       );
 
       routes.get(
@@ -166,7 +247,7 @@ export function registerMailRoutes(
           },
         },
         async (request) =>
-          mailboxes.summary(userId(request), request.params.accountId, request.query.folder),
+          mailboxes.summary(userId(request), request.params.accountId, viewOf(request.query)),
       );
 
       routes.get(
@@ -178,8 +259,9 @@ export function registerMailRoutes(
               200: z.object({
                 items: z.array(
                   z.object({
-                    role: folderRoleSchema,
+                    role: mailboxRoleSchema,
                     path: z.string(),
+                    name: z.string(),
                     total: z.number(),
                     unread: z.number(),
                     updatedAt: z.string(),
@@ -208,7 +290,7 @@ export function registerMailRoutes(
               await mailboxes.requestHistory(
                 userId(request),
                 request.params.accountId,
-                request.query.folder,
+                viewOf(request.query),
               ),
             ),
       );

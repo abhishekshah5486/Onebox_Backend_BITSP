@@ -1,4 +1,5 @@
-import type { FolderRole } from '@onebox/contracts';
+import type { FolderRole, GmailCategory, MailboxRole } from '@onebox/contracts';
+import type { Unsubscribe } from '../ingest/unsubscribe';
 import type { Collection, Db } from 'mongodb';
 
 export interface Address {
@@ -19,8 +20,9 @@ export interface MessageDoc {
   userId: string;
   accountId: string;
   threadId: string;
+  // Where the message is on the server; changes only once the server confirms a move.
   folder: string;
-  role: FolderRole;
+  role: MailboxRole;
   uid: number;
   uidValidity: number;
   messageIdHeader: string | null;
@@ -43,6 +45,13 @@ export interface MessageDoc {
   sentAt: Date | null;
   sizeBytes: number;
   backfill: boolean;
+  category: GmailCategory | null;
+  unsubscribe: Unsubscribe | null;
+  // Set while a change made in OneBox is on its way to the server, so a sync from the
+  // server (taken before the change landed) does not undo it.
+  pendingSince: Date | null;
+  // Where it is shown meanwhile: a folder role, a label path, or nowhere ('deleted').
+  movingTo: { role: MailboxRole | 'deleted'; folder: string | null } | null;
   createdAt: Date;
 }
 
@@ -62,6 +71,12 @@ export interface ThreadDoc {
   lastMessageAt: Date;
   // Every folder holding at least one of its messages, so one conversation can show in several.
   folders: FolderRole[];
+  // Label paths (Gmail labels, or the provider's own folders).
+  labels: string[];
+  // Gmail inbox tab of the newest inbox message; null elsewhere.
+  category: GmailCategory | null;
+  canUnsubscribe: boolean;
+  unsubscribedAt: Date | null;
   // UID of the newest message; orders conversations that share the same second.
   lastUid: number;
   createdAt: Date;
@@ -96,5 +111,8 @@ export async function ensureIndexes({ messages, threads }: MailCollections): Pro
       _id: -1,
     }),
     threads.createIndex({ userId: 1, accountId: 1, normalizedSubject: 1, lastMessageAt: -1 }),
+    threads.createIndex({ userId: 1, accountId: 1, labels: 1, lastMessageAt: -1, lastUid: -1 }),
+    threads.createIndex({ userId: 1, folders: 1, category: 1, lastMessageAt: -1, lastUid: -1 }),
+    messages.createIndex({ accountId: 1, folder: 1, uidValidity: 1, uid: 1 }),
   ]);
 }

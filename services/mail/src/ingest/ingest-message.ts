@@ -58,6 +58,9 @@ export function createIngestHandler(collections: MailCollections) {
         receivedAt,
         sizeBytes: payload.sizeBytes,
         backfill: payload.backfill,
+        category: payload.category,
+        pendingSince: null,
+        movingTo: null,
         createdAt: new Date(),
       });
     } catch (err) {

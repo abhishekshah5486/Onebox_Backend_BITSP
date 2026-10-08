@@ -1,7 +1,8 @@
 import {
   createJobEnvelope,
-  type FolderRole,
+  type GmailCategory,
   ingestDedupeKey,
+  type MailboxRole,
   type IngestPayload,
 } from '@onebox/contracts';
 
@@ -15,6 +16,7 @@ export interface MailSpec {
   from?: string;
   date?: string;
   body?: string;
+  headers?: string[];
 }
 
 export function rawMessage({
@@ -25,6 +27,7 @@ export function rawMessage({
   from = 'Priya <priya@acme.example>',
   date = 'Tue, 06 Oct 2026 10:00:00 +0000',
   body = 'Hello there',
+  headers = [],
 }: MailSpec): string {
   return [
     `From: ${from}`,
@@ -34,6 +37,7 @@ export function rawMessage({
     ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
     ...(references ? [`References: ${references}`] : []),
     `Date: ${date}`,
+    ...headers,
     '',
     body,
   ].join('\r\n');
@@ -46,18 +50,22 @@ export function ingestJob(
     flags?: string[];
     uid?: number;
     backfill?: boolean;
-    folder?: { path: string; role: FolderRole };
+    folder?: { path: string; role: MailboxRole };
+    uidValidity?: number;
+    category?: GmailCategory | null;
   },
 ) {
   const folder = spec.folder ?? { path: 'INBOX', role: 'inbox' as const };
   const uid = spec.uid ?? nextUid++;
   const accountId = spec.accountId ?? 'acc-1';
+  const uidValidity = spec.uidValidity ?? 1;
   const raw = rawMessage(spec);
   const payload: IngestPayload = {
     folder: folder.path,
     role: folder.role,
+    category: spec.category ?? null,
     uid,
-    uidValidity: 1,
+    uidValidity,
     flags: spec.flags ?? [],
     internalDate: spec.date ? new Date(spec.date).toISOString() : null,
     sizeBytes: raw.length,
@@ -65,7 +73,7 @@ export function ingestJob(
     rawSource: Buffer.from(raw).toString('base64'),
   };
   return createJobEnvelope({
-    jobId: ingestDedupeKey({ accountId, folder: folder.path, uidValidity: 1, uid }),
+    jobId: ingestDedupeKey({ accountId, folder: folder.path, uidValidity, uid }),
     userId: spec.userId ?? 'user-1',
     accountId,
     payload,
