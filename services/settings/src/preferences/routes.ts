@@ -24,8 +24,13 @@ const preferencesView = z.object({
   autonomyMode: z.enum(AUTONOMY_MODES),
   signature: z.string().nullable(),
   timezone: z.string(),
+  sidebarHidden: z.array(z.string()),
+  chipsHidden: z.array(z.string()),
+  inboxTabs: z.array(z.string()),
   updatedAt: z.string().nullable(),
 });
+
+const viewKeys = z.array(z.string().min(1).max(600)).max(500);
 
 const updateBody = z
   .object({
@@ -33,6 +38,9 @@ const updateBody = z
     autonomyMode: z.enum(AUTONOMY_MODES).optional(),
     signature: z.string().max(2000).nullable().optional(),
     timezone: timezone.optional(),
+    sidebarHidden: viewKeys.optional(),
+    chipsHidden: viewKeys.optional(),
+    inboxTabs: z.array(z.enum(['promotions', 'social', 'updates', 'forums'])).optional(),
   })
   .refine((body) => Object.values(body).some((value) => value !== undefined), {
     message: 'Provide at least one preference to update',

@@ -1,0 +1,3 @@
+ALTER TABLE "settings"."user_preferences" ADD COLUMN "sidebar_hidden" text[] DEFAULT ARRAY['category:social','category:updates','category:forums','category:promotions']::text[] NOT NULL;--> statement-breakpoint
+ALTER TABLE "settings"."user_preferences" ADD COLUMN "chips_hidden" text[] DEFAULT ARRAY[]::text[] NOT NULL;--> statement-breakpoint
+ALTER TABLE "settings"."user_preferences" ADD COLUMN "inbox_tabs" text[] DEFAULT ARRAY['promotions','social','updates','forums']::text[] NOT NULL;

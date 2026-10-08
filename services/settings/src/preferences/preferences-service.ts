@@ -5,7 +5,13 @@ import { userPreferences, type PreferencesRow } from '../db/schema';
 
 export type Preferences = Pick<
   PreferencesRow,
-  'markSeenOnFetch' | 'autonomyMode' | 'signature' | 'timezone'
+  | 'markSeenOnFetch'
+  | 'autonomyMode'
+  | 'signature'
+  | 'timezone'
+  | 'sidebarHidden'
+  | 'chipsHidden'
+  | 'inboxTabs'
 >;
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -13,6 +19,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autonomyMode: 'MANUAL',
   signature: null,
   timezone: 'UTC',
+  // Like Gmail: the four tab categories stay out of the sidebar until asked for.
+  sidebarHidden: ['category:social', 'category:updates', 'category:forums', 'category:promotions'],
+  chipsHidden: [],
+  inboxTabs: ['promotions', 'social', 'updates', 'forums'],
 };
 
 const toView = (row: PreferencesRow | undefined) => ({
@@ -20,6 +30,9 @@ const toView = (row: PreferencesRow | undefined) => ({
   autonomyMode: row?.autonomyMode ?? DEFAULT_PREFERENCES.autonomyMode,
   signature: row?.signature ?? DEFAULT_PREFERENCES.signature,
   timezone: row?.timezone ?? DEFAULT_PREFERENCES.timezone,
+  sidebarHidden: row?.sidebarHidden ?? DEFAULT_PREFERENCES.sidebarHidden,
+  chipsHidden: row?.chipsHidden ?? DEFAULT_PREFERENCES.chipsHidden,
+  inboxTabs: row?.inboxTabs ?? DEFAULT_PREFERENCES.inboxTabs,
   updatedAt: row?.updatedAt.toISOString() ?? null,
 });
 

@@ -1,4 +1,5 @@
 import { boolean, index, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 export const settingsSchema = pgSchema('settings');
 
@@ -28,6 +29,23 @@ export const userPreferences = settingsSchema.table('user_preferences', {
   autonomyMode: autonomyModeEnum('autonomy_mode').notNull().default('MANUAL'),
   signature: text('signature'),
   timezone: text('timezone').notNull().default('UTC'),
+  // Mailbox view keys ("sent", "category:travel", "label:<accountId>:<path>") hidden in the sidebar.
+  sidebarHidden: text('sidebar_hidden')
+    .array()
+    .notNull()
+    .default(
+      sql`ARRAY['category:social','category:updates','category:forums','category:promotions']::text[]`,
+    ),
+  // Labels ("label:<accountId>:<path>") whose chips are hidden in the message list.
+  chipsHidden: text('chips_hidden')
+    .array()
+    .notNull()
+    .default(sql`ARRAY[]::text[]`),
+  // Gmail inbox tabs shown besides Primary.
+  inboxTabs: text('inbox_tabs')
+    .array()
+    .notNull()
+    .default(sql`ARRAY['promotions','social','updates','forums']::text[]`),
   ...timestamps,
 });
 

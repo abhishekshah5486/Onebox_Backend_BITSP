@@ -137,6 +137,14 @@ describe('preferences', () => {
       autonomyMode: 'MANUAL',
       signature: null,
       timezone: 'UTC',
+      sidebarHidden: [
+        'category:social',
+        'category:updates',
+        'category:forums',
+        'category:promotions',
+      ],
+      chipsHidden: [],
+      inboxTabs: ['promotions', 'social', 'updates', 'forums'],
       updatedAt: null,
     });
   });
@@ -147,9 +155,12 @@ describe('preferences', () => {
       app.inject({ method: 'PATCH', url: '/settings/preferences', headers: as(userId), payload });
 
     await patch({ markSeenOnFetch: false, timezone: 'Asia/Kolkata' });
+    await patch({ sidebarHidden: ['spam'], inboxTabs: ['promotions'] });
     const res = await patch({ autonomyMode: 'SEMI', signature: '— Abhishek' });
 
     expect(res.json()).toMatchObject({
+      sidebarHidden: ['spam'],
+      inboxTabs: ['promotions'],
       markSeenOnFetch: false,
       autonomyMode: 'SEMI',
       signature: '— Abhishek',
@@ -157,18 +168,20 @@ describe('preferences', () => {
     });
   });
 
-  it.each([[{ timezone: 'Mars/Olympus' }], [{ autonomyMode: 'YOLO' }], [{}]])(
-    'rejects %j',
-    async (payload) => {
-      const res = await app.inject({
-        method: 'PATCH',
-        url: '/settings/preferences',
-        headers: as(randomUUID()),
-        payload,
-      });
-      expect(res.statusCode).toBe(400);
-    },
-  );
+  it.each([
+    [{ timezone: 'Mars/Olympus' }],
+    [{ autonomyMode: 'YOLO' }],
+    [{ inboxTabs: ['primary'] }],
+    [{}],
+  ])('rejects %j', async (payload) => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/settings/preferences',
+      headers: as(randomUUID()),
+      payload,
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 describe('internal preferences', () => {
