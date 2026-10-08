@@ -1,9 +1,11 @@
+import type { BlobStore } from '@onebox/blob-store';
 import type {
   FolderRole,
   JobEnvelope,
   MailboxChangePayload,
   MailboxOpPayload,
   MailboxTarget,
+  SourceOpPayload,
 } from '@onebox/contracts';
 import type { MailboxStore } from '@onebox/mailbox-state';
 import { ValidationError } from '@onebox/errors';
@@ -19,6 +21,7 @@ export interface OpsDeps {
   internal: InternalClient;
   changes: Producer<MailboxChangePayload>;
   store: MailboxStore;
+  blobs: BlobStore;
   allowPrivateHosts: boolean;
   connectTimeoutMs?: number;
   // After this many attempts the op is given up and the server state wins again.
@@ -48,6 +51,24 @@ async function resolveTarget(client: ImapFlow, entries: ListResponse[], target: 
   return { path, role: target.role };
 }
 
+// Copies one message's raw source into the blob store, for mail stored before its
+// attachment contents were kept.
+async function copySource(client: ImapFlow, payload: SourceOpPayload, blobs: BlobStore) {
+  const lock = await client.getMailboxLock(payload.folder, { readOnly: true });
+  try {
+    if (Number(client.mailbox && client.mailbox.uidValidity) !== payload.uidValidity) {
+      throw new ValidationError('The message is no longer where OneBox last saw it');
+    }
+    const message = await client.fetchOne(String(payload.uid), { source: true }, { uid: true });
+    if (!message || !message.source) {
+      throw new ValidationError('The message is no longer on the server');
+    }
+    await blobs.put(payload.key, message.source, 'message/rfc822');
+  } finally {
+    lock.release();
+  }
+}
+
 export function createOpsHandler(deps: OpsDeps) {
   return async (envelope: JobEnvelope<MailboxOpPayload>, { logger, attempt }: JobContext) => {
     const { accountId, userId, payload } = envelope;
@@ -60,7 +81,8 @@ export function createOpsHandler(deps: OpsDeps) {
       let client: ImapFlow | undefined;
       try {
         client = await openImapClient(accountId, { ...deps, idle: 'off' });
-        await runLabelOp(client, { accountId, payload, store: deps.store, emit, logger });
+        if (payload.kind === 'source') await copySource(client, payload, deps.blobs);
+        else await runLabelOp(client, { accountId, payload, store: deps.store, emit, logger });
       } catch (err) {
         if (err instanceof AuthenticationFailedError) {
           throw new ValidationError('Mailbox credentials rejected', { cause: err });

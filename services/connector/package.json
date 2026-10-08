@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@onebox/auth-kit": "*",
+    "@onebox/blob-store": "*",
     "@onebox/config": "*",
     "@onebox/contracts": "*",
     "@onebox/crypto": "*",

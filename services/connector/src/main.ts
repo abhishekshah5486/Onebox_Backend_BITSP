@@ -1,3 +1,4 @@
+import { createBlobStore } from '@onebox/blob-store';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { deriveInternalToken } from '@onebox/auth-kit';
@@ -21,6 +22,8 @@ import { createSupervisor } from './supervisor';
 
 const logger = createLogger({ service: 'connector', pretty: process.stdout.isTTY });
 const config = loadConnectorConfig();
+
+const blobs = createBlobStore(config);
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 3 });
 redis.on('error', (err) => logger.warn({ err: err.message }, 'redis error'));
@@ -61,6 +64,7 @@ const ops = createConsumer(
     internal,
     changes,
     store,
+    blobs,
     allowPrivateHosts: config.ALLOW_PRIVATE_MAIL_HOSTS,
     maxAttempts: RETRY_POLICIES[QUEUES.mailboxOps].attempts,
   }),

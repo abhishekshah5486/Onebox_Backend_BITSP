@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHistoryHandler } from './history';
 import type { ActiveAccount, InternalClient, ReportedStatus } from './internal-client';
 import { createOpsHandler } from './ops';
+import { createMemoryBlobStore } from '@onebox/blob-store';
 import { createSupervisor, type Supervisor } from './supervisor';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
@@ -139,6 +140,8 @@ async function serverState(path: string) {
   return { uidValidity, messages: result };
 }
 
+const blobs = createMemoryBlobStore();
+
 async function runOp(payload: MailboxOpPayload) {
   await opProducer.enqueue(
     createJobEnvelope({
@@ -204,6 +207,7 @@ beforeAll(async () => {
       internal: fakeInternal(),
       changes: changeProducer,
       store,
+      blobs,
       allowPrivateHosts: true,
       connectTimeoutMs: 5000,
       maxAttempts: 1,
@@ -505,6 +509,23 @@ describe('imap connector', () => {
     await labelOp({ type: 'delete', path: 'Clients' });
     await vi.waitFor(async () => expect(await paths()).not.toContain('Clients'));
     expect(await paths()).toContain('Receipts');
+  });
+
+  it('copies a message source into the blob store on request', async () => {
+    // Reading only: the seeded label folder keeps its mail.
+    const folder = await serverState('Receipts');
+    const [subject, { uid }] = Object.entries(folder.messages)[0]!;
+    await runOp({
+      kind: 'source',
+      folder: 'Receipts',
+      uidValidity: folder.uidValidity,
+      uid,
+      key: 'raw/fresh',
+    });
+    await vi.waitFor(async () => expect(await blobs.exists('raw/fresh')).toBe(true));
+    const chunks: Buffer[] = [];
+    for await (const chunk of (await blobs.get('raw/fresh'))!.body) chunks.push(chunk as Buffer);
+    expect(Buffer.concat(chunks).toString()).toContain(`Subject: ${subject}`);
   });
 
   it('resumes from the cursor after a restart without duplicating work', async () => {

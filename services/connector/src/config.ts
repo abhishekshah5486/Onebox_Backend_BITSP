@@ -1,5 +1,6 @@
 import { envBoolean, envPort, loadConfig } from '@onebox/config';
 import { encryptionKeySchema } from '@onebox/crypto';
+import { blobConfigSchema } from '@onebox/blob-store';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -14,6 +15,7 @@ const schema = z.object({
   RECONCILE_INTERVAL_MS: z.coerce.number().int().min(1000).default(15_000),
   // Fetching pauses while more than this many ingest jobs are waiting (backpressure).
   INGEST_HIGH_WATERMARK: z.coerce.number().int().min(10).default(500),
+  ...blobConfigSchema,
 });
 
 export type ConnectorConfig = z.infer<typeof schema>;

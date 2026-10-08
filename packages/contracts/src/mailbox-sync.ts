@@ -66,10 +66,21 @@ export const labelOpSchema = z.object({
   ]),
 });
 
-export const mailboxOpPayloadSchema = z.union([messageOpSchema, labelOpSchema]);
+// OneBox -> mail server: copy one message's raw source into the blob store under `key`, for
+// mail stored before attachment contents were kept.
+export const sourceOpSchema = z.object({
+  kind: z.literal('source'),
+  folder: path,
+  uidValidity,
+  uid,
+  key: z.string().min(1).max(512),
+});
+
+export const mailboxOpPayloadSchema = z.union([messageOpSchema, labelOpSchema, sourceOpSchema]);
 
 export type MessageOpPayload = z.infer<typeof messageOpSchema>;
 export type LabelOpPayload = z.infer<typeof labelOpSchema>;
+export type SourceOpPayload = z.infer<typeof sourceOpSchema>;
 export type MailboxOpPayload = z.infer<typeof mailboxOpPayloadSchema>;
 
 const flagUpdate = z.object({ uid, flags: z.array(z.string()) });
