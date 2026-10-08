@@ -1,6 +1,7 @@
 import { simpleParser, type AddressObject } from 'mailparser';
 import type { Address, AttachmentMeta } from '../db/collections';
 import { sanitizeEmailHtml } from './sanitize';
+import { findUnsubscribe, type Unsubscribe } from './unsubscribe';
 
 export interface ParsedMessage {
   messageIdHeader: string | null;
@@ -17,6 +18,7 @@ export interface ParsedMessage {
   hasRemoteImages: boolean;
   snippet: string;
   attachments: AttachmentMeta[];
+  unsubscribe: Unsubscribe | null;
 }
 
 const MAX_TEXT_CHARS = 200_000;
@@ -83,5 +85,10 @@ export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
       sizeBytes: attachment.size,
       inline: attachment.contentDisposition === 'inline',
     })),
+    unsubscribe: findUnsubscribe(
+      mail.headers.get('list'),
+      typeof mail.html === 'string' ? mail.html : null,
+      textBody,
+    ),
   };
 }
