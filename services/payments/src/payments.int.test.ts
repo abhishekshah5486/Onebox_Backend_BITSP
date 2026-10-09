@@ -409,7 +409,9 @@ describe('stripe', () => {
       url: '/payments/history',
       headers: as(user),
     });
-    expect(history.json<{ items: unknown[] }>().items).toHaveLength(1);
+    expect(history.json<{ items: unknown[] }>().items).toEqual([
+      expect.objectContaining({ provider: 'STRIPE', method: 'card', amount: 49_900 }),
+    ]);
   });
 
   it('cancels a Stripe plan at the end of the period', async () => {

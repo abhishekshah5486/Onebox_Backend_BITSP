@@ -166,6 +166,8 @@ export function createCheckoutService({
         amount: periodPrice(row.plan, row.interval),
         currency: CURRENCY,
         status: 'captured',
+        // Stripe's checkout takes cards; Razorpay's webhook says which method was used.
+        method: row.provider === 'STRIPE' ? 'card' : null,
       })
       .onConflictDoNothing()
       .returning({ id: payments.id });
@@ -428,6 +430,7 @@ export function createCheckoutService({
         .limit(100);
       return rows.map((row) => ({
         id: row.id,
+        provider: row.provider,
         amount: row.amount,
         currency: row.currency,
         status: row.status,

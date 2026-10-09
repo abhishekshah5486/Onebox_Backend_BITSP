@@ -77,7 +77,7 @@ export function createStripeWebhooks({
             ? (invoice.last_finalization_error?.message ?? 'Payment failed')
             : null,
       })
-      .onConflictDoUpdate({ target: payments.providerPaymentId, set: { status } });
+      .onConflictDoUpdate({ target: payments.providerPaymentId, set: { status, method: 'card' } });
   }
 
   async function apply(event: StripeEvent) {

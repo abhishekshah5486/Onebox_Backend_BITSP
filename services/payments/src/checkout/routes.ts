@@ -141,6 +141,7 @@ export function registerCheckoutRoutes(scope: FastifyInstance, checkout: Checkou
             items: z.array(
               z.object({
                 id: z.uuid(),
+                provider: z.enum(PAYMENT_PROVIDERS),
                 amount: z.number(),
                 currency: z.string(),
                 status: z.enum(PAYMENT_STATUSES),
