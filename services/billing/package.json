@@ -1,0 +1,31 @@
+{
+  "name": "@onebox/billing-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@onebox/auth-kit": "*",
+    "@onebox/config": "*",
+    "@onebox/contracts": "*",
+    "@onebox/db-pg": "*",
+    "@onebox/errors": "*",
+    "@onebox/http": "*",
+    "@onebox/logger": "*",
+    "@onebox/queue": "*",
+    "drizzle-orm": "^0.45.3",
+    "fastify": "^5.12.5",
+    "fastify-type-provider-zod": "^7.0.0",
+    "zod": "^4.6.5",
+    "@onebox/crypto": "*"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*"
+  }
+}

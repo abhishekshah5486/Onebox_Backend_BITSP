@@ -1,39 +1,42 @@
+# Keeps each user's plan and credits: applies payment events and charges AI calls.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api-gateway
+  name: billing
 spec:
   replicas: 2
   selector:
-    matchLabels: { app: api-gateway }
+    matchLabels: { app: billing }
   template:
     metadata:
-      labels: { app: api-gateway }
+      labels: { app: billing }
     spec:
       # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
       enableServiceLinks: false
       securityContext: { runAsNonRoot: true, runAsUser: 1000 }
       containers:
-        - name: api-gateway
-          image: onebox/api-gateway:dev
+        - name: billing
+          image: onebox/billing:dev
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 4000 }]
+          ports: [{ containerPort: 4009 }]
           env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: DATABASE_URL } }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
             - { name: REDIS_URL, value: 'redis://redis:6379' }
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
-            - { name: ACCOUNTS_SERVICE_URL, value: 'http://accounts:4002' }
-            - { name: SETTINGS_SERVICE_URL, value: 'http://settings:4004' }
-            - { name: LLM_PROXY_SERVICE_URL, value: 'http://llm-proxy:4006' }
-            - { name: AI_SERVICE_URL, value: 'http://ai:4007' }
-            - { name: PAYMENTS_SERVICE_URL, value: 'http://payments:4008' }
-            - { name: BILLING_SERVICE_URL, value: 'http://billing:4009' }
-            - { name: MAIL_SERVICE_URL, value: 'http://mail:4003' }
+          # Startup covers the remote database connect + migrations.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4009 }
+            periodSeconds: 2
+            failureThreshold: 45
           readinessProbe:
-            httpGet: { path: /health/ready, port: 4000 }
+            httpGet: { path: /health/ready, port: 4009 }
             periodSeconds: 10
             timeoutSeconds: 6
           livenessProbe:
-            httpGet: { path: /health/live, port: 4000 }
+            httpGet: { path: /health/live, port: 4009 }
             periodSeconds: 15
           resources:
             requests: { cpu: 50m, memory: 96Mi }
@@ -46,7 +49,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: api-gateway
+  name: billing
 spec:
-  selector: { app: api-gateway }
-  ports: [{ port: 4000 }]
+  selector: { app: billing }
+  ports: [{ port: 4009 }]

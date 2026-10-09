@@ -1,4 +1,4 @@
-# Takes payments through Razorpay (Stripe later) and reports them to billing.
+# Takes payments through Razorpay or Stripe and reports them to billing.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
