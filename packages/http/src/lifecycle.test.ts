@@ -1,7 +1,7 @@
 import { createLogger } from '@onebox/logger';
 import { describe, expect, it, vi } from 'vitest';
 import { createServer } from './create-server';
-import { createShutdown } from './lifecycle';
+import { createShutdown, isTransientNetworkError } from './lifecycle';
 
 const logger = () => createLogger({ service: 'test', level: 'silent' });
 
@@ -36,5 +36,18 @@ describe('createShutdown', () => {
     await Promise.all([shutdown('SIGTERM'), shutdown('SIGINT')]);
 
     expect(cleanup).toHaveBeenCalledOnce();
+  });
+});
+
+describe('isTransientNetworkError', () => {
+  it('recognises dropped and unreachable connections only', () => {
+    expect(isTransientNetworkError(Object.assign(new Error('read'), { code: 'ECONNRESET' }))).toBe(
+      true,
+    );
+    expect(isTransientNetworkError(Object.assign(new Error('dns'), { code: 'ENOTFOUND' }))).toBe(
+      true,
+    );
+    expect(isTransientNetworkError(new TypeError('x is undefined'))).toBe(false);
+    expect(isTransientNetworkError(undefined)).toBe(false);
   });
 });
