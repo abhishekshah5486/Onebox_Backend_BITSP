@@ -69,6 +69,7 @@ export function createCredits({
     line: Pick<LedgerRow, 'kind' | 'description' | 'sourceKey'> & {
       credits: number;
       model?: string | null;
+      modelId?: string | null;
     },
   ) {
     const credits = round(line.credits);
@@ -86,6 +87,7 @@ export function createCredits({
         balanceAfter,
         description: line.description,
         model: line.model ?? null,
+        modelId: line.modelId ?? null,
         sourceKey: line.sourceKey,
       })
       .onConflictDoNothing()
@@ -226,6 +228,7 @@ export function createCredits({
           credits: -credits,
           description: ACTIVITY[usage.purpose] ?? 'Used an AI feature',
           model: usage.modelName,
+          modelId: usage.model,
           sourceKey: `call-${usage.callId}`,
         });
       });
@@ -301,6 +304,7 @@ export function createCredits({
           kind: line.kind,
           description: line.description,
           model: line.model,
+          modelId: line.modelId,
           credits: line.credits,
           balanceAfter: line.balanceAfter,
         })),

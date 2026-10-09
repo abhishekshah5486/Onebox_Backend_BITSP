@@ -122,6 +122,7 @@ describe('credits', () => {
       kind: 'charge',
       description: 'Sorted an email into labels',
       model: 'GPT X',
+      modelId: 'gpt-x',
     });
   });
 

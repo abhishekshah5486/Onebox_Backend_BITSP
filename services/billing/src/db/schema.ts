@@ -44,6 +44,8 @@ export const ledger = billing.table(
     balanceAfter: credits('balance_after'),
     description: text('description').notNull(),
     model: text('model'),
+    // The model's id (e.g. perplexity/glm-5.3-flash), for its maker's logo.
+    modelId: text('model_id'),
     sourceKey: text('source_key').notNull().unique(),
     // The moment of the change itself, so lines from one transaction keep their order.
     createdAt: timestamp('created_at', { withTimezone: true })

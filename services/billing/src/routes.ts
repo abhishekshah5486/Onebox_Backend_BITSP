@@ -22,6 +22,7 @@ const overview = z.object({
       kind: z.enum(LEDGER_KINDS),
       description: z.string(),
       model: z.string().nullable(),
+      modelId: z.string().nullable(),
       credits: z.number(),
       balanceAfter: z.number(),
     }),
