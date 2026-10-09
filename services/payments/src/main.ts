@@ -24,7 +24,7 @@ const razorpay = keys
   ? createRazorpay({ ...keys, webhookSecret: config.RAZORPAY_WEBHOOK_SECRET }, logger)
   : null;
 logger.info(
-  { mode: config.RAZORPAY_MODE, razorpay: razorpay !== null, webhooks: razorpay?.hasWebhookSecret },
+  { mode: config.PAYMENTS_MODE, razorpay: razorpay !== null, webhooks: razorpay?.hasWebhookSecret },
   'payment providers configured',
 );
 

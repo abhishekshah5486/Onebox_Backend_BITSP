@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadPaymentsConfig, razorpayKeys } from './config';
+import { loadPaymentsConfig, razorpayKeys, stripeKey } from './config';
 
 const base = {
   DATABASE_URL: 'postgres://u:p@localhost:5432/db',
@@ -18,7 +18,7 @@ describe('payments config', () => {
     });
     expect(config.PORT).toBe(4008);
     expect(razorpayKeys(config)).toEqual({ keyId: 'rzp_test_abc', keySecret: 'secret' });
-    expect(razorpayKeys({ ...config, RAZORPAY_MODE: 'live' })).toEqual({
+    expect(razorpayKeys({ ...config, PAYMENTS_MODE: 'live' })).toEqual({
       keyId: 'rzp_live_xyz',
       keySecret: 'live-secret',
     });
@@ -29,5 +29,16 @@ describe('payments config', () => {
     expect(() => loadPaymentsConfig({ ...base, RAZORPAY_TEST_API_KEY: 'rzp_live_oops' })).toThrow(
       /RAZORPAY_TEST_API_KEY/,
     );
+  });
+
+  it('picks the Stripe key for the mode', () => {
+    const config = loadPaymentsConfig({
+      ...base,
+      STRIPE_TEST_SECRET_KEY: 'sk_test_abc',
+      STRIPE_LIVE_SECRET_KEY: 'sk_live_xyz',
+    });
+    expect(stripeKey(config)).toBe('sk_test_abc');
+    expect(stripeKey({ ...config, PAYMENTS_MODE: 'live' })).toBe('sk_live_xyz');
+    expect(stripeKey(loadPaymentsConfig(base))).toBeNull();
   });
 });

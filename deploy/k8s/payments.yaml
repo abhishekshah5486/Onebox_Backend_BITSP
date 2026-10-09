@@ -26,7 +26,7 @@ spec:
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
             - { name: REDIS_URL, value: 'redis://redis:6379' }
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
-            - { name: RAZORPAY_MODE, value: 'test' }
+            - { name: PAYMENTS_MODE, value: 'test' }
             - name: RAZORPAY_TEST_API_KEY
               valueFrom:
                 {
