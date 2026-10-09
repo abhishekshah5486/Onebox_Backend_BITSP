@@ -36,7 +36,7 @@ describe('oneDriveUploader', () => {
       type: 'application/pdf',
       body: Buffer.from('%PDF'),
     });
-    expect(file).toEqual({ name: 'marks.pdf', link: 'https://onedrive.example/f1' });
+    expect(file).toEqual({ id: 'f1', name: 'marks.pdf', link: 'https://onedrive.example/f1' });
     const put = calls.find((call) => call.method === 'PUT')!;
     expect(put.auth).toBeNull();
     expect(calls.filter((call) => call.method !== 'PUT').every((c) => c.auth === 'Bearer at')).toBe(
@@ -47,5 +47,19 @@ describe('oneDriveUploader', () => {
     const before = calls.length;
     await uploader.folderAt('at', 'acc', 'OneBox/My Receipts');
     expect(calls.length).toBe(before);
+  });
+
+  it('shares a file by a view-only link that needs no sign-in', async () => {
+    let body: unknown;
+    const send: typeof fetch = async (input, init) => {
+      body = JSON.parse(init!.body as string);
+      expect(input instanceof Request ? input.url : input.toString()).toBe(
+        'https://graph.microsoft.com/v1.0/me/drive/items/f1/createLink',
+      );
+      return new Response(JSON.stringify({ link: { webUrl: 'https://1drv.ms/b/abc' } }));
+    };
+    const link = await oneDriveUploader(logger, send).share('at', { id: 'f1', link: 'x' });
+    expect(link).toBe('https://1drv.ms/b/abc');
+    expect(body).toEqual({ type: 'view', scope: 'anonymous' });
   });
 });

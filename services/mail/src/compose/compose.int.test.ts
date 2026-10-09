@@ -15,6 +15,7 @@ import { ingestJob } from '../test/fixtures';
 import type { SenderAccount } from './accounts-client';
 import { composeCollections, ensureComposeIndexes, type ComposeCollections } from './collections';
 import { createComposeService, type ComposeService } from './compose-service';
+import type { StorageService } from '../storage/storage';
 import { registerComposeRoutes } from './routes';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
@@ -83,7 +84,22 @@ beforeAll(async () => {
   });
   app = createServer({ logger });
   app.decorateRequest('user', null);
-  registerComposeRoutes(app, { compose, verifyToken });
+  registerComposeRoutes(app, {
+    compose,
+    verifyToken,
+    storage: {
+      shareFile: async (
+        _userId: string,
+        accountId: string,
+        file: { name: string; body: Buffer },
+      ) => ({
+        name: file.name,
+        link: `https://drive.example/${accountId}/${file.name}`,
+        provider: 'GOOGLE_DRIVE',
+        sizeBytes: file.body.length,
+      }),
+    } as unknown as StorageService,
+  });
 }, 120_000);
 
 afterAll(async () => {
@@ -273,5 +289,30 @@ describe('attachments and contacts', () => {
     expect(contacts.json<{ items: unknown[] }>().items).toEqual([
       { name: 'Priya', address: 'priya@acme.example' },
     ]);
+  });
+
+  it('shares a file too big to attach from cloud storage, by link', async () => {
+    const upload = (headers: Record<string, string>) =>
+      app.inject({
+        method: 'POST',
+        url: '/mail/uploads/cloud',
+        headers: {
+          ...as(),
+          'content-type': 'application/octet-stream',
+          'x-filename': encodeURIComponent('big video.mp4'),
+          'x-content-type': 'video/mp4',
+          ...headers,
+        },
+        payload: Buffer.alloc(30 * 1024 * 1024),
+      });
+    const res = await upload({ 'x-storage-account': 'g1' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      name: 'big video.mp4',
+      link: 'https://drive.example/g1/big video.mp4',
+      provider: 'GOOGLE_DRIVE',
+      sizeBytes: 30 * 1024 * 1024,
+    });
+    expect((await upload({})).statusCode).toBe(400);
   });
 });

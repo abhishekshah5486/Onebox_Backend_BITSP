@@ -33,6 +33,7 @@ export function buildApp(deps: AppDeps) {
   if (deps.routes?.compose) {
     registerComposeRoutes(app, {
       compose: deps.routes.compose,
+      storage: deps.routes.storage,
       verifyToken: deps.routes.verifyToken,
     });
   }
