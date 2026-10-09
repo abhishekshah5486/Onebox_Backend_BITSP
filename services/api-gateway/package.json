@@ -1,0 +1,28 @@
+{
+  "name": "@onebox/api-gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/http-proxy": "^11.6.4",
+    "@fastify/rate-limit": "^11.2.0",
+    "@onebox/auth-kit": "*",
+    "@onebox/config": "*",
+    "@onebox/errors": "*",
+    "@onebox/http": "*",
+    "@onebox/logger": "*",
+    "fastify": "^5.12.5",
+    "ioredis": "^6.0.0",
+    "jose": "^6.2.12",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*"
+  }
+}

@@ -1,0 +1,46 @@
+# Queues and mailbox state; the append-only file lives on a volume so it survives Pod restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  # One Pod at a time may hold the volume.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: redis }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: redis
+          image: redis:8.10.2-alpine
+          args: ['--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+          ports: [{ containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: ['redis-cli', 'ping'] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { memory: 256Mi }
+          volumeMounts: [{ name: data, mountPath: /data }]
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: redis-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379 }]

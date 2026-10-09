@@ -1,0 +1,23 @@
+{
+  "name": "@onebox/queue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@onebox/contracts": "*",
+    "@onebox/errors": "*",
+    "@onebox/logger": "*",
+    "bullmq": "^6.3.11",
+    "ioredis": "^6.0.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*"
+  }
+}

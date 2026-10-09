@@ -1,0 +1,39 @@
+{
+  "name": "@onebox/mail-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@onebox/auth-kit": "*",
+    "@onebox/blob-store": "*",
+    "@onebox/config": "*",
+    "@onebox/contracts": "*",
+    "@onebox/crypto": "*",
+    "@onebox/db-mongo": "*",
+    "@onebox/errors": "*",
+    "@onebox/http": "*",
+    "@onebox/logger": "*",
+    "@onebox/mailbox-state": "*",
+    "@onebox/net-guard": "*",
+    "@onebox/queue": "*",
+    "fastify": "^5.12.5",
+    "fastify-type-provider-zod": "^7.0.0",
+    "ioredis": "^6.0.0",
+    "mailparser": "^3.9.36",
+    "mongodb": "^7.7.0",
+    "sanitize-html": "^2.18.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*",
+    "@types/mailparser": "^3.9.0",
+    "@types/sanitize-html": "^2.16.2",
+    "bullmq": "6.3.11"
+  }
+}

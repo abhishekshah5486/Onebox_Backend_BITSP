@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settings
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: settings }
+  template:
+    metadata:
+      labels: { app: settings }
+    spec:
+      # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: settings
+          image: onebox/settings:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4004 }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: DATABASE_URL } }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+            - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: GOOGLE_CLIENT_ID, optional: true } }
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                {
+                  secretKeyRef: { name: onebox-secrets, key: GOOGLE_CLIENT_SECRET, optional: true },
+                }
+            - name: MICROSOFT_CLIENT_ID
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: MICROSOFT_CLIENT_ID, optional: true } }
+            - name: MICROSOFT_CLIENT_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: MICROSOFT_CLIENT_SECRET, optional: true },
+                }
+            - name: DROPBOX_APP_KEY
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: DROPBOX_APP_KEY, optional: true } }
+            - name: DROPBOX_APP_SECRET
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: DROPBOX_APP_SECRET, optional: true } }
+          # Startup covers the remote database connect + migrations.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4004 }
+            periodSeconds: 2
+            failureThreshold: 45
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4004 }
+            periodSeconds: 10
+            timeoutSeconds: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4004 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: settings
+spec:
+  selector: { app: settings }
+  ports: [{ port: 4004 }]

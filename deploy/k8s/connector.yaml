@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connector
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: connector }
+  template:
+    metadata:
+      labels: { app: connector }
+    spec:
+      # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: connector
+          image: onebox/connector:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4005 }]
+          env:
+            - { name: BLOB_ENDPOINT, value: 'http://objects:8333' }
+            - name: BLOB_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_ACCESS_KEY } }
+            - name: BLOB_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_SECRET_KEY } }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+            - { name: REDIS_URL, value: 'redis://redis:6379' }
+            - { name: ACCOUNTS_SERVICE_URL, value: 'http://accounts:4002' }
+            - { name: SETTINGS_SERVICE_URL, value: 'http://settings:4004' }
+          # Startup covers the remote database connect + migrations.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4005 }
+            periodSeconds: 2
+            failureThreshold: 45
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4005 }
+            periodSeconds: 10
+            timeoutSeconds: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4005 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: connector
+spec:
+  selector: { app: connector }
+  ports: [{ port: 4005 }]

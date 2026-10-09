@@ -1,0 +1,33 @@
+{
+  "name": "@onebox/connector-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@onebox/auth-kit": "*",
+    "@onebox/blob-store": "*",
+    "@onebox/config": "*",
+    "@onebox/contracts": "*",
+    "@onebox/crypto": "*",
+    "@onebox/errors": "*",
+    "@onebox/http": "*",
+    "@onebox/logger": "*",
+    "@onebox/mailbox-state": "*",
+    "@onebox/net-guard": "*",
+    "@onebox/queue": "*",
+    "imapflow": "^2.2.6",
+    "ioredis": "^6.0.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*",
+    "@types/nodemailer": "^8.0.2",
+    "nodemailer": "^8.0.11"
+  }
+}

@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: onebox
+resources:
+  - namespace.yaml
+  - redis.yaml
+  - objects.yaml
+  - auth.yaml
+  - accounts.yaml
+  - settings.yaml
+  - mail.yaml
+  - connector.yaml
+  - llm-proxy.yaml
+  - ai.yaml
+  - api-gateway.yaml

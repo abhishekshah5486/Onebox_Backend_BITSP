@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: ai }
+  template:
+    metadata:
+      labels: { app: ai }
+    spec:
+      # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: ai
+          image: onebox/ai:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4007 }]
+          env:
+            - name: MONGO_URI
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: MONGO_URI } }
+            - { name: REDIS_URL, value: 'redis://redis:6379' }
+            - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - { name: LLM_PROXY_SERVICE_URL, value: 'http://llm-proxy:4006' }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+          # Startup covers the remote database connect + migrations.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4007 }
+            periodSeconds: 2
+            failureThreshold: 45
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4007 }
+            periodSeconds: 10
+            timeoutSeconds: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4007 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai
+spec:
+  selector: { app: ai }
+  ports: [{ port: 4007 }]
