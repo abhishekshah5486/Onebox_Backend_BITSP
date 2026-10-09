@@ -79,6 +79,9 @@ export function createConsumer<S extends z.ZodType>(
           { queue, jobId: job.id, attempts: job.attemptsMade, err },
           'job moved to dead letter queue',
         ),
+      )
+      .catch((dlqErr: unknown) =>
+        logger.error({ queue, jobId: job.id, err, dlqErr }, 'failed to dead-letter job'),
       );
   });
   worker.on('error', (err) => logger.error({ queue, err }, 'queue worker error'));

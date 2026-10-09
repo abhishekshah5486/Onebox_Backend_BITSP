@@ -50,6 +50,22 @@ export interface SafeFetchResponse {
   body: string;
 }
 
+// Stops reading once the limit is reached, so a huge or endless body cannot fill memory.
+async function readCapped(response: Response, maxBytes: number) {
+  if (!response.body) return '';
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (size < maxBytes) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.length;
+  }
+  await reader.cancel().catch(() => {});
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString('utf8');
+}
+
 export async function safeFetch(
   target: string,
   { timeoutMs = 5000, allowPrivate = false, maxBodyBytes = 4096, ...init }: SafeFetchOptions = {},
@@ -73,7 +89,7 @@ export async function safeFetch(
       signal: AbortSignal.timeout(timeoutMs),
       dispatcher: allowPrivate ? agents.open : agents.guarded,
     });
-    const body = (await response.text()).slice(0, maxBodyBytes);
+    const body = await readCapped(response, maxBodyBytes);
     return { status: response.status, ok: response.status >= 200 && response.status < 300, body };
   } catch (err) {
     const cause = (err as { cause?: unknown }).cause;

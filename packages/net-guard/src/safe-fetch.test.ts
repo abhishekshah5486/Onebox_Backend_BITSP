@@ -15,6 +15,11 @@ beforeAll(async () => {
       received.push({ method: req.method, body, headers: req.headers });
       if (req.url === '/redirect') {
         res.writeHead(302, { location: 'http://169.254.169.254/' }).end();
+      } else if (req.url === '/endless') {
+        // Streams until the client hangs up.
+        res.writeHead(200);
+        const timer = setInterval(() => res.write('x'.repeat(1024)), 1);
+        res.on('close', () => clearInterval(timer));
       } else if (req.url === '/slow') {
         setTimeout(() => res.end('late'), 500);
       } else {
@@ -57,6 +62,15 @@ describe('safeFetch', () => {
   it('does not follow redirects', async () => {
     const res = await safeFetch(`${base}/redirect`, { allowPrivate: true });
     expect(res).toMatchObject({ status: 302, ok: false });
+  });
+
+  it('stops reading a body at the size limit', async () => {
+    const res = await safeFetch(`${base}/endless`, {
+      allowPrivate: true,
+      maxBodyBytes: 4096,
+      timeoutMs: 2000,
+    });
+    expect(res.body).toHaveLength(4096);
   });
 
   it('times out slow endpoints', async () => {
