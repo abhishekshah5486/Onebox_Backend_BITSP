@@ -1,11 +1,10 @@
 import { currentUser } from '@onebox/auth-kit';
-import { drivePathSchema } from '@onebox/contracts';
+import { STORAGE_PROVIDERS, storagePathSchema } from '@onebox/contracts';
 import { AppError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { STORAGE_PROVIDERS } from '../db/schema';
 import { CALLBACK_SLUGS, PROVIDER_NAMES, type StorageProviderId } from './provider';
 import type { StorageService } from './storage-service';
 
@@ -50,7 +49,7 @@ export function registerStorageRoutes(scope: FastifyInstance, storage: StorageSe
     {
       schema: {
         params,
-        body: z.object({ defaultPath: drivePathSchema }),
+        body: z.object({ defaultPath: storagePathSchema }),
         response: { 200: account },
       },
     },

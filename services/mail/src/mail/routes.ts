@@ -5,14 +5,14 @@ import {
   mailboxRoleSchema,
   mailboxTargetSchema,
   mailCategorySchema,
-  drivePathSchema,
+  storagePathSchema,
 } from '@onebox/contracts';
 import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { MailService } from './mail-service';
 import type { AttachmentService } from '../attachments/attachments';
-import type { DriveService } from '../drive/drive';
+import type { StorageService } from '../storage/storage';
 import type { LabelService } from './label-service';
 import type { MailboxService } from './mailbox-service';
 import { THREAD_ACTIONS, type MailboxView, type ThreadActions } from './thread-actions';
@@ -140,7 +140,7 @@ export function registerMailRoutes(
     actions,
     labels,
     attachments,
-    drive,
+    storage,
     verifyToken,
   }: {
     mail: MailService;
@@ -148,7 +148,7 @@ export function registerMailRoutes(
     actions: ThreadActions;
     labels: LabelService;
     attachments?: AttachmentService;
-    drive?: DriveService;
+    storage?: StorageService;
     verifyToken: TokenVerifier;
   },
 ) {
@@ -257,17 +257,17 @@ export function registerMailRoutes(
         );
       }
 
-      // Copies attachments into the user's Google Drive, in a OneBox folder.
-      if (drive) {
+      // Copies attachments into one of the user's cloud storage accounts, in the chosen folder.
+      if (storage) {
         routes.post(
-          '/messages/:messageId/attachments/drive',
+          '/messages/:messageId/attachments/save',
           {
             schema: {
               params: z.object({ messageId: z.string().min(1).max(128) }),
               body: z.object({
                 indexes: z.array(z.number().int().min(0).max(500)).min(1).max(20),
                 accountId: z.uuid(),
-                path: drivePathSchema.default(''),
+                path: storagePathSchema.default(''),
               }),
               response: {
                 200: z.object({
@@ -279,7 +279,7 @@ export function registerMailRoutes(
             },
           },
           async (request) => ({
-            files: await drive.save(userId(request), request.params.messageId, {
+            files: await storage.save(userId(request), request.params.messageId, {
               ...request.body,
               indexes: [...new Set(request.body.indexes)],
             }),

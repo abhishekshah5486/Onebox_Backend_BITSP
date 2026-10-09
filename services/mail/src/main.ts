@@ -19,7 +19,8 @@ import { loadMailConfig } from './config';
 import { ensureIndexes, mailCollections } from './db/collections';
 import { aiJob } from './ingest/ai-job';
 import { createAttachmentService } from './attachments/attachments';
-import { createDriveService } from './drive/drive';
+import { googleDriveUploader } from './storage/google-drive';
+import { createStorageService } from './storage/storage';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
 import { createMailboxService } from './mail/mailbox-service';
@@ -116,11 +117,12 @@ const app = buildApp({
       labels: createLabelService({ store: mailboxStore, ops: opsProducer, logger }),
       attachments,
       ...(config.CREDENTIALS_ENCRYPTION_KEY && {
-        drive: createDriveService({
+        storage: createStorageService({
           attachments,
           settingsUrl: config.SETTINGS_SERVICE_URL,
           internalToken: deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
           logger,
+          uploaders: { GOOGLE_DRIVE: googleDriveUploader(logger) },
         }),
       }),
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),

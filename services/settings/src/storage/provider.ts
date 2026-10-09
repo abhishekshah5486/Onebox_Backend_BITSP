@@ -1,6 +1,6 @@
-import type { STORAGE_PROVIDERS } from '../db/schema';
+import type { StorageProviderId } from '@onebox/contracts';
 
-export type StorageProviderId = (typeof STORAGE_PROVIDERS)[number];
+export type { StorageProviderId };
 
 export interface AccessToken {
   token: string;

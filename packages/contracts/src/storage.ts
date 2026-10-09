@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-// A folder path under My Drive, e.g. "OneBox/Receipts/2026"; empty means the top level.
+// A folder path in cloud storage, e.g. "OneBox/Receipts/2026"; empty means the top level.
 // Stray and doubled slashes are dropped, so " /OneBox//Receipts/ " becomes "OneBox/Receipts".
-export const drivePathSchema = z
+export const storagePathSchema = z
   .string()
   .max(500)
   .transform((path) =>
@@ -18,4 +18,8 @@ export const drivePathSchema = z
     'Folder names can be at most 100 characters',
   );
 
-export const drivePathParts = (path: string) => path.split('/').filter(Boolean);
+export const storagePathParts = (path: string) => path.split('/').filter(Boolean);
+
+// Cloud storage services attachments can be saved to; OneDrive and Dropbox are planned.
+export const STORAGE_PROVIDERS = ['GOOGLE_DRIVE'] as const;
+export type StorageProviderId = (typeof STORAGE_PROVIDERS)[number];

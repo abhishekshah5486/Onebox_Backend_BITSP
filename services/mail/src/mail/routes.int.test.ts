@@ -21,7 +21,8 @@ import { buildApp } from '../app';
 import { ensureIndexes, mailCollections, type MailCollections } from '../db/collections';
 import { createMemoryBlobStore } from '@onebox/blob-store';
 import { createAttachmentService } from '../attachments/attachments';
-import { createDriveService } from '../drive/drive';
+import { googleDriveUploader } from '../storage/google-drive';
+import { createStorageService } from '../storage/storage';
 import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
 import { createMailService } from './mail-service';
@@ -89,11 +90,12 @@ beforeAll(async () => {
       }),
       labels: createLabelService({ store, ops: opsProducer, logger, waitMs: 300 }),
       attachments,
-      drive: createDriveService({
+      storage: createStorageService({
         attachments,
         settingsUrl: 'http://settings',
         internalToken: 'internal',
         logger,
+        uploaders: { GOOGLE_DRIVE: googleDriveUploader(logger, driveFetch) },
         fetch: driveFetch,
       }),
       verifyToken,
@@ -109,7 +111,9 @@ const driveFetch: typeof fetch = async (input, init) => {
   driveCalls.push({ url, method, body: init?.body });
   const json = (body: unknown, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { headers });
-  if (url.includes('/internal/google/token/')) return json({ accessToken: 'at' });
+  if (url.includes('/internal/storage/token/')) {
+    return json({ provider: 'GOOGLE_DRIVE', accessToken: 'at' });
+  }
   if (url.includes('/upload/drive/v3/files')) {
     return json({}, { location: 'https://upload.example/session-1' });
   }
@@ -874,7 +878,7 @@ describe('mail api', () => {
       const accountId = randomUUID();
       const saved = await app.inject({
         method: 'POST',
-        url: `/mail/messages/${messageId}/attachments/drive`,
+        url: `/mail/messages/${messageId}/attachments/save`,
         headers: as(userId),
         payload: { indexes: [0], accountId, path: ' OneBox/Receipts/ ' },
       });
@@ -883,7 +887,7 @@ describe('mail api', () => {
       });
       const put = driveCalls.find((call) => call.method === 'PUT');
       expect(Buffer.from(put!.body as Uint8Array).equals(pdf)).toBe(true);
-      expect(driveCalls[0]!.url).toContain(`/internal/google/token/${userId}/${accountId}`);
+      expect(driveCalls[0]!.url).toContain(`/internal/storage/token/${userId}/${accountId}`);
       // Each missing folder is created inside the one before it, starting at My Drive.
       const folders = driveCalls
         .filter((call) => call.method === 'POST' && call.url.includes('/drive/v3/files?fields'))

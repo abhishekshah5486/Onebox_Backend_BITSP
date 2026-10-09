@@ -1,4 +1,5 @@
 import { boolean, index, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { STORAGE_PROVIDERS } from '@onebox/contracts';
 import { sql } from 'drizzle-orm';
 
 export const settingsSchema = pgSchema('settings');
@@ -14,7 +15,6 @@ export const INTEGRATION_EVENTS = [
 
 export const autonomyModeEnum = settingsSchema.enum('autonomy_mode', AUTONOMY_MODES);
 export const integrationTypeEnum = settingsSchema.enum('integration_type', INTEGRATION_TYPES);
-export const STORAGE_PROVIDERS = ['GOOGLE_DRIVE'] as const;
 export const storageProviderEnum = settingsSchema.enum('storage_provider', STORAGE_PROVIDERS);
 
 const timestamps = {
