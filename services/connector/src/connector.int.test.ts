@@ -60,6 +60,9 @@ function fakeInternal(password = user.password, accounts = [account]): InternalC
       username: user.email,
       password,
       userId: account.userId,
+      emailAddress: user.email,
+      displayName: 'Me',
+      smtp: { host: mail.host, port: mail.smtpPort, tls: false },
     }),
     saveSyncState: async (accountId, folder, state) => {
       const target = accounts.find((a) => a.id === accountId)!;

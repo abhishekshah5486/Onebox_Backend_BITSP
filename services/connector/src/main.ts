@@ -6,6 +6,7 @@ import {
   historyPayloadSchema,
   mailboxOpPayloadSchema,
   QUEUES,
+  sendPayloadSchema,
   type IngestPayload,
   type MailboxChangePayload,
 } from '@onebox/contracts';
@@ -18,6 +19,7 @@ import { loadConnectorConfig } from './config';
 import { createHistoryHandler } from './history';
 import { createInternalClient } from './internal-client';
 import { createOpsHandler } from './ops';
+import { createSendHandler } from './send';
 import { createSupervisor } from './supervisor';
 
 const logger = createLogger({ service: 'connector', pretty: process.stdout.isTTY });
@@ -71,6 +73,22 @@ const ops = createConsumer(
   { redisUrl: config.REDIS_URL, logger, concurrency: 1 },
 );
 
+// A few at once: each waits on a remote SMTP server, and messages are independent.
+const sends = createConsumer(
+  QUEUES.send,
+  sendPayloadSchema,
+  createSendHandler({
+    internal,
+    changes,
+    ingest: producer,
+    blobs,
+    accepted: redis,
+    allowPrivateHosts: config.ALLOW_PRIVATE_MAIL_HOSTS,
+    maxAttempts: RETRY_POLICIES[QUEUES.send].attempts,
+  }),
+  { redisUrl: config.REDIS_URL, logger, concurrency: 3 },
+);
+
 const supervisor = createSupervisor({
   internal,
   redis,
@@ -98,6 +116,7 @@ await startServer(app, {
     supervisor.close,
     history.close,
     ops.close,
+    sends.close,
     producer.close,
     changes.close,
     () => redis.quit(),

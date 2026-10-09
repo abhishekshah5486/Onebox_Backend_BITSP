@@ -18,6 +18,10 @@ export interface AccountCredentials {
   username: string;
   password: string;
   userId: string;
+  // The address and name mail is sent as, and the server it goes out through.
+  emailAddress: string;
+  displayName: string | null;
+  smtp: { host: string; port: number; tls: boolean } | null;
 }
 
 export type ReportedStatus = 'CONNECTED' | 'AUTH_FAILED' | 'UNREACHABLE' | 'TLS_ERROR';
