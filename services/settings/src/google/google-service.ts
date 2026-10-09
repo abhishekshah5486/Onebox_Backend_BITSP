@@ -6,9 +6,9 @@ import {
   ValidationError,
 } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { googleConnections } from '../db/schema';
+import { googleConnections, type GoogleConnectionRow } from '../db/schema';
 import { createStateSigner } from './state';
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
@@ -16,6 +16,7 @@ const SCOPES = ['openid', 'email', DRIVE_SCOPE];
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
+const MAX_ACCOUNTS = 10;
 
 export interface GoogleOAuthConfig {
   clientId: string;
@@ -76,12 +77,22 @@ export function createGoogleService({
     return { ok: response.ok, body: (await response.json()) as TokenResponse };
   }
 
-  const connection = (userId: string) =>
+  const ownConnection = (userId: string, id: string) =>
     db
       .select()
       .from(googleConnections)
-      .where(eq(googleConnections.userId, userId))
-      .then((rows) => rows[0]);
+      .where(and(eq(googleConnections.id, id), eq(googleConnections.userId, userId)))
+      .then((rows) => {
+        if (!rows[0]) throw new NotFoundError('That Google account is not connected');
+        return rows[0];
+      });
+
+  const view = (row: GoogleConnectionRow) => ({
+    id: row.id,
+    email: row.email,
+    defaultPath: row.defaultPath,
+    connectedAt: row.createdAt.toISOString(),
+  });
 
   return {
     authUrl(userId: string) {
@@ -92,15 +103,16 @@ export function createGoogleService({
         response_type: 'code',
         scope: SCOPES.join(' '),
         access_type: 'offline',
-        // Always ask, so Google returns a refresh token even on a reconnect.
-        prompt: 'consent',
+        // Always ask (and let them pick an account), so Google returns a refresh token.
+        prompt: 'select_account consent',
         include_granted_scopes: 'true',
         state: state.sign(userId),
       });
       return `${AUTH_URL}?${params.toString()}`;
     },
 
-    // Finishes the flow started by authUrl and returns the connected address.
+    // Finishes the flow started by authUrl and returns the connected address. Connecting the
+    // same Google account again refreshes its token and keeps its folder.
     async complete(code: string, signedState: string) {
       const userId = state.verify(signedState);
       if (!userId) throw new ValidationError('This sign-in link has expired. Please try again.');
@@ -117,43 +129,61 @@ export function createGoogleService({
       if (!scopes.includes(DRIVE_SCOPE)) {
         throw new ValidationError('Allow OneBox to see the Drive files it uses, then try again.');
       }
-      const email = emailFromIdToken(body.id_token) ?? 'Google account';
+      const email = emailFromIdToken(body.id_token);
+      if (!email) throw new ExternalServiceError('Google did not share the account address');
+      const count = await db.$count(googleConnections, eq(googleConnections.userId, userId));
+      const existing = await db
+        .select({ id: googleConnections.id })
+        .from(googleConnections)
+        .where(and(eq(googleConnections.userId, userId), eq(googleConnections.email, email)));
+      if (!existing[0] && count >= MAX_ACCOUNTS) {
+        throw new ValidationError(`You can connect up to ${MAX_ACCOUNTS} Google accounts.`);
+      }
       const values = {
-        email,
         refreshTokenEncrypted: encrypt(body.refresh_token, encryptionKey, aadFor(userId)),
         scopes,
       };
-      await db
+      const [row] = await db
         .insert(googleConnections)
-        .values({ userId, ...values })
-        .onConflictDoUpdate({ target: googleConnections.userId, set: values });
-      if (body.access_token && body.expires_in) {
-        accessTokens.set(userId, {
+        .values({ userId, email, ...values })
+        .onConflictDoUpdate({
+          target: [googleConnections.userId, googleConnections.email],
+          set: values,
+        })
+        .returning({ id: googleConnections.id });
+      if (row && body.access_token && body.expires_in) {
+        accessTokens.set(row.id, {
           token: body.access_token,
           expiresAt: Date.now() + body.expires_in * 1000,
         });
-      } else {
-        accessTokens.delete(userId);
       }
       logger.info({ userId }, 'google drive connected');
       return email;
     },
 
-    async status(userId: string) {
-      const row = await connection(userId);
-      return {
-        configured: oauth !== null,
-        connected: Boolean(row),
-        email: row?.email ?? null,
-        connectedAt: row?.updatedAt.toISOString() ?? null,
-      };
+    async list(userId: string) {
+      const rows = await db
+        .select()
+        .from(googleConnections)
+        .where(eq(googleConnections.userId, userId))
+        .orderBy(asc(googleConnections.createdAt));
+      return { configured: oauth !== null, accounts: rows.map(view) };
     },
 
-    async disconnect(userId: string) {
-      const row = await connection(userId);
-      if (!row) return;
-      await db.delete(googleConnections).where(eq(googleConnections.userId, userId));
-      accessTokens.delete(userId);
+    async setDefaultPath(userId: string, id: string, defaultPath: string) {
+      await ownConnection(userId, id);
+      const [row] = await db
+        .update(googleConnections)
+        .set({ defaultPath })
+        .where(eq(googleConnections.id, id))
+        .returning();
+      return view(row!);
+    },
+
+    async disconnect(userId: string, id: string) {
+      const row = await ownConnection(userId, id);
+      await db.delete(googleConnections).where(eq(googleConnections.id, id));
+      accessTokens.delete(id);
       const token = decrypt(row.refreshTokenEncrypted, encryptionKey, aadFor(userId));
       await send(REVOKE_URL, {
         method: 'POST',
@@ -164,24 +194,25 @@ export function createGoogleService({
     },
 
     // A short-lived access token for Drive calls made by other services.
-    async accessToken(userId: string) {
-      const cached = accessTokens.get(userId);
+    async accessToken(userId: string, id: string) {
+      const row = await ownConnection(userId, id);
+      const cached = accessTokens.get(id);
       if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
-      const row = await connection(userId);
-      if (!row) throw new NotFoundError('Google Drive is not connected');
       const { ok, body } = await tokenRequest({
         refresh_token: decrypt(row.refreshTokenEncrypted, encryptionKey, aadFor(userId)),
         grant_type: 'refresh_token',
       });
       if (!ok || !body.access_token) {
         if (body.error === 'invalid_grant') {
-          // Revoked, or expired (test-mode apps lose refresh tokens after 7 days).
-          await db.delete(googleConnections).where(eq(googleConnections.userId, userId));
-          throw new NotFoundError('Google Drive access has expired. Please connect it again.');
+          // Revoked at Google, or expired while the app was in testing.
+          await db.delete(googleConnections).where(eq(googleConnections.id, id));
+          throw new NotFoundError(
+            `Google Drive access for ${row.email} has expired. Please connect it again.`,
+          );
         }
         throw new ExternalServiceError('Google Drive is not responding');
       }
-      accessTokens.set(userId, {
+      accessTokens.set(id, {
         token: body.access_token,
         expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000,
       });

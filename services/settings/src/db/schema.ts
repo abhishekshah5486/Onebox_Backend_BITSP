@@ -72,14 +72,21 @@ export const integrations = settingsSchema.table(
   ],
 );
 
-// One Google account per user, for Drive.
-export const googleConnections = settingsSchema.table('google_connections', {
-  userId: uuid('user_id').primaryKey(),
-  email: text('email').notNull(),
-  refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
-  scopes: text('scopes').array().notNull(),
-  ...timestamps,
-});
+// Google accounts a user connected for Drive; files go to defaultPath unless they pick another.
+export const googleConnections = settingsSchema.table(
+  'google_connections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    email: text('email').notNull(),
+    refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
+    scopes: text('scopes').array().notNull(),
+    // Folder path under My Drive, e.g. "OneBox/Receipts"; empty means the top level.
+    defaultPath: text('default_path').notNull().default(''),
+    ...timestamps,
+  },
+  (table) => [unique('google_connections_user_email_unique').on(table.userId, table.email)],
+);
 
 export type IntegrationRow = typeof integrations.$inferSelect;
 export type PreferencesRow = typeof userPreferences.$inferSelect;

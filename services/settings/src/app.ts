@@ -1,5 +1,7 @@
 import { requireInternal, requireUser, type TokenVerifier } from '@onebox/auth-kit';
 import { createServer, registerHealthRoutes } from '@onebox/http';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import type { Logger } from '@onebox/logger';
 import type { GoogleService } from './google/google-service';
 import { registerGoogleCallback, registerGoogleRoutes } from './google/routes';
@@ -43,10 +45,18 @@ export function buildApp(deps: AppDeps) {
       async (request) => routes.preferences.get(request.params.userId),
     );
     // The mail service fetches Drive access tokens here.
-    app.get<{ Params: { userId: string } }>(
-      '/internal/google/token/:userId',
-      { preHandler: requireInternal(routes.internalToken) },
-      async (request) => ({ accessToken: await routes.google.accessToken(request.params.userId) }),
+    app.withTypeProvider<ZodTypeProvider>().get(
+      '/internal/google/token/:userId/:accountId',
+      {
+        preHandler: requireInternal(routes.internalToken),
+        schema: { params: z.object({ userId: z.uuid(), accountId: z.uuid() }) },
+      },
+      async (request) => ({
+        accessToken: await routes.google.accessToken(
+          request.params.userId,
+          request.params.accountId,
+        ),
+      }),
     );
     registerGoogleCallback(app, routes.google);
   }

@@ -1,4 +1,5 @@
 import { currentUser } from '@onebox/auth-kit';
+import { drivePathSchema } from '@onebox/contracts';
 import { AppError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import type { FastifyInstance } from 'fastify';
@@ -6,28 +7,49 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { GoogleService } from './google-service';
 
-const status = z.object({
-  configured: z.boolean(),
-  connected: z.boolean(),
-  email: z.string().nullable(),
-  connectedAt: z.string().nullable(),
+const account = z.object({
+  id: z.uuid(),
+  email: z.string(),
+  defaultPath: z.string(),
+  connectedAt: z.string(),
 });
+const params = z.object({ id: z.uuid() });
 
 export function registerGoogleRoutes(scope: FastifyInstance, google: GoogleService) {
   const routes = scope.withTypeProvider<ZodTypeProvider>();
+  const userId = (request: Parameters<typeof currentUser>[0]) => currentUser(request).userId;
 
-  routes.get('/integrations/google', { schema: { response: { 200: status } } }, async (request) =>
-    google.status(currentUser(request).userId),
+  routes.get(
+    '/integrations/google',
+    {
+      schema: {
+        response: { 200: z.object({ configured: z.boolean(), accounts: z.array(account) }) },
+      },
+    },
+    async (request) => google.list(userId(request)),
   );
 
   routes.post(
     '/integrations/google/connect',
     { schema: { response: { 200: z.object({ url: z.string() }) } } },
-    async (request) => ({ url: google.authUrl(currentUser(request).userId) }),
+    async (request) => ({ url: google.authUrl(userId(request)) }),
   );
 
-  routes.delete('/integrations/google', async (request, reply) => {
-    await google.disconnect(currentUser(request).userId);
+  routes.patch(
+    '/integrations/google/:id',
+    {
+      schema: {
+        params,
+        body: z.object({ defaultPath: drivePathSchema }),
+        response: { 200: account },
+      },
+    },
+    async (request) =>
+      google.setDefaultPath(userId(request), request.params.id, request.body.defaultPath),
+  );
+
+  routes.delete('/integrations/google/:id', { schema: { params } }, async (request, reply) => {
+    await google.disconnect(userId(request), request.params.id);
     return reply.status(204).send();
   });
 }

@@ -13,6 +13,7 @@
   "dependencies": {
     "@onebox/auth-kit": "*",
     "@onebox/config": "*",
+    "@onebox/contracts": "*",
     "@onebox/crypto": "*",
     "@onebox/db-pg": "*",
     "@onebox/errors": "*",

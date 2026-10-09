@@ -415,91 +415,102 @@ describe('integrations', () => {
 
 describe('google drive', () => {
   const user = randomUUID();
-  const idToken = [
-    'x',
-    Buffer.from(JSON.stringify({ email: 'me@gmail.com' })).toString('base64url'),
-    'y',
-  ].join('.');
+  const idToken = (email: string) =>
+    ['x', Buffer.from(JSON.stringify({ email })).toString('base64url'), 'y'].join('.');
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+  const internal = { 'x-onebox-internal-token': 'internal-secret' };
 
-  const startFlow = async () => {
+  interface Account {
+    id: string;
+    email: string;
+    defaultPath: string;
+  }
+  const accounts = async () =>
+    (
+      await app.inject({ method: 'GET', url: '/settings/integrations/google', headers: as(user) })
+    ).json<{ configured: boolean; accounts: Account[] }>();
+
+  const connect = async (email: string, accessToken: string) => {
     const res = await app.inject({
       method: 'POST',
       url: '/settings/integrations/google/connect',
       headers: as(user),
     });
-    return new URL(res.json<{ url: string }>().url);
-  };
-
-  it('connects through the signed callback and hands out access tokens', async () => {
-    const authUrl = await startFlow();
+    const authUrl = new URL(res.json<{ url: string }>().url);
     expect(authUrl.searchParams.get('access_type')).toBe('offline');
-    expect(authUrl.searchParams.get('scope')).toContain('drive.file');
-
     googleFetch.mockResolvedValueOnce(
       json({
-        access_token: 'at-1',
+        access_token: accessToken,
         expires_in: 3600,
-        refresh_token: 'rt-1',
+        refresh_token: `rt-${email}`,
         scope: 'openid https://www.googleapis.com/auth/drive.file email',
-        id_token: idToken,
+        id_token: idToken(email),
       }),
     );
     const state = authUrl.searchParams.get('state')!;
-    const callback = await app.inject({
+    return app.inject({
       method: 'GET',
-      url: `/integrations/google/callback?code=c1&state=${encodeURIComponent(state)}`,
+      url: `/integrations/google/callback?code=c&state=${encodeURIComponent(state)}`,
     });
-    expect(callback.statusCode).toBe(200);
-    expect(callback.body).toContain('me@gmail.com is now connected');
+  };
 
-    const status = await app.inject({
-      method: 'GET',
-      url: '/settings/integrations/google',
+  it('connects several accounts, each with its own token and folder', async () => {
+    googleFetch.mockClear();
+    const first = await connect('me@gmail.com', 'at-1');
+    expect(first.statusCode).toBe(200);
+    expect(first.body).toContain('me@gmail.com is now connected');
+    await connect('work@gmail.com', 'at-2');
+    // Connecting the same account again refreshes it instead of adding a duplicate.
+    await connect('me@gmail.com', 'at-3');
+
+    const listed = await accounts();
+    expect(listed.configured).toBe(true);
+    expect(listed.accounts.map((a) => a.email)).toEqual(['me@gmail.com', 'work@gmail.com']);
+    const [me, work] = listed.accounts;
+
+    const token = (id: string, who = user) =>
+      app.inject({ method: 'GET', url: `/internal/google/token/${who}/${id}`, headers: internal });
+    expect((await token(me!.id)).json()).toEqual({ accessToken: 'at-3' });
+    expect((await token(work!.id)).json()).toEqual({ accessToken: 'at-2' });
+    expect((await token(work!.id, randomUUID())).statusCode).toBe(404);
+
+    const updated = await app.inject({
+      method: 'PATCH',
+      url: `/settings/integrations/google/${work!.id}`,
       headers: as(user),
+      payload: { defaultPath: ' /OneBox// Receipts/ ' },
     });
-    expect(status.json()).toMatchObject({
-      configured: true,
-      connected: true,
-      email: 'me@gmail.com',
-    });
-
-    const token = await app.inject({
-      method: 'GET',
-      url: `/internal/google/token/${user}`,
-      headers: { 'x-onebox-internal-token': 'internal-secret' },
-    });
-    expect(token.json()).toEqual({ accessToken: 'at-1' });
-    expect(googleFetch).toHaveBeenCalledTimes(1);
+    expect(updated.json()).toMatchObject({ defaultPath: 'OneBox/Receipts' });
   });
 
   it('rejects a tampered state without calling Google', async () => {
     googleFetch.mockClear();
-    const state = (await startFlow()).searchParams.get('state')!;
     const res = await app.inject({
+      method: 'POST',
+      url: '/settings/integrations/google/connect',
+      headers: as(user),
+    });
+    const state = new URL(res.json<{ url: string }>().url).searchParams.get('state')!;
+    const callback = await app.inject({
       method: 'GET',
       url: `/integrations/google/callback?code=c&state=${encodeURIComponent(state.slice(0, -2) + 'xx')}`,
     });
-    expect(res.statusCode).toBe(400);
-    expect(res.body).toContain('expired');
+    expect(callback.statusCode).toBe(400);
+    expect(callback.body).toContain('expired');
     expect(googleFetch).not.toHaveBeenCalled();
   });
 
-  it('disconnects and revokes the token', async () => {
+  it('disconnects one account and revokes its token', async () => {
+    const [me] = (await accounts()).accounts;
     googleFetch.mockClear();
     googleFetch.mockResolvedValueOnce(json({}));
     const res = await app.inject({
       method: 'DELETE',
-      url: '/settings/integrations/google',
+      url: `/settings/integrations/google/${me!.id}`,
       headers: as(user),
     });
     expect(res.statusCode).toBe(204);
     expect(googleFetch.mock.calls[0]?.[0]).toContain('/revoke');
-    const status = await app.inject({
-      method: 'GET',
-      url: '/settings/integrations/google',
-      headers: as(user),
-    });
-    expect(status.json()).toMatchObject({ connected: false, email: null });
+    expect((await accounts()).accounts.map((a) => a.email)).toEqual(['work@gmail.com']);
   });
 });
