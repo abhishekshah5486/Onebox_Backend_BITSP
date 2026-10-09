@@ -4,7 +4,7 @@ import { isUniqueViolation } from '@onebox/db-pg';
 import { ConflictError, NotFoundError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import { resolvePublicHost, safeFetch, SafeFetchError } from '@onebox/net-guard';
-import { and, asc, count, eq } from 'drizzle-orm';
+import { and, asc, count, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { integrations, type IntegrationRow, type INTEGRATION_EVENTS } from '../db/schema';
 import { generateWebhookSecret, SIGNATURE_HEADER, signWebhook } from './signing';
@@ -136,15 +136,18 @@ export function createIntegrationService({
     },
 
     async create(userId: string, input: CreateIntegrationInput) {
-      const [{ total } = { total: 0 }] = await db
-        .select({ total: count() })
-        .from(integrations)
-        .where(eq(integrations.userId, userId));
-      if (total >= maxPerUser) {
-        throw new ConflictError(`You can add up to ${maxPerUser} integrations`, {
+      const limitReached = () =>
+        new ConflictError(`You can add up to ${maxPerUser} integrations`, {
           code: 'INTEGRATION_LIMIT_REACHED',
         });
-      }
+      const countFor = (tx: PostgresJsDatabase) =>
+        tx
+          .select({ total: count() })
+          .from(integrations)
+          .where(eq(integrations.userId, userId))
+          .then(([row]) => row?.total ?? 0);
+      // A quick check before the slow DNS lookup; the count that counts is taken under a lock.
+      if ((await countFor(db)) >= maxPerUser) throw limitReached();
 
       const target = input.type === 'SLACK' ? input.webhookUrl : input.url;
       await assertDeliverable(input.type, target);
@@ -153,21 +156,29 @@ export function createIntegrationService({
       const config: IntegrationConfig = secret ? { url: target, secret } : { webhookUrl: target };
 
       try {
-        const [row] = await db
-          .insert(integrations)
-          .values({
-            id,
-            userId,
-            type: input.type,
-            name: input.name,
-            configEncrypted: writeConfig(id, config),
-            targetHint: maskTarget(input.type, target),
-            events: input.events,
-          })
-          .returning();
+        const row = await db.transaction(async (tx) => {
+          // One create per user at a time, so concurrent requests cannot pass the limit.
+          await tx.execute(
+            sql`select pg_advisory_xact_lock(hashtext(${`integrations:${userId}`}))`,
+          );
+          if ((await countFor(tx)) >= maxPerUser) throw limitReached();
+          const [inserted] = await tx
+            .insert(integrations)
+            .values({
+              id,
+              userId,
+              type: input.type,
+              name: input.name,
+              configEncrypted: writeConfig(id, config),
+              targetHint: maskTarget(input.type, target),
+              events: input.events,
+            })
+            .returning();
+          return inserted!;
+        });
         logger.info({ userId, integrationId: id, type: input.type }, 'integration created');
         // The signing secret is returned exactly once; it is never readable afterwards.
-        return { ...toView(row!), ...(secret && { secret }) };
+        return { ...toView(row), ...(secret && { secret }) };
       } catch (err) {
         throw duplicateName(err);
       }
