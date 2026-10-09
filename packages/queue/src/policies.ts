@@ -16,6 +16,8 @@ export const RETRY_POLICIES: Record<QueueName, RetryPolicy> = {
   embed: { attempts: 3, backoffMs: 5_000 },
   rules: { attempts: 3, backoffMs: 2_000 },
   action: { attempts: 4, backoffMs: 10_000 },
+  // Granting credits for a payment must not be lost: retry patiently.
+  payments: { attempts: 8, backoffMs: 5_000 },
 };
 
 export const deadLetterQueue = (queue: QueueName) => `${queue}-dlq`;

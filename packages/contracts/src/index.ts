@@ -1,4 +1,5 @@
 export * from './ai';
+export * from './billing';
 export * from './domain-event';
 export * from './folders';
 export * from './ingest';
