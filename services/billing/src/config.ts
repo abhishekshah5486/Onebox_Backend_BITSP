@@ -8,8 +8,10 @@ const schema = z.object({
   REDIS_URL: z.string().regex(/^rediss?:\/\//, 'must be a redis url'),
   CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
   AUTH_SERVICE_URL: z.url().default('http://localhost:4001'),
-  // What a credit is worth: a model call costing $1 uses this many credits.
-  CREDITS_PER_USD: z.coerce.number().positive().default(200),
+  // A credit is worth ₹1 (plans sell about that), and AI calls are charged at a markup on what
+  // the model cost: credits = cost in USD × USD_TO_INR × CREDIT_MARKUP.
+  USD_TO_INR: z.coerce.number().positive().default(85),
+  CREDIT_MARKUP: z.coerce.number().positive().default(2),
 });
 
 export type BillingConfig = z.infer<typeof schema>;

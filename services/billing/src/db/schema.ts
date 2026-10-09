@@ -13,7 +13,7 @@ export const LEDGER_KINDS = ['grant', 'charge', 'refund', 'expiry'] as const;
 export const ledgerKindEnum = billing.enum('ledger_kind', LEDGER_KINDS);
 
 const credits = (name: string) =>
-  numeric(name, { precision: 12, scale: 2, mode: 'number' }).notNull().default(0);
+  numeric(name, { precision: 14, scale: 3, mode: 'number' }).notNull().default(0);
 
 // One row per user: their plan and credit balance. Made on first use, on Free.
 export const accounts = billing.table('accounts', {

@@ -12,9 +12,11 @@ import { accounts, ledger, processedEvents, type AccountRow, type LedgerRow } fr
 type Db = PostgresJsDatabase;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
-// Credits have two decimals; a paid call always uses at least the smallest step.
-const round = (value: number) => Math.round(value * 100) / 100;
-const MIN_CHARGE = 0.01;
+// Credits have three decimals. A call's charge is rounded up, so it never falls below the
+// markup, and always uses at least the smallest step.
+const round = (value: number) => Math.round(value * 1000) / 1000;
+const roundUp = (value: number) => Math.ceil(value * 1000 - 1e-9) / 1000;
+const MIN_CHARGE = 0.001;
 
 const addMonth = (date: Date) => {
   const next = new Date(date);
@@ -216,7 +218,7 @@ export function createCredits({
 
     // Charges one model call, once.
     async charge(userId: string, usage: UsageEventPayload) {
-      const credits = Math.max(MIN_CHARGE, round(usage.costUsd * creditsPerUsd));
+      const credits = Math.max(MIN_CHARGE, roundUp(usage.costUsd * creditsPerUsd));
       await db.transaction(async (tx) => {
         const account = await lockAccount(tx, userId);
         await entry(tx, account, {

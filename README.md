@@ -72,7 +72,7 @@ Errors always look like `{ "error": { "code", "message", "details?" } }`.
 
 ### Payments and credits
 
-payments → BullMQ `payments` queue → billing grants or removes a plan's credits; llm-proxy checks credits before a model call and sends each call's cost on the `usage` queue, which billing charges once per call. Cached answers are free. Annual plans get their credits monthly.
+payments → BullMQ `payments` queue → billing grants or removes a plan's credits; llm-proxy checks credits before a model call and sends each call's cost on the `usage` queue, which billing charges once per call: 1 credit is ₹1 and a call costs twice its model cost (`CREDIT_MARKUP`), rounded up to 0.001. Cached answers are free. Annual plans get their credits monthly.
 
 - **Local Stripe webhooks:** `stripe listen --forward-to localhost:4000/api/v1/webhooks/stripe`; put the `whsec_…` it prints in `.env` as `STRIPE_WEBHOOK_SECRET`.
 - **Deployed:** `scripts/stripe-webhook.sh https://<public-host>/api/v1` registers the webhook and saves its secret (and `PUBLIC_API_URL`) to `.env`, then `npm run k8s:up`.

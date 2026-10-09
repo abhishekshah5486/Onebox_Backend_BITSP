@@ -28,7 +28,7 @@ beforeAll(async () => {
   pg = await startPostgres();
   client = createPgClient(pg.url, { max: 4 });
   await migrateBilling(client, logger);
-  credits = createCredits({ db: client.db, creditsPerUsd: 200, logger });
+  credits = createCredits({ db: client.db, creditsPerUsd: 170, logger });
   app = buildApp({
     logger,
     pingDatabase: client.ping,
@@ -109,10 +109,14 @@ describe('credits', () => {
     await credits.charge(user, call);
     // Tiny calls still use the smallest step.
     await credits.charge(user, usage(0.000001));
-    expect((await credits.allowance(user)).balance).toBe(19.59);
+    // $0.002 × ₹85 × 2 = 0.34 credits, then the smallest step.
+    expect((await credits.allowance(user)).balance).toBe(19.659);
+    // A real sort: $0.00022 is 0.0374 credits, rounded up so it stays at least twice the cost.
+    await credits.charge(user, usage(0.00022));
+    expect((await credits.allowance(user)).balance).toBe(19.621);
 
     await credits.charge(user, usage(1));
-    expect(await credits.allowance(user)).toEqual({ allowed: false, balance: -180.41 });
+    expect(await credits.allowance(user)).toEqual({ allowed: false, balance: -150.379 });
     const [latest] = (await credits.overview(user)).ledger;
     expect(latest).toMatchObject({
       kind: 'charge',
@@ -139,7 +143,7 @@ describe('credits', () => {
     const overview = await credits.overview(user);
     expect(overview.balance).toBe(500);
     expect(overview.ledger.filter((line) => line.credits === 250)).toHaveLength(1);
-    expect(overview.ledger[1]).toMatchObject({ kind: 'expiry', credits: -650 });
+    expect(overview.ledger[1]).toMatchObject({ kind: 'expiry', credits: -665 });
   });
 
   it('refills annual plans monthly within the paid year', async () => {

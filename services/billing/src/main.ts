@@ -19,7 +19,11 @@ await pg.ping();
 logger.info('database connected');
 await migrateBilling(pg, logger);
 
-const credits = createCredits({ db: pg.db, creditsPerUsd: config.CREDITS_PER_USD, logger });
+const credits = createCredits({
+  db: pg.db,
+  creditsPerUsd: config.USD_TO_INR * config.CREDIT_MARKUP,
+  logger,
+});
 
 // Payments start, renew, change and end plans; llm-proxy reports each paid model call.
 const payments = createConsumer(
