@@ -53,8 +53,14 @@ export function createRazorpay(
       error?: { code?: string; description?: string };
     };
     if (!response.ok) {
+      // Razorpay's own reason (never the keys), so failures can be told apart in the logs.
       logger.warn(
-        { status: response.status, path, code: payload.error?.code },
+        {
+          status: response.status,
+          path,
+          code: payload.error?.code,
+          reason: payload.error?.description,
+        },
         'razorpay request failed',
       );
       throw new ExternalServiceError(
