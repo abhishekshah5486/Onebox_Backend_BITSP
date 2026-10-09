@@ -11,9 +11,11 @@ import { buildApp } from './app';
 import { createCheckoutService } from './checkout/checkout-service';
 import { migratePayments } from './db/migrate';
 import { createRazorpay } from './providers/razorpay';
+import { createRazorpayWebhooks } from './webhooks/razorpay-webhooks';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
 const KEY_SECRET = 'test-secret';
+const WEBHOOK_SECRET = 'hook-secret';
 
 const verifyToken: TokenVerifier = async (token) => {
   if (!token.startsWith('user-')) throw new UnauthorizedError('Invalid access token');
@@ -55,25 +57,23 @@ beforeAll(async () => {
   pg = await startPostgres();
   client = createPgClient(pg.url, { max: 4 });
   await migratePayments(client, logger);
+  const razorpay = createRazorpay(
+    { keyId: 'rzp_test_key', keySecret: KEY_SECRET, webhookSecret: WEBHOOK_SECRET },
+    logger,
+    razorpayFetch,
+  );
+  const events = {
+    enqueue: async (envelope: JobEnvelope<PaymentEventPayload>) => {
+      published.push(envelope);
+      return { jobId: envelope.jobId, duplicate: false };
+    },
+  };
   app = buildApp({
     logger,
     pingDatabase: client.ping,
     routes: {
-      checkout: createCheckoutService({
-        db: client.db,
-        razorpay: createRazorpay(
-          { keyId: 'rzp_test_key', keySecret: KEY_SECRET },
-          logger,
-          razorpayFetch,
-        ),
-        events: {
-          enqueue: async (envelope) => {
-            published.push(envelope);
-            return { jobId: envelope.jobId, duplicate: false };
-          },
-        },
-        logger,
-      }),
+      checkout: createCheckoutService({ db: client.db, razorpay, events, logger }),
+      razorpayWebhooks: createRazorpayWebhooks({ db: client.db, razorpay, events, logger }),
       verifyToken,
     },
   });
@@ -189,5 +189,72 @@ describe('checkout', () => {
 
     const current = await app.inject({ url: '/payments/subscription', headers: as(user) });
     expect(current.json()).toMatchObject({ subscription: { plan: 'STANDARD' } });
+  });
+});
+
+describe('razorpay webhooks', () => {
+  const webhook = (body: object, eventId: string, signature?: string) => {
+    const raw = JSON.stringify(body);
+    return app.inject({
+      method: 'POST',
+      url: '/webhooks/razorpay',
+      headers: {
+        'content-type': 'application/json',
+        'x-razorpay-event-id': eventId,
+        'x-razorpay-signature':
+          signature ?? createHmac('sha256', WEBHOOK_SECRET).update(raw).digest('hex'),
+      },
+      payload: raw,
+    });
+  };
+  const subscription = (status: string, paidCount: number) => ({
+    entity: {
+      id: 'sub_1',
+      status,
+      current_start: 1_793_600_000,
+      current_end: 1_796_200_000,
+      paid_count: paidCount,
+    },
+  });
+
+  it('rejects a webhook that is not signed with the webhook secret', async () => {
+    const res = await webhook({ event: 'subscription.charged', payload: {} }, 'evt_0', 'forged');
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('records a renewal once and tells billing, however often it is delivered', async () => {
+    const charged = {
+      event: 'subscription.charged',
+      payload: {
+        subscription: subscription('active', 2),
+        payment: {
+          entity: {
+            id: 'pay_2',
+            amount: 49_900,
+            currency: 'INR',
+            status: 'captured',
+            method: 'upi',
+          },
+        },
+      },
+    };
+    expect((await webhook(charged, 'evt_1')).statusCode).toBe(200);
+    expect((await webhook(charged, 'evt_1')).statusCode).toBe(200);
+
+    const renewals = published.filter((e) => e.payload.type === 'subscription.renewed');
+    expect(renewals.map((e) => e.jobId)).toEqual(['subscription-renewed-pay_2']);
+    expect(renewals[0]!.payload).toMatchObject({
+      paymentId: 'pay_2',
+      periodEnd: new Date(1_796_200_000 * 1000).toISOString(),
+    });
+  });
+
+  it('passes on a cancellation', async () => {
+    const res = await webhook(
+      { event: 'subscription.cancelled', payload: { subscription: subscription('cancelled', 2) } },
+      'evt_2',
+    );
+    expect(res.statusCode).toBe(200);
+    expect(published.at(-1)!.payload).toMatchObject({ type: 'subscription.cancelled' });
   });
 });

@@ -9,6 +9,7 @@ import { createCheckoutService } from './checkout/checkout-service';
 import { loadPaymentsConfig, razorpayKeys } from './config';
 import { migratePayments } from './db/migrate';
 import { createRazorpay } from './providers/razorpay';
+import { createRazorpayWebhooks } from './webhooks/razorpay-webhooks';
 
 const logger = createLogger({ service: 'payments', pretty: process.stdout.isTTY });
 const config = loadPaymentsConfig();
@@ -38,6 +39,10 @@ const app = buildApp({
   pingDatabase: pg.ping,
   routes: {
     checkout: createCheckoutService({ db: pg.db, razorpay, events, logger }),
+    razorpayWebhooks:
+      razorpay?.hasWebhookSecret === true
+        ? createRazorpayWebhooks({ db: pg.db, razorpay, events, logger })
+        : null,
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
   },
 });
