@@ -11,11 +11,14 @@ import { buildApp } from './app';
 import { createCheckoutService } from './checkout/checkout-service';
 import { migratePayments } from './db/migrate';
 import { createRazorpay } from './providers/razorpay';
+import { createStripe } from './providers/stripe';
 import { createRazorpayWebhooks } from './webhooks/razorpay-webhooks';
+import { createStripeWebhooks } from './webhooks/stripe-webhooks';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
 const KEY_SECRET = 'test-secret';
 const WEBHOOK_SECRET = 'hook-secret';
+const STRIPE_WEBHOOK_SECRET = 'whsec_test';
 
 const verifyToken: TokenVerifier = async (token) => {
   if (!token.startsWith('user-')) throw new UnauthorizedError('Invalid access token');
@@ -47,6 +50,47 @@ const razorpayFetch: typeof fetch = async (input, init) => {
   });
 };
 
+// Stands in for Stripe's API. A session stays open until a test completes it.
+const stripeCalls: { method: string; path: string; body?: URLSearchParams }[] = [];
+const completed = new Set<string>();
+const cancelling = new Set<string>();
+let nextSession = 0;
+const stripeSubscription = (id: string) => ({
+  id,
+  status: 'active',
+  cancel_at_period_end: cancelling.has(id),
+  items: { data: [{ current_period_start: 1_791_000_000, current_period_end: 1_793_600_000 }] },
+  metadata: { userId: 'someone' },
+});
+const stripeFetch: typeof fetch = async (input, init) => {
+  const path = (input as string).replace('https://api.stripe.com/v1', '');
+  const method = init?.method ?? 'GET';
+  const body = init?.body ? new URLSearchParams(init.body as string) : undefined;
+  stripeCalls.push({ method, path, ...(body && { body }) });
+  const json = (value: unknown) => new Response(JSON.stringify(value));
+  if (path === '/prices') return json({ id: 'price_standard_monthly' });
+  if (path === '/customers') return json({ id: `cus_${stripeCalls.length}` });
+  if (path === '/checkout/sessions') {
+    const id = `cs_${++nextSession}`;
+    return json({ id, url: `https://checkout.stripe.com/c/${id}`, status: 'open' });
+  }
+  const session = path.match(/^\/checkout\/sessions\/([^?]+)/)?.[1];
+  if (session) {
+    const done = completed.has(session);
+    return json({
+      id: session,
+      url: null,
+      status: done ? 'complete' : 'open',
+      payment_status: done ? 'paid' : 'unpaid',
+      subscription: done ? stripeSubscription(`sub_for_${session}`) : null,
+      invoice: done ? `in_for_${session}` : null,
+    });
+  }
+  const subscription = path.match(/^\/subscriptions\/([^?]+)/)![1]!;
+  if (method === 'POST') cancelling.add(subscription);
+  return json(stripeSubscription(subscription));
+};
+
 const published: JobEnvelope<PaymentEventPayload>[] = [];
 
 let pg: TestPostgres;
@@ -68,12 +112,20 @@ beforeAll(async () => {
       return { jobId: envelope.jobId, duplicate: false };
     },
   };
+  const stripe = createStripe(
+    { secretKey: 'sk_test_key', webhookSecret: STRIPE_WEBHOOK_SECRET },
+    logger,
+    stripeFetch,
+  );
   app = buildApp({
     logger,
     pingDatabase: client.ping,
     routes: {
-      checkout: createCheckoutService({ db: client.db, razorpay, events, logger }),
-      razorpayWebhooks: createRazorpayWebhooks({ db: client.db, razorpay, events, logger }),
+      checkout: createCheckoutService({ db: client.db, razorpay, stripe, events, logger }),
+      webhooks: {
+        razorpay: createRazorpayWebhooks({ db: client.db, razorpay, events, logger }),
+        stripe: createStripeWebhooks({ db: client.db, stripe, events, logger }),
+      },
       verifyToken,
     },
   });
@@ -155,10 +207,7 @@ describe('checkout', () => {
     await confirm(user, input);
 
     const events = published.filter((e) => e.userId === user);
-    expect(events.map((e) => e.jobId)).toEqual([
-      'subscription-activated-pay_1',
-      'subscription-activated-pay_1',
-    ]);
+    expect(events.map((e) => e.jobId)).toEqual(['subscription-activated-pay_1']);
     expect(events[0]!.payload).toMatchObject({
       type: 'subscription.activated',
       plan: 'STANDARD',
@@ -256,5 +305,123 @@ describe('razorpay webhooks', () => {
     );
     expect(res.statusCode).toBe(200);
     expect(published.at(-1)!.payload).toMatchObject({ type: 'subscription.cancelled' });
+  });
+});
+
+describe('stripe', () => {
+  const user = randomUUID();
+  const start = (who: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/payments/checkout',
+      headers: as(who),
+      payload: { plan: 'STANDARD', interval: 'monthly', provider: 'STRIPE' },
+    });
+  const status = (who: string, id: string) =>
+    app.inject({ method: 'GET', url: `/payments/checkout/${id}/status`, headers: as(who) });
+  const webhook = (body: object, signature?: string) => {
+    const raw = JSON.stringify(body);
+    const t = Math.floor(Date.now() / 1000);
+    const v1 = createHmac('sha256', STRIPE_WEBHOOK_SECRET).update(`${t}.${raw}`).digest('hex');
+    return app.inject({
+      method: 'POST',
+      url: '/webhooks/stripe',
+      headers: {
+        'content-type': 'application/json',
+        'stripe-signature': signature ?? `t=${t},v1=${v1}`,
+      },
+      payload: raw,
+    });
+  };
+
+  it('lists both providers', async () => {
+    const res = await app.inject({ method: 'GET', url: '/payments/config', headers: as(user) });
+    expect(res.json()).toEqual({ providers: ['RAZORPAY', 'STRIPE'] });
+  });
+
+  it('opens a hosted checkout and starts the plan once it is paid', async () => {
+    const res = await start(user);
+    expect(res.statusCode).toBe(200);
+    const { sessionId, url } = res.json<{ sessionId: string; url: string }>();
+    expect(url).toBe(`https://checkout.stripe.com/c/${sessionId}`);
+    const created = stripeCalls.find((c) => c.path === '/checkout/sessions')!.body!;
+    expect(created.get('mode')).toBe('subscription');
+    expect(created.get('line_items[0][price]')).toBe('price_standard_monthly');
+    expect(created.get('success_url')).toContain('/checkout-return/stripe?result=paid');
+
+    expect((await status(user, sessionId)).json()).toEqual({ state: 'open', subscription: null });
+    expect((await status(randomUUID(), sessionId)).statusCode).toBe(404);
+
+    completed.add(sessionId);
+    const paid = await status(user, sessionId);
+    expect(paid.json()).toMatchObject({
+      state: 'paid',
+      subscription: { provider: 'STRIPE', plan: 'STANDARD', status: 'active' },
+    });
+    await status(user, sessionId);
+    const activations = published.filter(
+      (e) => e.jobId === `subscription-activated-in_for_${sessionId}`,
+    );
+    expect(activations).toHaveLength(1);
+
+    const history = await app.inject({
+      method: 'GET',
+      url: '/payments/history',
+      headers: as(user),
+    });
+    expect(history.json<{ items: unknown[] }>().items).toHaveLength(1);
+  });
+
+  it('cancels a Stripe plan at the end of the period', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/payments/subscription/cancel',
+      headers: as(user),
+    });
+    expect(res.json()).toMatchObject({ provider: 'STRIPE', cancelAtPeriodEnd: true });
+    expect(stripeCalls.at(-1)!.body!.get('cancel_at_period_end')).toBe('true');
+  });
+
+  it('rejects an unsigned webhook', async () => {
+    expect((await webhook({ id: 'evt_x', type: 'invoice.paid' }, 't=1,v1=forged')).statusCode).toBe(
+      401,
+    );
+  });
+
+  it('records a renewal invoice once and passes on a deletion', async () => {
+    const [session] = [...completed];
+    const remoteId = `sub_for_${session}`;
+    const invoice = {
+      id: 'evt_s1',
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: 'in_renewal',
+          amount_paid: 49_900,
+          amount_due: 49_900,
+          currency: 'inr',
+          billing_reason: 'subscription_cycle',
+          parent: { subscription_details: { subscription: remoteId } },
+        },
+      },
+    };
+    expect((await webhook(invoice)).statusCode).toBe(200);
+    expect((await webhook(invoice)).statusCode).toBe(200);
+    expect(published.filter((e) => e.jobId === 'subscription-renewed-in_renewal')).toHaveLength(1);
+
+    const deleted = {
+      id: 'evt_s2',
+      type: 'customer.subscription.deleted',
+      data: { object: { ...stripeSubscription(remoteId), status: 'canceled' } },
+    };
+    expect((await webhook(deleted)).statusCode).toBe(200);
+    expect(published.at(-1)!.payload).toMatchObject({ type: 'subscription.cancelled' });
+  });
+
+  it('shows a return page after checkout', async () => {
+    const res = await app.inject({ method: 'GET', url: '/return/stripe?result=paid' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('Payment received');
   });
 });

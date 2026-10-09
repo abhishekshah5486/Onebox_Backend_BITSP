@@ -17,7 +17,8 @@ import {
 } from '../db/schema';
 import { publish, type PaymentEvents } from '../events';
 import type { Razorpay, RazorpaySubscription } from '../providers/razorpay';
-import { periodOf, type Stripe, type StripeSubscription } from '../providers/stripe';
+import type { Stripe } from '../providers/stripe';
+import { saveStripeSubscription } from '../stripe-sync';
 
 const CURRENCY = 'INR';
 // How many periods Razorpay keeps billing before the subscription completes.
@@ -27,21 +28,6 @@ const LIVE_STATUSES = ['authenticated', 'active', 'pending', 'halted'] as const;
 
 export type ProviderName = 'RAZORPAY' | 'STRIPE';
 type Status = SubscriptionRow['status'];
-
-// Stripe's subscription states in the terms we store (Razorpay's).
-export const stripeStatus = (status: string): Status =>
-  (
-    ({
-      active: 'active',
-      trialing: 'active',
-      past_due: 'pending',
-      unpaid: 'halted',
-      paused: 'halted',
-      canceled: 'cancelled',
-      incomplete: 'created',
-      incomplete_expired: 'expired',
-    }) as Record<string, Status>
-  )[status] ?? 'created';
 
 export interface CheckoutUser {
   userId: string;
@@ -167,26 +153,10 @@ export function createCheckoutService({
     return updated!;
   }
 
-  // Copies Stripe's view of a subscription onto ours, adopting its id once checkout made it.
-  async function refreshStripe(row: SubscriptionRow, remote: StripeSubscription) {
-    const period = periodOf(remote);
-    const [updated] = await db
-      .update(subscriptions)
-      .set({
-        providerSubscriptionId: remote.id,
-        status: stripeStatus(remote.status),
-        currentPeriodStart: period.start ?? row.currentPeriodStart,
-        currentPeriodEnd: period.end ?? row.currentPeriodEnd,
-        cancelAtPeriodEnd: remote.cancel_at_period_end,
-      })
-      .where(eq(subscriptions.id, row.id))
-      .returning();
-    return updated!;
-  }
-
-  // Records the first payment and tells billing the plan started (once per payment).
+  // Records the first payment and tells billing the plan started. Repeat checks of a paid
+  // checkout find the payment already there and say nothing; webhooks repeat the event anyway.
   async function activated(row: SubscriptionRow, providerPaymentId: string) {
-    await db
+    const recorded = await db
       .insert(payments)
       .values({
         userId: row.userId,
@@ -197,7 +167,9 @@ export function createCheckoutService({
         currency: CURRENCY,
         status: 'captured',
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: payments.id });
+    if (recorded.length === 0) return;
     await publish(events, 'subscription.activated', row, {
       paymentId: providerPaymentId,
       key: providerPaymentId,
@@ -339,7 +311,7 @@ export function createCheckoutService({
       if (session.status !== 'complete' || !remote || typeof remote === 'string') {
         return { state: 'open' as const, subscription: null };
       }
-      const updated = await refreshStripe(row, remote);
+      const updated = await saveStripeSubscription(db, row, remote);
       const invoice = typeof session.invoice === 'string' ? session.invoice : session.invoice?.id;
       if (updated.status === 'active') await activated(updated, invoice ?? session.id);
       return { state: 'paid' as const, subscription: subscriptionView(updated) };
@@ -357,7 +329,11 @@ export function createCheckoutService({
       if (row.cancelAtPeriodEnd) return subscriptionView(row);
       const refreshed =
         row.provider === 'STRIPE'
-          ? await refreshStripe(row, await stripe!.cancelAtPeriodEnd(row.providerSubscriptionId))
+          ? await saveStripeSubscription(
+              db,
+              row,
+              await stripe!.cancelAtPeriodEnd(row.providerSubscriptionId),
+            )
           : await refreshRazorpay(
               row,
               await razorpay!.cancelSubscription(row.providerSubscriptionId, true),

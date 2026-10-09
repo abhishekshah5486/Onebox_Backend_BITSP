@@ -11,6 +11,7 @@ import { migratePayments } from './db/migrate';
 import { createRazorpay } from './providers/razorpay';
 import { createStripe } from './providers/stripe';
 import { createRazorpayWebhooks } from './webhooks/razorpay-webhooks';
+import { createStripeWebhooks } from './webhooks/stripe-webhooks';
 
 const logger = createLogger({ service: 'payments', pretty: process.stdout.isTTY });
 const config = loadPaymentsConfig();
@@ -33,7 +34,7 @@ logger.info(
     mode: config.PAYMENTS_MODE,
     razorpay: razorpay !== null,
     stripe: stripe !== null,
-    webhooks: razorpay?.hasWebhookSecret,
+    webhooks: { razorpay: razorpay?.hasWebhookSecret, stripe: stripe?.hasWebhookSecret },
   },
   'payment providers configured',
 );
@@ -57,10 +58,16 @@ const app = buildApp({
       events,
       logger,
     }),
-    razorpayWebhooks:
-      razorpay?.hasWebhookSecret === true
-        ? createRazorpayWebhooks({ db: pg.db, razorpay, events, logger })
-        : null,
+    webhooks: {
+      razorpay:
+        razorpay?.hasWebhookSecret === true
+          ? createRazorpayWebhooks({ db: pg.db, razorpay, events, logger })
+          : null,
+      stripe:
+        stripe?.hasWebhookSecret === true
+          ? createStripeWebhooks({ db: pg.db, stripe, events, logger })
+          : null,
+    },
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
   },
 });

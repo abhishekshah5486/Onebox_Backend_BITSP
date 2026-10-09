@@ -57,6 +57,24 @@ spec:
                   secretKeyRef:
                     { name: onebox-secrets, key: RAZORPAY_WEBHOOK_SECRET, optional: true },
                 }
+            - name: STRIPE_TEST_SECRET_KEY
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: STRIPE_TEST_SECRET_KEY, optional: true },
+                }
+            - name: STRIPE_LIVE_SECRET_KEY
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: STRIPE_LIVE_SECRET_KEY, optional: true },
+                }
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: STRIPE_WEBHOOK_SECRET, optional: true },
+                }
           # Startup covers the remote database connect + migrations.
           startupProbe:
             httpGet: { path: /health/live, port: 4008 }
