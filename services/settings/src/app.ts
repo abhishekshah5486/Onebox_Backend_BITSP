@@ -3,10 +3,10 @@ import { createServer, registerHealthRoutes } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Logger } from '@onebox/logger';
-import type { GoogleService } from './google/google-service';
-import { registerGoogleCallback, registerGoogleRoutes } from './google/routes';
 import type { IntegrationService } from './integrations/integration-service';
 import { registerIntegrationRoutes } from './integrations/routes';
+import { registerStorageCallbacks, registerStorageRoutes } from './storage/routes';
+import type { StorageService } from './storage/storage-service';
 import type { PreferencesService } from './preferences/preferences-service';
 import { registerPreferenceRoutes } from './preferences/routes';
 
@@ -16,7 +16,7 @@ export interface AppDeps {
   routes?: {
     preferences: PreferencesService;
     integrations: IntegrationService;
-    google: GoogleService;
+    storage: StorageService;
     verifyToken: TokenVerifier;
     internalToken: string;
   };
@@ -34,7 +34,7 @@ export function buildApp(deps: AppDeps) {
         scope.addHook('preHandler', requireUser(routes.verifyToken));
         registerPreferenceRoutes(scope, routes.preferences);
         registerIntegrationRoutes(scope, routes.integrations);
-        registerGoogleRoutes(scope, routes.google);
+        registerStorageRoutes(scope, routes.storage);
       },
       { prefix: '/settings' },
     );
@@ -44,21 +44,17 @@ export function buildApp(deps: AppDeps) {
       { preHandler: requireInternal(routes.internalToken) },
       async (request) => routes.preferences.get(request.params.userId),
     );
-    // The mail service fetches Drive access tokens here.
+    // The mail service fetches storage access tokens here.
     app.withTypeProvider<ZodTypeProvider>().get(
-      '/internal/google/token/:userId/:accountId',
+      '/internal/storage/token/:userId/:accountId',
       {
         preHandler: requireInternal(routes.internalToken),
         schema: { params: z.object({ userId: z.uuid(), accountId: z.uuid() }) },
       },
-      async (request) => ({
-        accessToken: await routes.google.accessToken(
-          request.params.userId,
-          request.params.accountId,
-        ),
-      }),
+      async (request) =>
+        routes.storage.accessToken(request.params.userId, request.params.accountId),
     );
-    registerGoogleCallback(app, routes.google);
+    registerStorageCallbacks(app, routes.storage);
   }
   return app;
 }

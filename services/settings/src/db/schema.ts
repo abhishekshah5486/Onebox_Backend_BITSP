@@ -14,6 +14,8 @@ export const INTEGRATION_EVENTS = [
 
 export const autonomyModeEnum = settingsSchema.enum('autonomy_mode', AUTONOMY_MODES);
 export const integrationTypeEnum = settingsSchema.enum('integration_type', INTEGRATION_TYPES);
+export const STORAGE_PROVIDERS = ['GOOGLE_DRIVE'] as const;
+export const storageProviderEnum = settingsSchema.enum('storage_provider', STORAGE_PROVIDERS);
 
 const timestamps = {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -72,22 +74,30 @@ export const integrations = settingsSchema.table(
   ],
 );
 
-// Google accounts a user connected for Drive; files go to defaultPath unless they pick another.
-export const googleConnections = settingsSchema.table(
-  'google_connections',
+// Cloud storage accounts (Google Drive now; OneDrive and Dropbox later) that attachments can be
+// saved to. Files go to defaultPath unless the user picks another folder when saving.
+export const storageAccounts = settingsSchema.table(
+  'storage_accounts',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull(),
+    provider: storageProviderEnum('provider').notNull(),
     email: text('email').notNull(),
     refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
     scopes: text('scopes').array().notNull(),
-    // Folder path under My Drive, e.g. "OneBox/Receipts"; empty means the top level.
+    // Folder path from the top of the storage, e.g. "OneBox/Receipts"; empty means the top.
     defaultPath: text('default_path').notNull().default(''),
     ...timestamps,
   },
-  (table) => [unique('google_connections_user_email_unique').on(table.userId, table.email)],
+  (table) => [
+    unique('storage_accounts_user_provider_email_unique').on(
+      table.userId,
+      table.provider,
+      table.email,
+    ),
+  ],
 );
 
 export type IntegrationRow = typeof integrations.$inferSelect;
 export type PreferencesRow = typeof userPreferences.$inferSelect;
-export type GoogleConnectionRow = typeof googleConnections.$inferSelect;
+export type StorageAccountRow = typeof storageAccounts.$inferSelect;

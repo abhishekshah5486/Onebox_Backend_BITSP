@@ -2,20 +2,20 @@ import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto'
 
 const TTL_MS = 10 * 60_000;
 
-// Signed OAuth state, so the public callback knows which user started the flow.
+// Signed OAuth state, so a public callback knows who started the flow (e.g. "GOOGLE_DRIVE:<userId>").
 export function createStateSigner(encryptionKey: Buffer, now = () => Date.now()) {
-  const key = Buffer.from(hkdfSync('sha256', encryptionKey, 'onebox', 'google-oauth-state', 32));
+  const key = Buffer.from(hkdfSync('sha256', encryptionKey, 'onebox', 'oauth-state', 32));
   const mac = (body: string) => createHmac('sha256', key).update(body).digest('base64url');
 
   return {
-    sign(userId: string) {
+    sign(subject: string) {
       const body = Buffer.from(
-        JSON.stringify({ u: userId, e: now() + TTL_MS, n: randomBytes(8).toString('hex') }),
+        JSON.stringify({ u: subject, e: now() + TTL_MS, n: randomBytes(8).toString('hex') }),
       ).toString('base64url');
       return `${body}.${mac(body)}`;
     },
 
-    // The user id, or null for a forged or expired state.
+    // The subject, or null for a forged or expired state.
     verify(state: string): string | null {
       const [body, signature] = state.split('.');
       if (!body || !signature) return null;

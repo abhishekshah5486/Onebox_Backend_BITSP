@@ -12,7 +12,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from './app';
 import { migrateSettings } from './db/migrate';
 import { integrations as integrationsTable } from './db/schema';
-import { createGoogleService } from './google/google-service';
+import { googleDrive } from './storage/google-drive';
+import { createStorageService } from './storage/storage-service';
 import { createIntegrationService } from './integrations/integration-service';
 import { verifyWebhookSignature } from './integrations/signing';
 import { createPreferencesService } from './preferences/preferences-service';
@@ -75,12 +76,17 @@ beforeAll(async () => {
               ? slackSend(url, init)
               : import('@onebox/net-guard').then((m) => m.safeFetch(url, init)),
         }),
-        google: createGoogleService({
+        storage: createStorageService({
           db: client.db,
           encryptionKey: randomBytes(32),
           logger,
-          oauth: { clientId: 'cid', clientSecret: 'csecret', redirectUri: 'http://gw/callback' },
-          fetch: googleFetch,
+          providers: {
+            GOOGLE_DRIVE: googleDrive(
+              { clientId: 'cid', clientSecret: 'csecret', redirectUri: 'http://gw/callback' },
+              logger,
+              googleFetch,
+            ),
+          },
         }),
         verifyToken,
         internalToken: 'internal-secret',
@@ -413,7 +419,7 @@ describe('integrations', () => {
   });
 });
 
-describe('google drive', () => {
+describe('cloud storage', () => {
   const user = randomUUID();
   const idToken = (email: string) =>
     ['x', Buffer.from(JSON.stringify({ email })).toString('base64url'), 'y'].join('.');
@@ -422,20 +428,25 @@ describe('google drive', () => {
 
   interface Account {
     id: string;
+    provider: string;
     email: string;
     defaultPath: string;
   }
   const accounts = async () =>
-    (
-      await app.inject({ method: 'GET', url: '/settings/integrations/google', headers: as(user) })
-    ).json<{ configured: boolean; accounts: Account[] }>();
+    (await app.inject({ method: 'GET', url: '/settings/storage', headers: as(user) })).json<{
+      providers: string[];
+      accounts: Account[];
+    }>();
+  const startConnect = () =>
+    app.inject({
+      method: 'POST',
+      url: '/settings/storage/connect',
+      headers: as(user),
+      payload: { provider: 'GOOGLE_DRIVE' },
+    });
 
   const connect = async (email: string, accessToken: string) => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/settings/integrations/google/connect',
-      headers: as(user),
-    });
+    const res = await startConnect();
     const authUrl = new URL(res.json<{ url: string }>().url);
     expect(authUrl.searchParams.get('access_type')).toBe('offline');
     googleFetch.mockResolvedValueOnce(
@@ -464,19 +475,23 @@ describe('google drive', () => {
     await connect('me@gmail.com', 'at-3');
 
     const listed = await accounts();
-    expect(listed.configured).toBe(true);
+    expect(listed.providers).toEqual(['GOOGLE_DRIVE']);
+    expect(listed.accounts.every((a) => a.provider === 'GOOGLE_DRIVE')).toBe(true);
     expect(listed.accounts.map((a) => a.email)).toEqual(['me@gmail.com', 'work@gmail.com']);
     const [me, work] = listed.accounts;
 
     const token = (id: string, who = user) =>
-      app.inject({ method: 'GET', url: `/internal/google/token/${who}/${id}`, headers: internal });
-    expect((await token(me!.id)).json()).toEqual({ accessToken: 'at-3' });
-    expect((await token(work!.id)).json()).toEqual({ accessToken: 'at-2' });
+      app.inject({ method: 'GET', url: `/internal/storage/token/${who}/${id}`, headers: internal });
+    expect((await token(me!.id)).json()).toEqual({ provider: 'GOOGLE_DRIVE', accessToken: 'at-3' });
+    expect((await token(work!.id)).json()).toEqual({
+      provider: 'GOOGLE_DRIVE',
+      accessToken: 'at-2',
+    });
     expect((await token(work!.id, randomUUID())).statusCode).toBe(404);
 
     const updated = await app.inject({
       method: 'PATCH',
-      url: `/settings/integrations/google/${work!.id}`,
+      url: `/settings/storage/${work!.id}`,
       headers: as(user),
       payload: { defaultPath: ' /OneBox// Receipts/ ' },
     });
@@ -485,11 +500,7 @@ describe('google drive', () => {
 
   it('rejects a tampered state without calling Google', async () => {
     googleFetch.mockClear();
-    const res = await app.inject({
-      method: 'POST',
-      url: '/settings/integrations/google/connect',
-      headers: as(user),
-    });
+    const res = await startConnect();
     const state = new URL(res.json<{ url: string }>().url).searchParams.get('state')!;
     const callback = await app.inject({
       method: 'GET',
@@ -506,7 +517,7 @@ describe('google drive', () => {
     googleFetch.mockResolvedValueOnce(json({}));
     const res = await app.inject({
       method: 'DELETE',
-      url: `/settings/integrations/google/${me!.id}`,
+      url: `/settings/storage/${me!.id}`,
       headers: as(user),
     });
     expect(res.statusCode).toBe(204);
