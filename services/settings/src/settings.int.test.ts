@@ -448,6 +448,7 @@ describe('cloud storage', () => {
     (await app.inject({ method: 'GET', url: '/settings/storage', headers: as(user) })).json<{
       providers: string[];
       accounts: Account[];
+      failures: { provider: string; reason: string; message: string }[];
     }>();
   const startConnect = () =>
     app.inject({
@@ -624,5 +625,26 @@ describe('cloud storage', () => {
     });
     expect(removed.statusCode).toBe(204);
     expect(googleFetch.mock.calls[1]?.[0]).toBe('https://api.dropboxapi.com/2/auth/token/revoke');
+  });
+
+  it('remembers why a sign-in failed, for the page that started it', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/settings/storage/connect',
+      headers: as(user),
+      payload: { provider: 'ONEDRIVE' },
+    });
+    const { url, expiresAt } = res.json<{ url: string; expiresAt: string }>();
+    expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(9 * 60_000);
+    const state = new URL(url).searchParams.get('state')!;
+
+    // The person declined on Microsoft's consent screen.
+    await app.inject({
+      method: 'GET',
+      url: `/integrations/microsoft/callback?error=access_denied&state=${encodeURIComponent(state)}`,
+    });
+    expect((await accounts()).failures).toContainEqual(
+      expect.objectContaining({ provider: 'ONEDRIVE', reason: 'ACCESS_DENIED' }),
+    );
   });
 });

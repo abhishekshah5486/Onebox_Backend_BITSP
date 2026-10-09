@@ -1,6 +1,6 @@
 import { ExternalServiceError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
-import { ExpiredGrantError, type StorageProvider } from './provider';
+import { ACCESS_DENIED, ExpiredGrantError, type StorageProvider } from './provider';
 
 const AUTH_URL = 'https://www.dropbox.com/oauth2/authorize';
 const TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token';
@@ -82,7 +82,9 @@ export function dropbox(
       }
       const scopes = (body.scope ?? '').split(' ').filter(Boolean);
       if (!scopes.includes('files.content.write')) {
-        throw new ValidationError('Allow OneBox to save files to Dropbox, then try again.');
+        throw new ValidationError('Allow OneBox to save files to Dropbox, then try again.', {
+          code: ACCESS_DENIED,
+        });
       }
       const account = await call(body.access_token, 'users/get_current_account');
       const email = account.ok ? ((await account.json()) as { email?: string }).email : undefined;

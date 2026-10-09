@@ -1,6 +1,7 @@
 import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 
-const TTL_MS = 10 * 60_000;
+// Every provider's sign-in link is valid this long.
+export const STATE_TTL_MS = 10 * 60_000;
 
 // Signed OAuth state, so a public callback knows who started the flow (e.g. "GOOGLE_DRIVE:<userId>").
 export function createStateSigner(encryptionKey: Buffer, now = () => Date.now()) {
@@ -10,7 +11,7 @@ export function createStateSigner(encryptionKey: Buffer, now = () => Date.now())
   return {
     sign(subject: string) {
       const body = Buffer.from(
-        JSON.stringify({ u: subject, e: now() + TTL_MS, n: randomBytes(8).toString('hex') }),
+        JSON.stringify({ u: subject, e: now() + STATE_TTL_MS, n: randomBytes(8).toString('hex') }),
       ).toString('base64url');
       return `${body}.${mac(body)}`;
     },
