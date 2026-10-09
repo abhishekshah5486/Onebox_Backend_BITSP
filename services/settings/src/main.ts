@@ -6,6 +6,7 @@ import { buildApp } from './app';
 import { loadSettingsConfig } from './config';
 import { migrateSettings } from './db/migrate';
 import { googleDrive } from './storage/google-drive';
+import { oneDrive } from './storage/onedrive';
 import { createStorageService } from './storage/storage-service';
 import { createIntegrationService } from './integrations/integration-service';
 import { createPreferencesService } from './preferences/preferences-service';
@@ -41,6 +42,17 @@ const app = buildApp({
                 clientId: config.GOOGLE_CLIENT_ID,
                 clientSecret: config.GOOGLE_CLIENT_SECRET,
                 redirectUri: config.GOOGLE_REDIRECT_URI,
+              },
+              logger,
+            ),
+          }),
+        ...(config.MICROSOFT_CLIENT_ID &&
+          config.MICROSOFT_CLIENT_SECRET && {
+            ONEDRIVE: oneDrive(
+              {
+                clientId: config.MICROSOFT_CLIENT_ID,
+                clientSecret: config.MICROSOFT_CLIENT_SECRET,
+                redirectUri: config.MICROSOFT_REDIRECT_URI,
               },
               logger,
             ),

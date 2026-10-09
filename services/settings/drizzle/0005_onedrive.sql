@@ -1,0 +1,1 @@
+ALTER TYPE "settings"."storage_provider" ADD VALUE 'ONEDRIVE';

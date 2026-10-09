@@ -23,7 +23,10 @@ export interface StorageServiceDeps {
 }
 
 // Google tokens were encrypted under "google:<userId>" before other providers existed.
-const AAD_PREFIX: Record<StorageProviderId, string> = { GOOGLE_DRIVE: 'google' };
+const AAD_PREFIX: Record<StorageProviderId, string> = {
+  GOOGLE_DRIVE: 'google',
+  ONEDRIVE: 'onedrive',
+};
 const aadFor = (row: { provider: StorageProviderId; userId: string }) =>
   `${AAD_PREFIX[row.provider]}:${row.userId}`;
 
@@ -143,6 +146,14 @@ export function createStorageService({ db, encryptionKey, logger, providers }: S
           decrypt(row.refreshTokenEncrypted, encryptionKey, aadFor(row)),
         );
         remember(id, access);
+        if (access.refreshToken) {
+          await db
+            .update(storageAccounts)
+            .set({
+              refreshTokenEncrypted: encrypt(access.refreshToken, encryptionKey, aadFor(row)),
+            })
+            .where(eq(storageAccounts.id, id));
+        }
         return { provider: row.provider, accessToken: access.token };
       } catch (err) {
         if (!(err instanceof ExpiredGrantError)) throw err;

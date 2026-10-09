@@ -11,8 +11,9 @@ import { startPostgres, type TestPostgres } from '@onebox/testing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from './app';
 import { migrateSettings } from './db/migrate';
-import { integrations as integrationsTable } from './db/schema';
+import { integrations as integrationsTable, storageAccounts } from './db/schema';
 import { googleDrive } from './storage/google-drive';
+import { oneDrive } from './storage/onedrive';
 import { createStorageService } from './storage/storage-service';
 import { createIntegrationService } from './integrations/integration-service';
 import { verifyWebhookSignature } from './integrations/signing';
@@ -83,6 +84,11 @@ beforeAll(async () => {
           providers: {
             GOOGLE_DRIVE: googleDrive(
               { clientId: 'cid', clientSecret: 'csecret', redirectUri: 'http://gw/callback' },
+              logger,
+              googleFetch,
+            ),
+            ONEDRIVE: oneDrive(
+              { clientId: 'mid', clientSecret: 'msecret', redirectUri: 'http://gw/ms' },
               logger,
               googleFetch,
             ),
@@ -475,7 +481,7 @@ describe('cloud storage', () => {
     await connect('me@gmail.com', 'at-3');
 
     const listed = await accounts();
-    expect(listed.providers).toEqual(['GOOGLE_DRIVE']);
+    expect(listed.providers).toEqual(['GOOGLE_DRIVE', 'ONEDRIVE']);
     expect(listed.accounts.every((a) => a.provider === 'GOOGLE_DRIVE')).toBe(true);
     expect(listed.accounts.map((a) => a.email)).toEqual(['me@gmail.com', 'work@gmail.com']);
     const [me, work] = listed.accounts;
@@ -523,5 +529,48 @@ describe('cloud storage', () => {
     expect(res.statusCode).toBe(204);
     expect(googleFetch.mock.calls[0]?.[0]).toContain('/revoke');
     expect((await accounts()).accounts.map((a) => a.email)).toEqual(['work@gmail.com']);
+  });
+
+  it('connects OneDrive and keeps the refresh token Microsoft rotates', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/settings/storage/connect',
+      headers: as(user),
+      payload: { provider: 'ONEDRIVE' },
+    });
+    const authUrl = new URL(res.json<{ url: string }>().url);
+    expect(authUrl.host).toBe('login.microsoftonline.com');
+    expect(authUrl.searchParams.get('scope')).toContain('Files.ReadWrite');
+
+    // No access token with the code, so the first token request refreshes.
+    googleFetch.mockResolvedValueOnce(
+      json({
+        refresh_token: 'ms-rt-1',
+        scope: 'openid email offline_access User.Read Files.ReadWrite',
+        id_token: idToken('me@outlook.com'),
+      }),
+    );
+    const state = authUrl.searchParams.get('state')!;
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/integrations/microsoft/callback?code=c&state=${encodeURIComponent(state)}`,
+    });
+    expect(callback.body).toContain('me@outlook.com is now connected');
+    const account = (await accounts()).accounts.find((a) => a.provider === 'ONEDRIVE')!;
+    const stored = async () =>
+      (await client.db.select().from(storageAccounts)).find((row) => row.id === account.id)!
+        .refreshTokenEncrypted;
+    const first = await stored();
+
+    googleFetch.mockResolvedValueOnce(
+      json({ access_token: 'ms-at', expires_in: 3600, refresh_token: 'ms-rt-2' }),
+    );
+    const token = await app.inject({
+      method: 'GET',
+      url: `/internal/storage/token/${user}/${account.id}`,
+      headers: internal,
+    });
+    expect(token.json()).toEqual({ provider: 'ONEDRIVE', accessToken: 'ms-at' });
+    expect(await stored()).not.toBe(first);
   });
 });

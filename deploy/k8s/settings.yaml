@@ -32,6 +32,15 @@ spec:
                 {
                   secretKeyRef: { name: onebox-secrets, key: GOOGLE_CLIENT_SECRET, optional: true },
                 }
+            - name: MICROSOFT_CLIENT_ID
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: MICROSOFT_CLIENT_ID, optional: true } }
+            - name: MICROSOFT_CLIENT_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: MICROSOFT_CLIENT_SECRET, optional: true },
+                }
           # Startup covers the remote database connect + migrations.
           startupProbe:
             httpGet: { path: /health/live, port: 4004 }
