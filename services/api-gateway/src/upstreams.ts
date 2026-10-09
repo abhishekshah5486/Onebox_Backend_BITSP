@@ -44,6 +44,20 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       rateLimit: { max: 20, timeWindow: '1 minute' },
     },
     {
+      // Payment providers call these; each request is checked by its signature, not a login.
+      prefix: '/api/v1/webhooks',
+      url: config.PAYMENTS_SERVICE_URL,
+      rewritePrefix: '/webhooks',
+      access: 'public',
+      rateLimit: { max: 300, timeWindow: '1 minute' },
+    },
+    {
+      prefix: '/api/v1/payments',
+      url: config.PAYMENTS_SERVICE_URL,
+      rewritePrefix: '/payments',
+      access: 'authenticated',
+    },
+    {
       prefix: '/api/v1/mail',
       url: config.MAIL_SERVICE_URL,
       rewritePrefix: '/mail',

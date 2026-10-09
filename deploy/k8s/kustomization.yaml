@@ -12,4 +12,5 @@ resources:
   - connector.yaml
   - llm-proxy.yaml
   - ai.yaml
+  - payments.yaml
   - api-gateway.yaml
