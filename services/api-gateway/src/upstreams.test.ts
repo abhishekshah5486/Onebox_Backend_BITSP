@@ -12,19 +12,33 @@ describe('defineUpstreams', () => {
     });
   });
 
-  it('keeps only the Google callback public besides auth', () => {
+  it('keeps only OAuth callbacks, payment webhooks and the checkout return page public besides auth', () => {
     expect(upstreams.find((u) => u.prefix === '/api/v1/integrations')).toMatchObject({
       access: 'public',
       rewritePrefix: '/integrations',
     });
+    expect(upstreams.find((u) => u.prefix === '/api/v1/webhooks')).toMatchObject({
+      access: 'public',
+      rewritePrefix: '/webhooks',
+    });
+    expect(upstreams.find((u) => u.prefix === '/api/v1/checkout-return')).toMatchObject({
+      access: 'public',
+      rewritePrefix: '/return',
+    });
   });
 
   it('protects every other upstream', () => {
-    const publicPrefixes = ['/api/v1/auth', '/api/v1/integrations'];
+    const publicPrefixes = [
+      '/api/v1/auth',
+      '/api/v1/integrations',
+      '/api/v1/webhooks',
+      '/api/v1/checkout-return',
+    ];
     const others = upstreams.filter((u) => !publicPrefixes.includes(u.prefix));
     expect(others.map((u) => u.prefix)).toEqual([
       '/api/v1/accounts',
       '/api/v1/settings',
+      '/api/v1/payments',
       '/api/v1/mail',
       '/api/v1/llm',
       '/api/v1/ai',

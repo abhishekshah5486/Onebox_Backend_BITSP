@@ -1,0 +1,104 @@
+# Takes payments through Razorpay (Stripe later) and reports them to billing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: payments }
+  template:
+    metadata:
+      labels: { app: payments }
+    spec:
+      # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: payments
+          image: onebox/payments:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4008 }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: DATABASE_URL } }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+            - { name: REDIS_URL, value: 'redis://redis:6379' }
+            - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - { name: PAYMENTS_MODE, value: 'test' }
+            - name: RAZORPAY_TEST_API_KEY
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: RAZORPAY_TEST_API_KEY, optional: true },
+                }
+            - name: RAZORPAY_TEST_KEY_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: RAZORPAY_TEST_KEY_SECRET, optional: true },
+                }
+            - name: RAZORPAY_LIVE_API_KEY
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: RAZORPAY_LIVE_API_KEY, optional: true },
+                }
+            - name: RAZORPAY_LIVE_KEY_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: RAZORPAY_LIVE_KEY_SECRET, optional: true },
+                }
+            - name: RAZORPAY_WEBHOOK_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: RAZORPAY_WEBHOOK_SECRET, optional: true },
+                }
+            - name: STRIPE_TEST_SECRET_KEY
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: STRIPE_TEST_SECRET_KEY, optional: true },
+                }
+            - name: STRIPE_LIVE_SECRET_KEY
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: STRIPE_LIVE_SECRET_KEY, optional: true },
+                }
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: onebox-secrets, key: STRIPE_WEBHOOK_SECRET, optional: true },
+                }
+          # Startup covers the remote database connect + migrations.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4008 }
+            periodSeconds: 2
+            failureThreshold: 45
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4008 }
+            periodSeconds: 10
+            timeoutSeconds: 6
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4008 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments
+spec:
+  selector: { app: payments }
+  ports: [{ port: 4008 }]

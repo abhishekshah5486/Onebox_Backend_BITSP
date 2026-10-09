@@ -11,6 +11,7 @@ export const QUEUES = {
   embed: 'embed',
   rules: 'rules',
   action: 'action',
+  payments: 'payments',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
