@@ -110,6 +110,13 @@ export const mailboxChangePayloadSchema = z.discriminatedUnion('type', [
     add: z.array(path),
     remove: z.array(path).default([]),
   }),
+  // How sending an outbox message ended: sent (its copy is in Sent) or failed for good.
+  z.object({
+    type: z.literal('sendResult'),
+    outboxId: z.uuid(),
+    status: z.enum(['sent', 'failed']),
+    error: z.string().max(500).nullable(),
+  }),
   // Everything in a folder right now; stored messages missing from it were moved or deleted.
   z.object({
     type: z.literal('snapshot'),

@@ -13,6 +13,7 @@ export const QUEUES = {
   action: 'action',
   payments: 'payments',
   usage: 'usage',
+  send: 'send',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

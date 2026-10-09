@@ -20,6 +20,8 @@ export const RETRY_POLICIES: Record<QueueName, RetryPolicy> = {
   payments: { attempts: 8, backoffMs: 5_000 },
   // A model call is charged once it has happened, so the charge must land.
   usage: { attempts: 8, backoffMs: 2_000 },
+  // A send that fails before the server accepts it is retried; once accepted it never resends.
+  send: { attempts: 5, backoffMs: 10_000 },
 };
 
 export const deadLetterQueue = (queue: QueueName) => `${queue}-dlq`;
