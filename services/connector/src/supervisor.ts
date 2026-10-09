@@ -54,9 +54,11 @@ export function createSupervisor({
     const renew = setInterval(() => {
       void lease
         .renew()
+        // After a Redis blip the lease may have simply expired: take it back if it is free.
+        .then(async (held) => held || (await lease.acquire()))
         .then((held) => {
-          if (!held) {
-            logger.warn({ accountId }, 'lost mailbox lease, disconnecting');
+          if (!held && !signal.aborted) {
+            logger.warn({ accountId }, 'mailbox lease taken by another process, disconnecting');
             controller.abort();
           }
         })
