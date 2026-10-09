@@ -42,6 +42,8 @@ function debounce(fn: () => void, ms: number) {
   return run;
 }
 
+const LOGOUT_TIMEOUT_MS = 5_000;
+
 // Runs one IMAP connection for an account until it closes, the signal aborts, or it fails.
 export async function runMailboxSession(
   account: ActiveAccount,
@@ -54,7 +56,14 @@ export async function runMailboxSession(
   client.on('error', (err: Error) => logger.warn({ err: err.message }, 'imap connection error'));
 
   const closed = new Promise<void>((resolve) => client.once('close', () => resolve()));
-  const onAbort = () => void client.logout().catch(() => client.close());
+  // Log out politely, but a half-dead connection may never answer: close it after a few seconds.
+  const onAbort = () => {
+    const force = setTimeout(() => client.close(), LOGOUT_TIMEOUT_MS);
+    void client
+      .logout()
+      .catch(() => client.close())
+      .finally(() => clearTimeout(force));
+  };
   signal.addEventListener('abort', onAbort, { once: true });
 
   try {
