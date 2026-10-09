@@ -18,6 +18,8 @@ import type { ComposeCollections, Composition, DraftDoc, OutboxDoc } from './col
 // How long a sent message waits, so it can still be undone.
 export const DEFAULT_UNDO_SECONDS = 5;
 const MAX_REFERENCES = 20;
+const MIN_SCHEDULE_MS = 60_000;
+const MAX_SCHEDULE_MS = 365 * 24 * 3600_000;
 const CONTACT_SCAN = 3_000;
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -155,7 +157,12 @@ export function createComposeService({
     // Queues a message; it goes out after the undo window unless cancelled.
     async send(
       userId: string,
-      input: Composition & { draftId?: string | undefined; undoSeconds?: number | undefined },
+      input: Composition & {
+        draftId?: string | undefined;
+        undoSeconds?: number | undefined;
+        // Scheduled send: goes out at this time instead (and can be cancelled until then).
+        sendAt?: string | undefined;
+      },
     ) {
       if (!input.accountId) throw new ValidationError('Choose the account to send from');
       if (input.to.length + input.cc.length + input.bcc.length === 0) {
@@ -190,7 +197,14 @@ export function createComposeService({
       const id = randomUUID();
       const domain = account.emailAddress.split('@')[1] ?? 'onebox.app';
       const now = new Date();
-      const undoSeconds = input.undoSeconds ?? DEFAULT_UNDO_SECONDS;
+      let delayMs = (input.undoSeconds ?? DEFAULT_UNDO_SECONDS) * 1000;
+      if (input.sendAt) {
+        const at = new Date(input.sendAt).getTime() - now.getTime();
+        if (at < MIN_SCHEDULE_MS || at > MAX_SCHEDULE_MS) {
+          throw new ValidationError('Schedule it for at least a minute from now and within a year');
+        }
+        delayMs = at;
+      }
       const doc: OutboxDoc = {
         _id: id,
         userId,
@@ -202,7 +216,7 @@ export function createComposeService({
         threadId,
         status: 'scheduled',
         error: null,
-        sendAt: new Date(now.getTime() + undoSeconds * 1000),
+        sendAt: new Date(now.getTime() + delayMs),
         sentAt: null,
         createdAt: now,
         updatedAt: now,
@@ -227,7 +241,7 @@ export function createComposeService({
             attachments: doc.attachments,
           },
         }),
-        { delayMs: undoSeconds * 1000 },
+        { delayMs },
       );
       if (input.draftId) await drafts.deleteOne({ _id: input.draftId, userId });
       logger.info(

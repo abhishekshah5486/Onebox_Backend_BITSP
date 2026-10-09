@@ -153,6 +153,15 @@ describe('sending', () => {
     expect(await store.drafts.findOne({ _id: draftId })).toBeNull();
   });
 
+  it('schedules a message for later, and refuses times in the past', async () => {
+    const sendAt = new Date(Date.now() + 2 * 3600_000).toISOString();
+    const res = await send({ ...message, sendAt });
+    expect(res.json()).toMatchObject({ status: 'scheduled', sendAt });
+    expect(queued[0]!.delayMs).toBeGreaterThan(2 * 3600_000 - 5_000);
+    const past = await send({ ...message, sendAt: new Date(Date.now() - 1000).toISOString() });
+    expect(past.statusCode).toBe(400);
+  });
+
   it("refuses mail without recipients, from other accounts, or with files that aren't yours", async () => {
     expect((await send({ ...message, to: [] })).statusCode).toBe(400);
     expect((await send(message, 'someone-else')).statusCode).toBe(404);

@@ -69,6 +69,7 @@ export function registerComposeRoutes(
             body: composition.extend({
               draftId: draftId.optional(),
               undoSeconds: z.number().int().min(0).max(30).optional(),
+              sendAt: z.iso.datetime({ offset: true }).optional(),
             }),
           },
         },
