@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { ExternalServiceError } from '@onebox/errors';
+import { ExternalServiceError, ServiceUnavailableError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 
 const API = 'https://api.razorpay.com/v1';
@@ -50,21 +50,26 @@ export function createRazorpay(
       signal: AbortSignal.timeout(15_000),
     });
     const payload = (await response.json().catch(() => ({}))) as {
-      error?: { code?: string; description?: string };
+      error?: { code?: string; description?: string } | string;
     };
     if (!response.ok) {
+      const error = typeof payload.error === 'string' ? null : payload.error;
+      // Good keys answered with a bare "Unauthorized": the account can't use this API, i.e.
+      // Subscriptions isn't enabled on it.
+      if (response.status === 401 && !error) {
+        logger.warn({ status: response.status, path }, 'razorpay product not enabled');
+        throw new ServiceUnavailableError(
+          "Razorpay subscriptions aren't turned on for this account yet. Try another way to pay, or try again later.",
+          { code: 'PROVIDER_UNAVAILABLE' },
+        );
+      }
       // Razorpay's own reason (never the keys), so failures can be told apart in the logs.
       logger.warn(
-        {
-          status: response.status,
-          path,
-          code: payload.error?.code,
-          reason: payload.error?.description,
-        },
+        { status: response.status, path, code: error?.code, reason: error?.description },
         'razorpay request failed',
       );
       throw new ExternalServiceError(
-        payload.error?.description ?? 'The payment provider did not accept the request',
+        error?.description ?? 'The payment provider did not accept the request',
       );
     }
     return payload as T;

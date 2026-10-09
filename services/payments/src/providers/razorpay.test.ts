@@ -46,6 +46,14 @@ describe('razorpay', () => {
     );
   });
 
+  it('says so when the account has no Subscriptions product', async () => {
+    const send: typeof fetch = async () =>
+      new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+    const failure = createRazorpay(keys, logger, send).fetchSubscription('sub_1');
+    await expect(failure).rejects.toMatchObject({ statusCode: 503, code: 'PROVIDER_UNAVAILABLE' });
+    await expect(failure).rejects.toThrow(/subscriptions aren't turned on/);
+  });
+
   it('accepts only checkout results signed with the key secret', () => {
     const razorpay = createRazorpay(keys, logger);
     const signature = sign('secret', 'pay_1|sub_1');
