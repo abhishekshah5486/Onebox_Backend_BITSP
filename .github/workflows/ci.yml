@@ -22,7 +22,11 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
+      # Only checks the file is valid; the real keys live in .env, which CI does not have.
       - run: docker compose config -q
+        env:
+          BLOB_ACCESS_KEY: ci-placeholder
+          BLOB_SECRET_KEY: ci-placeholder
       - run: npm run typecheck
       - run: npm run coverage
 
