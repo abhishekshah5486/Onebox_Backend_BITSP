@@ -18,6 +18,15 @@ const subscription = z.object({
   createdAt: z.string(),
 });
 
+// Fields every checkout answer carries, whichever provider opens it.
+const opened = {
+  plan: z.enum(PLAN_IDS),
+  interval: z.enum(BILLING_INTERVALS),
+  amount: z.number(),
+  currency: z.string(),
+  email: z.string(),
+};
+
 export function registerCheckoutRoutes(scope: FastifyInstance, checkout: CheckoutService) {
   const routes = scope.withTypeProvider<ZodTypeProvider>();
   const user = (request: Parameters<typeof currentUser>[0]) => currentUser(request);
@@ -25,32 +34,57 @@ export function registerCheckoutRoutes(scope: FastifyInstance, checkout: Checkou
   routes.get(
     '/config',
     { schema: { response: { 200: z.object({ providers: z.array(z.enum(PAYMENT_PROVIDERS)) }) } } },
-    async () => ({ providers: checkout.configured() ? ['RAZORPAY' as const] : [] }),
+    async () => ({ providers: checkout.providers() }),
   );
 
   routes.post(
     '/checkout',
     {
       schema: {
-        body: z.object({ plan: z.enum(PLAN_IDS), interval: z.enum(BILLING_INTERVALS) }),
+        body: z.object({
+          plan: z.enum(PLAN_IDS),
+          interval: z.enum(BILLING_INTERVALS),
+          provider: z.enum(PAYMENT_PROVIDERS).optional(),
+        }),
         response: {
-          200: z.object({
-            provider: z.literal('RAZORPAY'),
-            keyId: z.string(),
-            subscriptionId: z.string(),
-            plan: z.enum(PLAN_IDS),
-            interval: z.enum(BILLING_INTERVALS),
-            amount: z.number(),
-            currency: z.string(),
-            email: z.string(),
-          }),
+          200: z.discriminatedUnion('provider', [
+            z.object({
+              ...opened,
+              provider: z.literal('RAZORPAY'),
+              keyId: z.string(),
+              subscriptionId: z.string(),
+            }),
+            z.object({
+              ...opened,
+              provider: z.literal('STRIPE'),
+              sessionId: z.string(),
+              url: z.string(),
+            }),
+          ]),
         },
       },
     },
     async (request) => {
       const { userId, email } = user(request);
-      return checkout.start({ userId, email }, request.body.plan, request.body.interval);
+      const { plan, interval, provider } = request.body;
+      return checkout.start({ userId, email }, plan, interval, provider);
     },
+  );
+
+  routes.get(
+    '/checkout/:id/status',
+    {
+      schema: {
+        params: z.object({ id: z.string().min(1).max(200) }),
+        response: {
+          200: z.object({
+            state: z.enum(['open', 'paid', 'expired']),
+            subscription: subscription.nullable(),
+          }),
+        },
+      },
+    },
+    async (request) => checkout.checkoutStatus(user(request).userId, request.params.id),
   );
 
   routes.post(

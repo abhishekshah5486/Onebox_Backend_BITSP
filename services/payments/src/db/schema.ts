@@ -89,6 +89,8 @@ export const subscriptions = paymentsSchema.table(
     userId: uuid('user_id').notNull(),
     provider: providerEnum('provider').notNull(),
     providerSubscriptionId: text('provider_subscription_id').notNull().unique(),
+    // The provider's checkout that started it (a Stripe Checkout Session); none for Razorpay.
+    checkoutId: text('checkout_id').unique(),
     plan: planEnum('plan').notNull(),
     interval: intervalEnum('interval').notNull(),
     status: subscriptionStatusEnum('status').notNull().default('created'),
