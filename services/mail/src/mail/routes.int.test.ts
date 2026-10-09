@@ -22,6 +22,7 @@ import { ensureIndexes, mailCollections, type MailCollections } from '../db/coll
 import { createMemoryBlobStore } from '@onebox/blob-store';
 import { createAttachmentService } from '../attachments/attachments';
 import { googleDriveUploader } from '../storage/google-drive';
+import { oneDriveUploader } from '../storage/onedrive';
 import { createStorageService } from '../storage/storage';
 import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
@@ -95,7 +96,10 @@ beforeAll(async () => {
         settingsUrl: 'http://settings',
         internalToken: 'internal',
         logger,
-        uploaders: { GOOGLE_DRIVE: googleDriveUploader(logger, driveFetch) },
+        uploaders: {
+          GOOGLE_DRIVE: googleDriveUploader(logger, driveFetch),
+          ONEDRIVE: oneDriveUploader(logger, driveFetch),
+        },
         fetch: driveFetch,
       }),
       verifyToken,

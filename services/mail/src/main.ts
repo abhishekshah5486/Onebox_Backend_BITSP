@@ -20,6 +20,7 @@ import { ensureIndexes, mailCollections } from './db/collections';
 import { aiJob } from './ingest/ai-job';
 import { createAttachmentService } from './attachments/attachments';
 import { googleDriveUploader } from './storage/google-drive';
+import { oneDriveUploader } from './storage/onedrive';
 import { createStorageService } from './storage/storage';
 import { createIngestHandler } from './ingest/ingest-message';
 import { createMailService } from './mail/mail-service';
@@ -122,7 +123,10 @@ const app = buildApp({
           settingsUrl: config.SETTINGS_SERVICE_URL,
           internalToken: deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
           logger,
-          uploaders: { GOOGLE_DRIVE: googleDriveUploader(logger) },
+          uploaders: {
+            GOOGLE_DRIVE: googleDriveUploader(logger),
+            ONEDRIVE: oneDriveUploader(logger),
+          },
         }),
       }),
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
