@@ -20,6 +20,7 @@ import { ensureIndexes, mailCollections } from './db/collections';
 import { aiJob } from './ingest/ai-job';
 import { createAttachmentService } from './attachments/attachments';
 import { googleDriveUploader } from './storage/google-drive';
+import { dropboxUploader } from './storage/dropbox';
 import { oneDriveUploader } from './storage/onedrive';
 import { createStorageService } from './storage/storage';
 import { createIngestHandler } from './ingest/ingest-message';
@@ -126,6 +127,7 @@ const app = buildApp({
           uploaders: {
             GOOGLE_DRIVE: googleDriveUploader(logger),
             ONEDRIVE: oneDriveUploader(logger),
+            DROPBOX: dropboxUploader(logger),
           },
         }),
       }),
