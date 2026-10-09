@@ -40,6 +40,11 @@ export async function openImapClient(accountId: string, options: OpenClientOptio
     ...(options.idle === 'off' ? { disableAutoIdle: true } : { autoIdleDelay: 1000 }),
   });
 
+  // Without a listener an 'error' event (e.g. a socket reset) would crash the whole connector;
+  // sessions add their own listener to react, and the failure also surfaces through the
+  // pending call.
+  client.on('error', () => {});
+
   try {
     await client.connect();
   } catch (err) {

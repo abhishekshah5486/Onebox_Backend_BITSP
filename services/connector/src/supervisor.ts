@@ -52,12 +52,18 @@ export function createSupervisor({
   async function supervise(accountId: string, lease: Lease, controller: AbortController) {
     const { signal } = controller;
     const renew = setInterval(() => {
-      void lease.renew().then((held) => {
-        if (!held) {
-          logger.warn({ accountId }, 'lost mailbox lease, disconnecting');
-          controller.abort();
-        }
-      });
+      void lease
+        .renew()
+        .then((held) => {
+          if (!held) {
+            logger.warn({ accountId }, 'lost mailbox lease, disconnecting');
+            controller.abort();
+          }
+        })
+        // Redis is briefly unreachable: keep the session and try again on the next tick.
+        .catch((err: unknown) =>
+          logger.warn({ accountId, err: (err as Error).message }, 'could not renew mailbox lease'),
+        );
     }, leaseTtlMs / 3);
 
     let failures = 0;
@@ -121,7 +127,15 @@ export function createSupervisor({
 
   async function start(account: ActiveAccount) {
     const lease = createLease(redis, account.id, ownerId, leaseTtlMs);
-    if (!(await lease.acquire())) return;
+    try {
+      if (!(await lease.acquire())) return;
+    } catch (err) {
+      logger.warn(
+        { accountId: account.id, err: (err as Error).message },
+        'could not take mailbox lease, will retry',
+      );
+      return;
+    }
     const controller = new AbortController();
     running.set(account.id, { controller, done: supervise(account.id, lease, controller) });
     logger.info({ accountId: account.id, provider: account.provider }, 'mailbox connecting');
@@ -152,7 +166,11 @@ export function createSupervisor({
   }
 
   const reconcileOnce = () =>
-    (reconciling ??= reconcile().finally(() => (reconciling = undefined)));
+    (reconciling ??= reconcile()
+      .catch((err: unknown) =>
+        logger.warn({ err: (err as Error).message }, 'reconcile failed, will retry'),
+      )
+      .finally(() => (reconciling = undefined)));
 
   return {
     running: () => [...running.keys()],
