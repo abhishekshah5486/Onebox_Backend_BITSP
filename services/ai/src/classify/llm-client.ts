@@ -1,5 +1,5 @@
 import { INTERNAL_TOKEN_HEADER } from '@onebox/auth-kit';
-import { ExternalServiceError } from '@onebox/errors';
+import { ExternalServiceError, PaymentRequiredError } from '@onebox/errors';
 
 export interface LlmRequest {
   userId: string;
@@ -27,6 +27,10 @@ export function createLlmClient(baseUrl: string, internalToken: string): LlmClie
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(180_000),
     });
+    // Out of credits: retrying won't help until the user's credits change.
+    if (response.status === 402) {
+      throw new PaymentRequiredError('The user is out of AI credits', { code: 'OUT_OF_CREDITS' });
+    }
     if (!response.ok) {
       throw new ExternalServiceError(`llm-proxy answered HTTP ${response.status}`);
     }

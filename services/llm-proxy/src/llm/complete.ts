@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ExternalServiceError } from '@onebox/errors';
+import { ExternalServiceError, PaymentRequiredError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import { Ajv, type ValidateFunction } from 'ajv';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
@@ -17,6 +17,7 @@ import {
   type ProviderAdapter,
   type ProviderResponse,
 } from '../providers/types';
+import type { Billing } from './billing';
 import type { Breaker } from './breaker';
 import type { Catalog } from './catalog';
 
@@ -85,6 +86,7 @@ export function createCompleter({
   logger,
   cacheTtlSeconds,
   timeoutMs,
+  billing,
 }: {
   db: PostgresJsDatabase;
   redis: Redis;
@@ -94,6 +96,8 @@ export function createCompleter({
   logger: Logger;
   cacheTtlSeconds: number;
   timeoutMs: number;
+  // Credits: checked before a model is asked, charged after. Absent, calls are free.
+  billing?: Billing;
 }) {
   const ajv = new Ajv({ strict: false, allErrors: true });
   const validators = new Map<string, ValidateFunction>();
@@ -242,7 +246,12 @@ export function createCompleter({
           requestHash,
           ...row,
         })
-        .catch((err: unknown) => logger.error({ err }, 'could not record llm call'));
+        .returning({ id: llmCalls.id })
+        .then(([row]) => row?.id ?? null)
+        .catch((err: unknown) => {
+          logger.error({ err }, 'could not record llm call');
+          return null;
+        });
 
     if (input.cache !== false && cacheTtlSeconds > 0) {
       const hit = await redis.get(cacheKey);
@@ -261,6 +270,13 @@ export function createCompleter({
         });
         return { ...cached, cached: true, attempts };
       }
+    }
+
+    if (billing && !(await billing.allowed(input.userId))) {
+      throw new PaymentRequiredError(
+        "You're out of AI credits. Upgrade your plan or wait for your credits to reset.",
+        { code: 'OUT_OF_CREDITS' },
+      );
     }
 
     const chain = await catalog.chain(input.purpose, requested);
@@ -282,7 +298,18 @@ export function createCompleter({
       if (input.cache !== false && cacheTtlSeconds > 0) {
         await redis.set(cacheKey, JSON.stringify(result), 'EX', cacheTtlSeconds);
       }
-      await record({ status: 'ok', modelUsed: model.id, provider: model.provider });
+      const callId = await record({ status: 'ok', modelUsed: model.id, provider: model.provider });
+      if (billing && callId && usage.costUsd > 0) {
+        await billing
+          .charge(input.userId, {
+            callId,
+            purpose: input.purpose,
+            model: model.id,
+            modelName: model.name,
+            costUsd: usage.costUsd,
+          })
+          .catch((err: unknown) => logger.error({ err, callId }, 'could not report usage'));
+      }
       if (attempts.length > 1) {
         logger.info(
           { purpose: input.purpose, requested, used: model.id, tries: attempts.length },

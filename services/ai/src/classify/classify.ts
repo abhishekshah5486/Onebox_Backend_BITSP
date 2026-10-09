@@ -1,6 +1,6 @@
 import type { AiClassifyPayload, JobEnvelope, MailboxChangePayload } from '@onebox/contracts';
 import { createJobEnvelope } from '@onebox/contracts';
-import { ValidationError } from '@onebox/errors';
+import { PaymentRequiredError, ValidationError } from '@onebox/errors';
 import type { JobContext, Producer } from '@onebox/queue';
 import type { AiCollections, LabelResult, LabelRuleDoc } from '../db/collections';
 import type { LlmClient } from './llm-client';
@@ -88,18 +88,28 @@ export function createClassifyHandler({
     if (rules.length === 0) return;
 
     const { ids, system, email, schema } = buildRequest(payload, rules);
-    const reply = await llm({
-      userId,
-      purpose: 'classify',
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: email },
-      ],
-      schema: { name: 'labels', schema },
-      maxOutputTokens: 800,
-      subject: payload.messageId,
-      traceId,
-    });
+    let reply: Awaited<ReturnType<LlmClient>>;
+    try {
+      reply = await llm({
+        userId,
+        purpose: 'classify',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: email },
+        ],
+        schema: { name: 'labels', schema },
+        maxOutputTokens: 800,
+        subject: payload.messageId,
+        traceId,
+      });
+    } catch (err) {
+      // Out of credits: this mail stays unsorted, like one with no matching label.
+      if (err instanceof PaymentRequiredError) {
+        logger.info({ messageId: payload.messageId }, 'out of credits, not sorting');
+        return;
+      }
+      throw err;
+    }
 
     const matches = (reply.output as { labels: Match[] }).labels;
     const seen = new Set<string>();

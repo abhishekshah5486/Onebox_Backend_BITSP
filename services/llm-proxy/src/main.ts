@@ -1,12 +1,15 @@
 import { createRemoteTokenVerifier, deriveInternalToken } from '@onebox/auth-kit';
+import { QUEUES, type UsageEventPayload } from '@onebox/contracts';
 import { createPgClient } from '@onebox/db-pg';
 import { startServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
+import { createProducer } from '@onebox/queue';
 import { Redis } from 'ioredis';
 import { buildApp } from './app';
 import { loadLlmProxyConfig } from './config';
 import { migrateLlm } from './db/migrate';
 import type { Provider } from './db/schema';
+import { createBillingClient } from './llm/billing';
 import { createBreaker } from './llm/breaker';
 import { createCatalog } from './llm/catalog';
 import { createCompleter } from './llm/complete';
@@ -49,6 +52,19 @@ warm.unref();
 const catalog = createCatalog(pg.db, new Set(Object.keys(adapters) as Provider[]));
 logger.info({ providers: Object.keys(adapters) }, 'language model providers configured');
 
+const internalToken = deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY);
+// Each paid call goes to billing, which takes the credits.
+const usageEvents = createProducer<UsageEventPayload>(QUEUES.usage, {
+  redisUrl: config.REDIS_URL,
+  logger,
+});
+const billing = createBillingClient({
+  baseUrl: config.BILLING_SERVICE_URL,
+  internalToken,
+  usage: usageEvents,
+  logger,
+});
+
 const app = buildApp({
   logger,
   checks: { postgres: pg.ping, redis: () => redis.ping() },
@@ -63,10 +79,14 @@ const app = buildApp({
       logger,
       cacheTtlSeconds: config.CACHE_TTL_SECONDS,
       timeoutMs: config.CALL_TIMEOUT_MS,
+      billing,
     }),
     usage: createUsage(pg.db),
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
-    internalToken: deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
+    internalToken,
   },
 });
-await startServer(app, { port: config.PORT, cleanups: [pg.close, () => redis.quit()] });
+await startServer(app, {
+  port: config.PORT,
+  cleanups: [pg.close, () => redis.quit(), usageEvents.close],
+});
