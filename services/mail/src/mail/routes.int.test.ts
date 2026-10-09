@@ -470,6 +470,17 @@ describe('mail api', () => {
         .map((data) => data.payload as MessageOpPayload);
     const put = (userId: string, accountId: string, spec: Parameters<typeof ingestJob>[0]) =>
       ingest(ingestJob({ userId, accountId, ...spec }), context);
+    // What the connector's "moved" change does once the server has applied a move.
+    const land = (accountId: string) =>
+      collections.messages.updateMany({ accountId, movingTo: { $ne: null } }, [
+        {
+          $set: {
+            role: '$movingTo.role',
+            folder: { $ifNull: ['$movingTo.folder', '$folder'] },
+            movingTo: null,
+          },
+        },
+      ]);
     const ids = async (userId: string, query = '') =>
       (await list(userId, query))
         .json<{ items: Thread[] }>()
@@ -602,13 +613,21 @@ describe('mail api', () => {
       const refused = await act(userId, { threadIds: [invoice.id], action: 'delete' });
       expect(refused.statusCode).toBe(400);
 
-      await act(userId, {
+      const toTrash = {
         threadIds: [invoice.id],
         action: 'move',
         from: { label: 'Receipts' },
         to: { role: 'trash' },
-      });
+      };
+      // The first move has not reached the server yet, so its old address is no good.
+      const early = await act(userId, toTrash);
+      expect(early.statusCode).toBe(409);
+      expect(early.json()).toMatchObject({ error: { code: 'MOVE_PENDING' } });
+
+      await land(accountId);
+      await act(userId, toTrash);
       expect(await ids(userId, '?folder=trash')).toEqual(['Invoice']);
+      await land(accountId);
       expect((await act(userId, { threadIds: [invoice.id], action: 'delete' })).statusCode).toBe(
         200,
       );

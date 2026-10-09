@@ -105,6 +105,17 @@ export function createThreadActions({
       : where.role === 'label' && where.folder === view.label;
   };
 
+  // A message still on its way to another folder has no server address there yet, so a second
+  // move or delete would act on where it used to be. Ask to try again once it has landed.
+  const settled = (targets: MessageDoc[]) => {
+    if (targets.some((doc) => doc.movingTo !== null)) {
+      throw new ConflictError('This conversation is still moving. Try again in a moment.', {
+        code: 'MOVE_PENDING',
+      });
+    }
+    return targets;
+  };
+
   const sameTarget = (doc: MessageDoc, to: MailboxTarget) =>
     'role' in to ? inView({ role: to.role })(doc) : inView({ label: to.label })(doc);
 
@@ -159,20 +170,20 @@ export function createThreadActions({
           op = { type: 'flags', add: [], remove: ['\\Flagged'] };
           break;
         case 'archive':
-          targets = docs.filter(inView({ role: 'inbox' }));
+          targets = settled(docs.filter(inView({ role: 'inbox' })));
           mark(targets, { movingTo: { role: 'archive', folder: null } });
           op = { type: 'move', to: { role: 'archive' } };
           break;
         case 'trash':
-          targets = docs.filter((doc) => locationOf(doc).role !== 'trash');
+          targets = settled(docs.filter((doc) => locationOf(doc).role !== 'trash'));
           mark(targets, { movingTo: { role: 'trash', folder: null } });
           op = { type: 'move', to: { role: 'trash' } };
           break;
         case 'move': {
           if (!to) throw new ValidationError('Choose where to move the conversation');
-          targets = docs
-            .filter(inView(from ?? { role: 'inbox' }))
-            .filter((doc) => !sameTarget(doc, to));
+          targets = settled(
+            docs.filter(inView(from ?? { role: 'inbox' })).filter((doc) => !sameTarget(doc, to)),
+          );
           mark(
             targets,
             'role' in to
@@ -183,7 +194,7 @@ export function createThreadActions({
           break;
         }
         case 'delete':
-          targets = docs.filter((doc) => ['trash', 'spam'].includes(locationOf(doc).role));
+          targets = settled(docs.filter((doc) => ['trash', 'spam'].includes(locationOf(doc).role)));
           if (targets.length === 0) {
             throw new ValidationError('Only conversations in Trash or Spam can be deleted forever');
           }
