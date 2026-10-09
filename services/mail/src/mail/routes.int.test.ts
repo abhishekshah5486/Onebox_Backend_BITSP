@@ -116,7 +116,7 @@ const driveFetch: typeof fetch = async (input, init) => {
   if (url === 'https://upload.example/session-1') {
     return json({ id: 'file-1', name: 'marks.pdf', webViewLink: 'https://drive.example/file-1' });
   }
-  if (method === 'POST') return json({ id: 'folder-1' });
+  if (method === 'POST') return json({ id: `folder-${driveCalls.length}` });
   return json({ files: [] });
 };
 
@@ -871,20 +871,27 @@ describe('mail api', () => {
 
       expect((await get(randomUUID(), 0)).statusCode).toBe(404);
 
+      const accountId = randomUUID();
       const saved = await app.inject({
         method: 'POST',
         url: `/mail/messages/${messageId}/attachments/drive`,
         headers: as(userId),
-        payload: { indexes: [0] },
+        payload: { indexes: [0], accountId, path: ' OneBox/Receipts/ ' },
       });
       expect(saved.json()).toEqual({
         files: [{ index: 0, name: 'marks.pdf', link: 'https://drive.example/file-1' }],
       });
       const put = driveCalls.find((call) => call.method === 'PUT');
       expect(Buffer.from(put!.body as Uint8Array).equals(pdf)).toBe(true);
-      expect(driveCalls.some((call) => call.url.includes(`/internal/google/token/${userId}`))).toBe(
-        true,
-      );
+      expect(driveCalls[0]!.url).toContain(`/internal/google/token/${userId}/${accountId}`);
+      // Each missing folder is created inside the one before it, starting at My Drive.
+      const folders = driveCalls
+        .filter((call) => call.method === 'POST' && call.url.includes('/drive/v3/files?fields'))
+        .map((call) => JSON.parse(call.body as string) as { name: string; parents: string[] });
+      expect(folders.map((f) => [f.name, f.parents[0]])).toEqual([
+        ['OneBox', 'root'],
+        ['Receipts', expect.stringMatching(/^folder-/)],
+      ]);
     });
   });
 });

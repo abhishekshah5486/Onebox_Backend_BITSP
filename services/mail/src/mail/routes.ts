@@ -5,6 +5,7 @@ import {
   mailboxRoleSchema,
   mailboxTargetSchema,
   mailCategorySchema,
+  drivePathSchema,
 } from '@onebox/contracts';
 import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -265,6 +266,8 @@ export function registerMailRoutes(
               params: z.object({ messageId: z.string().min(1).max(128) }),
               body: z.object({
                 indexes: z.array(z.number().int().min(0).max(500)).min(1).max(20),
+                accountId: z.uuid(),
+                path: drivePathSchema.default(''),
               }),
               response: {
                 200: z.object({
@@ -276,9 +279,10 @@ export function registerMailRoutes(
             },
           },
           async (request) => ({
-            files: await drive.save(userId(request), request.params.messageId, [
-              ...new Set(request.body.indexes),
-            ]),
+            files: await drive.save(userId(request), request.params.messageId, {
+              ...request.body,
+              indexes: [...new Set(request.body.indexes)],
+            }),
           }),
         );
       }

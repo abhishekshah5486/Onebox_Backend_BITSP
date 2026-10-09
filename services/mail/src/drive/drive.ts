@@ -1,4 +1,5 @@
 import { INTERNAL_TOKEN_HEADER } from '@onebox/auth-kit';
+import { drivePathParts } from '@onebox/contracts';
 import { AppError, ExternalServiceError, NotFoundError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import type { Readable } from 'node:stream';
@@ -7,7 +8,6 @@ import type { AttachmentService } from '../attachments/attachments';
 const DRIVE_FILES = 'https://www.googleapis.com/drive/v3/files';
 const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const FOLDER_TYPE = 'application/vnd.google-apps.folder';
-const FOLDER_NAME = 'OneBox';
 
 export interface SavedFile {
   index: number;
@@ -34,11 +34,13 @@ export function createDriveService({
   logger: Logger;
   fetch?: typeof fetch;
 }) {
-  // Folder ids per user; drive.file only sees folders OneBox created, so this stays ours.
+  // Folder ids by account and path. drive.file only sees folders OneBox created, so a path is
+  // always made of our own folders, created the first time it is used.
   const folders = new Map<string, string>();
 
-  async function accessToken(userId: string) {
-    const response = await send(new URL(`/internal/google/token/${userId}`, settingsUrl), {
+  async function accessToken(userId: string, accountId: string) {
+    const url = new URL(`/internal/google/token/${userId}/${accountId}`, settingsUrl);
+    const response = await send(url, {
       headers: { [INTERNAL_TOKEN_HEADER]: internalToken },
       signal: AbortSignal.timeout(10_000),
     });
@@ -63,28 +65,41 @@ export function createDriveService({
     return response;
   }
 
-  async function folderId(userId: string, token: string) {
-    const cached = folders.get(userId);
-    if (cached) return cached;
-    const query = `mimeType='${FOLDER_TYPE}' and name='${FOLDER_NAME}' and trashed=false`;
+  async function childFolder(token: string, parent: string, name: string) {
+    const quoted = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const query = `mimeType='${FOLDER_TYPE}' and name='${quoted}' and '${parent}' in parents and trashed=false`;
     const found = (await (
       await drive(
         token,
         `${DRIVE_FILES}?${new URLSearchParams({ q: query, fields: 'files(id)' }).toString()}`,
       )
     ).json()) as { files: { id: string }[] };
-    let id = found.files[0]?.id;
-    if (!id) {
-      const created = await drive(token, `${DRIVE_FILES}?fields=id`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: FOLDER_NAME, mimeType: FOLDER_TYPE }),
-      });
-      id = ((await created.json()) as { id: string }).id;
-    }
-    folders.set(userId, id);
-    return id;
+    if (found.files[0]) return found.files[0].id;
+    const created = await drive(token, `${DRIVE_FILES}?fields=id`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, mimeType: FOLDER_TYPE, parents: [parent] }),
+    });
+    return ((await created.json()) as { id: string }).id;
   }
+
+  // The folder at a path such as "OneBox/Receipts", creating what is missing; "" is My Drive.
+  async function folderAt(token: string, accountId: string, path: string) {
+    let parent = 'root';
+    let walked = '';
+    for (const name of drivePathParts(path)) {
+      walked = walked ? `${walked}/${name}` : name;
+      const key = `${accountId}:${walked}`;
+      const cached = folders.get(key);
+      parent = cached ?? (await childFolder(token, parent, name));
+      folders.set(key, parent);
+    }
+    return parent;
+  }
+
+  const forget = (accountId: string) => {
+    for (const key of folders.keys()) if (key.startsWith(`${accountId}:`)) folders.delete(key);
+  };
 
   // Resumable upload: one request for the session, one for the bytes, at any size.
   async function upload(token: string, parent: string, name: string, type: string, body: Buffer) {
@@ -112,9 +127,13 @@ export function createDriveService({
   }
 
   return {
-    async save(userId: string, messageId: string, indexes: number[]): Promise<SavedFile[]> {
-      const token = await accessToken(userId);
-      let parent = await folderId(userId, token);
+    async save(
+      userId: string,
+      messageId: string,
+      { indexes, accountId, path }: { indexes: number[]; accountId: string; path: string },
+    ): Promise<SavedFile[]> {
+      const token = await accessToken(userId, accountId);
+      let parent = await folderAt(token, accountId, path);
       const saved: SavedFile[] = [];
       for (const index of indexes) {
         const { meta, blob } = await attachments.open(userId, messageId, index);
@@ -123,10 +142,10 @@ export function createDriveService({
         try {
           file = await upload(token, parent, meta.filename, meta.contentType, content);
         } catch (err) {
-          // The folder may have been deleted since it was cached; find or create it again.
-          if (!(err instanceof AppError) || !folders.has(userId)) throw err;
-          folders.delete(userId);
-          parent = await folderId(userId, token);
+          // A cached folder may have been deleted since; find or create the path again.
+          if (!(err instanceof AppError) || parent === 'root') throw err;
+          forget(accountId);
+          parent = await folderAt(token, accountId, path);
           file = await upload(token, parent, meta.filename, meta.contentType, content);
         }
         saved.push({ index, name: file.name, link: file.webViewLink });
