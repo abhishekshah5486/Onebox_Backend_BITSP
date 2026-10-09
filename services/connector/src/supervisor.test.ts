@@ -116,4 +116,57 @@ describe('createSupervisor', () => {
     await vi.waitFor(() => expect(aborted).toBe(true), { timeout: 2000 });
     await supervisor.close();
   });
+
+  it('never runs two lease renewals at once, even when Redis is slow', async () => {
+    const { createSupervisor } = await import('./supervisor');
+    const { createLogger } = await import('@onebox/logger');
+    let active = 0;
+    let most = 0;
+    const redis = {
+      set: async () => 'OK',
+      // Each renewal takes longer than the gap between ticks.
+      eval: async () => {
+        active += 1;
+        most = Math.max(most, active);
+        await new Promise((resolve) => setTimeout(resolve, 70));
+        active -= 1;
+        return 1;
+      },
+    } as unknown as Redis;
+    const supervisor = createSupervisor({
+      internal: {
+        listAccounts: async () => [
+          {
+            id: 'acc-3',
+            userId: 'u1',
+            provider: 'IMAP',
+            emailAddress: 'c@x.example',
+            status: 'CONNECTED' as const,
+            updatedAt: '2026-10-07T00:00:00Z',
+            syncState: {},
+          },
+        ],
+        getCredentials: async () => {
+          throw new Error('unused');
+        },
+        saveSyncState: async () => {},
+        reportStatus: async () => {},
+        getPreferences: async () => ({ markSeenOnFetch: false }),
+      },
+      redis,
+      logger: createLogger({ service: 'test', level: 'silent' }),
+      ownerId: 'test',
+      reconcileIntervalMs: 60_000,
+      leaseTtlMs: 60,
+      sessionDeps: {} as never,
+      runSession: async (_account, _deps, signal) => {
+        await new Promise((resolve) => signal.addEventListener('abort', resolve));
+      },
+    });
+
+    await supervisor.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await supervisor.close();
+    expect(most).toBe(1);
+  });
 });

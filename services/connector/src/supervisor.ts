@@ -51,21 +51,25 @@ export function createSupervisor({
 
   async function supervise(accountId: string, lease: Lease, controller: AbortController) {
     const { signal } = controller;
-    const renew = setInterval(() => {
-      void lease
-        .renew()
+    // One renewal at a time: a slow Redis call must not overlap the next tick, where one attempt
+    // could take the lease back while the other sees it taken and stops a healthy session.
+    let renewing: Promise<void> | undefined;
+    const renewOnce = async () => {
+      try {
         // After a Redis blip the lease may have simply expired: take it back if it is free.
-        .then(async (held) => held || (await lease.acquire()))
-        .then((held) => {
-          if (!held && !signal.aborted) {
-            logger.warn({ accountId }, 'mailbox lease taken by another process, disconnecting');
-            controller.abort();
-          }
-        })
+        const held = (await lease.renew()) || (await lease.acquire());
+        if (!held && !signal.aborted) {
+          logger.warn({ accountId }, 'mailbox lease taken by another process, disconnecting');
+          controller.abort();
+        }
+      } catch (err) {
         // Redis is briefly unreachable: keep the session and try again on the next tick.
-        .catch((err: unknown) =>
-          logger.warn({ accountId, err: (err as Error).message }, 'could not renew mailbox lease'),
-        );
+        logger.warn({ accountId, err: (err as Error).message }, 'could not renew mailbox lease');
+      }
+    };
+    const renew = setInterval(() => {
+      if (renewing || signal.aborted) return;
+      renewing = renewOnce().finally(() => (renewing = undefined));
     }, leaseTtlMs / 3);
 
     let failures = 0;
@@ -121,6 +125,8 @@ export function createSupervisor({
       logger.error({ accountId, err }, 'mailbox supervisor crashed');
     } finally {
       clearInterval(renew);
+      // A renewal still under way could otherwise take the lease again after it is released.
+      await renewing;
       await lease.release().catch(() => {});
       running.delete(accountId);
       logger.info({ accountId }, 'mailbox disconnected');
