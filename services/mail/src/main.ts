@@ -7,6 +7,7 @@ import {
   QUEUES,
   type HistoryPayload,
   type MailboxOpPayload,
+  type SendPayload,
 } from '@onebox/contracts';
 import { connectMongo } from '@onebox/db-mongo';
 import { startServer, type Cleanup } from '@onebox/http';
@@ -19,6 +20,9 @@ import { loadMailConfig } from './config';
 import { ensureIndexes, mailCollections } from './db/collections';
 import { aiJob } from './ingest/ai-job';
 import { createAttachmentService } from './attachments/attachments';
+import { createAccountsClient } from './compose/accounts-client';
+import { composeCollections, ensureComposeIndexes } from './compose/collections';
+import { createComposeService } from './compose/compose-service';
 import { googleDriveUploader } from './storage/google-drive';
 import { dropboxUploader } from './storage/dropbox';
 import { oneDriveUploader } from './storage/onedrive';
@@ -49,6 +53,42 @@ const migrated = await migrateFolderRoles(collections);
 if (migrated > 0) logger.info({ threads: migrated }, 'conversations tagged with folders');
 
 const cleanups: Cleanup[] = [];
+const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 3 });
+redis.on('error', (err) => logger.warn({ err: err.message }, 'redis error'));
+const historyProducer = createProducer<HistoryPayload>(QUEUES.history, {
+  redisUrl: config.REDIS_URL,
+  logger,
+});
+const opsProducer = createProducer<MailboxOpPayload>(QUEUES.mailboxOps, {
+  redisUrl: config.REDIS_URL,
+  logger,
+});
+cleanups.push(historyProducer.close, opsProducer.close, () => redis.quit());
+
+const mailboxStore = createMailboxStore(redis);
+
+const attachments = createAttachmentService({ collections, blobs, ops: opsProducer, logger });
+
+// Compose needs the accounts service to check who owns the sending account.
+const internalToken = config.CREDENTIALS_ENCRYPTION_KEY
+  ? deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY)
+  : null;
+const sends = createProducer<SendPayload>(QUEUES.send, { redisUrl: config.REDIS_URL, logger });
+cleanups.push(sends.close);
+const composeStore = composeCollections(mongo.db);
+await ensureComposeIndexes(composeStore);
+const compose = internalToken
+  ? createComposeService({
+      collections: composeStore,
+      mail: collections,
+      blobs,
+      attachments,
+      accounts: createAccountsClient(config.ACCOUNTS_SERVICE_URL, internalToken),
+      sends,
+      logger,
+    })
+  : null;
+
 if (config.MAIL_ROLE !== 'api') {
   // New inbox mail goes to the ai service to be sorted into the user's labels.
   const aiProducer = createProducer<AiClassifyPayload>(QUEUES.ai, {
@@ -76,7 +116,9 @@ if (config.MAIL_ROLE !== 'api') {
   const changes = createConsumer(
     QUEUES.mailboxChanges,
     mailboxChangePayloadSchema,
-    createChangesHandler(collections),
+    createChangesHandler(collections, async (outboxId, status, error) => {
+      await compose?.applyResult(outboxId, status, error);
+    }),
     { redisUrl: config.REDIS_URL, logger, concurrency: 1 },
   );
   cleanups.push(consumer.close, changes.close);
@@ -86,22 +128,6 @@ if (config.MAIL_ROLE !== 'api') {
     .catch((err: unknown) => logger.warn({ err }, 'attachment list backfill failed'));
 }
 cleanups.push(mongo.close);
-
-const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 3 });
-redis.on('error', (err) => logger.warn({ err: err.message }, 'redis error'));
-const historyProducer = createProducer<HistoryPayload>(QUEUES.history, {
-  redisUrl: config.REDIS_URL,
-  logger,
-});
-const opsProducer = createProducer<MailboxOpPayload>(QUEUES.mailboxOps, {
-  redisUrl: config.REDIS_URL,
-  logger,
-});
-cleanups.push(historyProducer.close, opsProducer.close, () => redis.quit());
-
-const mailboxStore = createMailboxStore(redis);
-
-const attachments = createAttachmentService({ collections, blobs, ops: opsProducer, logger });
 
 const app = buildApp({
   logger,
@@ -131,6 +157,7 @@ const app = buildApp({
           },
         }),
       }),
+      ...(compose && { compose }),
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     },
   }),

@@ -2,6 +2,8 @@ import type { TokenVerifier } from '@onebox/auth-kit';
 import { createServer, registerHealthRoutes, type HealthCheck } from '@onebox/http';
 import type { Logger } from '@onebox/logger';
 import type { AttachmentService } from './attachments/attachments';
+import type { ComposeService } from './compose/compose-service';
+import { registerComposeRoutes } from './compose/routes';
 import type { StorageService } from './storage/storage';
 import type { LabelService } from './mail/label-service';
 import type { MailService } from './mail/mail-service';
@@ -19,6 +21,7 @@ export interface AppDeps {
     labels: LabelService;
     attachments?: AttachmentService;
     storage?: StorageService;
+    compose?: ComposeService;
     verifyToken: TokenVerifier;
   };
 }
@@ -27,5 +30,11 @@ export function buildApp(deps: AppDeps) {
   const app = createServer({ logger: deps.logger });
   registerHealthRoutes(app, deps.checks);
   if (deps.routes) registerMailRoutes(app, deps.routes);
+  if (deps.routes?.compose) {
+    registerComposeRoutes(app, {
+      compose: deps.routes.compose,
+      verifyToken: deps.routes.verifyToken,
+    });
+  }
   return app;
 }

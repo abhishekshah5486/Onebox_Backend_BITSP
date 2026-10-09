@@ -23,12 +23,25 @@ const flagState = (flags: string[]) => ({
   isStarred: flags.includes('\\Flagged'),
 });
 
-export function createChangesHandler(collections: MailCollections) {
+export function createChangesHandler(
+  collections: MailCollections,
+  // How sending an outbox message ended; the compose module records it.
+  onSendResult: (
+    outboxId: string,
+    status: 'sent' | 'failed',
+    error: string | null,
+  ) => Promise<void> = async () => {},
+) {
   const { messages } = collections;
 
   return async (envelope: JobEnvelope<MailboxChangePayload>, { logger }: JobContext) => {
     const { accountId, payload: change } = envelope;
     if (!accountId) throw new ValidationError('Mailbox change is missing accountId');
+
+    if (change.type === 'sendResult') {
+      await onSendResult(change.outboxId, change.status, change.error);
+      return;
+    }
 
     // Labels put on in OneBox (by AI or from a suggestion); every copy of the message gets them.
     if (change.type === 'tagged') {

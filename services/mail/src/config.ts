@@ -15,6 +15,8 @@ const schema = z.object({
   // Signs calls to other services; Save to Drive stays off without it.
   CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema.optional(),
   SETTINGS_SERVICE_URL: z.url().default('http://localhost:4004'),
+  // Sending checks the account's owner here (needs CREDENTIALS_ENCRYPTION_KEY too).
+  ACCOUNTS_SERVICE_URL: z.url().default('http://localhost:4002'),
   ...blobConfigSchema,
 });
 
