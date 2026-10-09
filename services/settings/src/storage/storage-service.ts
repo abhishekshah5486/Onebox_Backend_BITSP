@@ -26,6 +26,7 @@ export interface StorageServiceDeps {
 const AAD_PREFIX: Record<StorageProviderId, string> = {
   GOOGLE_DRIVE: 'google',
   ONEDRIVE: 'onedrive',
+  DROPBOX: 'dropbox',
 };
 const aadFor = (row: { provider: StorageProviderId; userId: string }) =>
   `${AAD_PREFIX[row.provider]}:${row.userId}`;

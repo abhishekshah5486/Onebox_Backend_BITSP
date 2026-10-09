@@ -9,7 +9,7 @@ export interface AccessToken {
   refreshToken?: string;
 }
 
-// One cloud storage service (Google Drive, OneDrive; Dropbox later) behind OAuth.
+// One cloud storage service (Google Drive, OneDrive, Dropbox) behind OAuth.
 export interface StorageProvider {
   authUrl(state: string): string;
   exchange(code: string): Promise<{
@@ -29,9 +29,11 @@ export class ExpiredGrantError extends Error {}
 export const CALLBACK_SLUGS: Record<StorageProviderId, string> = {
   GOOGLE_DRIVE: 'google',
   ONEDRIVE: 'microsoft',
+  DROPBOX: 'dropbox',
 };
 
 export const PROVIDER_NAMES: Record<StorageProviderId, string> = {
   GOOGLE_DRIVE: 'Google Drive',
   ONEDRIVE: 'OneDrive',
+  DROPBOX: 'Dropbox',
 };

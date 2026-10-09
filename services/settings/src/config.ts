@@ -17,6 +17,11 @@ const schema = z.object({
   MICROSOFT_REDIRECT_URI: z
     .url()
     .default('http://localhost:4000/api/v1/integrations/microsoft/callback'),
+  DROPBOX_APP_KEY: z.string().min(1).optional(),
+  DROPBOX_APP_SECRET: z.string().min(1).optional(),
+  DROPBOX_REDIRECT_URI: z
+    .url()
+    .default('http://localhost:4000/api/v1/integrations/dropbox/callback'),
   GOOGLE_REDIRECT_URI: z.url().default('http://localhost:4000/api/v1/integrations/google/callback'),
 });
 

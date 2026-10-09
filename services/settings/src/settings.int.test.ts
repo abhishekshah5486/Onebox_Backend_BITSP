@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { buildApp } from './app';
 import { migrateSettings } from './db/migrate';
 import { integrations as integrationsTable, storageAccounts } from './db/schema';
+import { dropbox } from './storage/dropbox';
 import { googleDrive } from './storage/google-drive';
 import { oneDrive } from './storage/onedrive';
 import { createStorageService } from './storage/storage-service';
@@ -89,6 +90,11 @@ beforeAll(async () => {
             ),
             ONEDRIVE: oneDrive(
               { clientId: 'mid', clientSecret: 'msecret', redirectUri: 'http://gw/ms' },
+              logger,
+              googleFetch,
+            ),
+            DROPBOX: dropbox(
+              { appKey: 'dk', appSecret: 'ds', redirectUri: 'http://gw/dropbox' },
               logger,
               googleFetch,
             ),
@@ -481,7 +487,7 @@ describe('cloud storage', () => {
     await connect('me@gmail.com', 'at-3');
 
     const listed = await accounts();
-    expect(listed.providers).toEqual(['GOOGLE_DRIVE', 'ONEDRIVE']);
+    expect(listed.providers).toEqual(['GOOGLE_DRIVE', 'ONEDRIVE', 'DROPBOX']);
     expect(listed.accounts.every((a) => a.provider === 'GOOGLE_DRIVE')).toBe(true);
     expect(listed.accounts.map((a) => a.email)).toEqual(['me@gmail.com', 'work@gmail.com']);
     const [me, work] = listed.accounts;
@@ -572,5 +578,51 @@ describe('cloud storage', () => {
     });
     expect(token.json()).toEqual({ provider: 'ONEDRIVE', accessToken: 'ms-at' });
     expect(await stored()).not.toBe(first);
+  });
+
+  it('connects Dropbox with its account address and revokes it on disconnect', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/settings/storage/connect',
+      headers: as(user),
+      payload: { provider: 'DROPBOX' },
+    });
+    const authUrl = new URL(res.json<{ url: string }>().url);
+    expect(authUrl.host).toBe('www.dropbox.com');
+    expect(authUrl.searchParams.get('token_access_type')).toBe('offline');
+
+    googleFetch.mockClear();
+    googleFetch
+      .mockResolvedValueOnce(
+        json({
+          access_token: 'db-at',
+          expires_in: 14400,
+          refresh_token: 'db-rt',
+          scope: 'account_info.read files.content.write files.metadata.read files.metadata.write',
+        }),
+      )
+      .mockResolvedValueOnce(json({ email: 'me@dropbox.example' }));
+    const state = authUrl.searchParams.get('state')!;
+    const callback = await app.inject({
+      method: 'GET',
+      url: `/integrations/dropbox/callback?code=c&state=${encodeURIComponent(state)}`,
+    });
+    expect(callback.body).toContain('me@dropbox.example is now connected');
+    expect(googleFetch.mock.calls[1]?.[0]).toBe(
+      'https://api.dropboxapi.com/2/users/get_current_account',
+    );
+
+    const account = (await accounts()).accounts.find((a) => a.provider === 'DROPBOX')!;
+    googleFetch.mockClear();
+    googleFetch
+      .mockResolvedValueOnce(json({ access_token: 'db-at-2', expires_in: 14400 }))
+      .mockResolvedValueOnce(json(null));
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: `/settings/storage/${account.id}`,
+      headers: as(user),
+    });
+    expect(removed.statusCode).toBe(204);
+    expect(googleFetch.mock.calls[1]?.[0]).toBe('https://api.dropboxapi.com/2/auth/token/revoke');
   });
 });

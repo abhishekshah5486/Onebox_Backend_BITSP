@@ -5,6 +5,7 @@ import { createLogger } from '@onebox/logger';
 import { buildApp } from './app';
 import { loadSettingsConfig } from './config';
 import { migrateSettings } from './db/migrate';
+import { dropbox } from './storage/dropbox';
 import { googleDrive } from './storage/google-drive';
 import { oneDrive } from './storage/onedrive';
 import { createStorageService } from './storage/storage-service';
@@ -53,6 +54,17 @@ const app = buildApp({
                 clientId: config.MICROSOFT_CLIENT_ID,
                 clientSecret: config.MICROSOFT_CLIENT_SECRET,
                 redirectUri: config.MICROSOFT_REDIRECT_URI,
+              },
+              logger,
+            ),
+          }),
+        ...(config.DROPBOX_APP_KEY &&
+          config.DROPBOX_APP_SECRET && {
+            DROPBOX: dropbox(
+              {
+                appKey: config.DROPBOX_APP_KEY,
+                appSecret: config.DROPBOX_APP_SECRET,
+                redirectUri: config.DROPBOX_REDIRECT_URI,
               },
               logger,
             ),

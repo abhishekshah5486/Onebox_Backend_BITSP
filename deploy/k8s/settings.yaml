@@ -41,6 +41,12 @@ spec:
                   secretKeyRef:
                     { name: onebox-secrets, key: MICROSOFT_CLIENT_SECRET, optional: true },
                 }
+            - name: DROPBOX_APP_KEY
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: DROPBOX_APP_KEY, optional: true } }
+            - name: DROPBOX_APP_SECRET
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: DROPBOX_APP_SECRET, optional: true } }
           # Startup covers the remote database connect + migrations.
           startupProbe:
             httpGet: { path: /health/live, port: 4004 }

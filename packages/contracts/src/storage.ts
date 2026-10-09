@@ -20,6 +20,6 @@ export const storagePathSchema = z
 
 export const storagePathParts = (path: string) => path.split('/').filter(Boolean);
 
-// Cloud storage services attachments can be saved to; Dropbox is planned.
-export const STORAGE_PROVIDERS = ['GOOGLE_DRIVE', 'ONEDRIVE'] as const;
+// Cloud storage services attachments can be saved to.
+export const STORAGE_PROVIDERS = ['GOOGLE_DRIVE', 'ONEDRIVE', 'DROPBOX'] as const;
 export type StorageProviderId = (typeof STORAGE_PROVIDERS)[number];
