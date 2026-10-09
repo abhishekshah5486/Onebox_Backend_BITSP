@@ -34,6 +34,8 @@ function defineError(defaultCode: string, statusCode: number, retryable = false)
 
 export class ValidationError extends defineError('VALIDATION_FAILED', 400) {}
 export class UnauthorizedError extends defineError('UNAUTHORIZED', 401) {}
+// The user has to pay (e.g. top up credits) before this can go ahead.
+export class PaymentRequiredError extends defineError('PAYMENT_REQUIRED', 402) {}
 export class ForbiddenError extends defineError('FORBIDDEN', 403) {}
 export class NotFoundError extends defineError('NOT_FOUND', 404) {}
 export class ConflictError extends defineError('CONFLICT', 409) {}

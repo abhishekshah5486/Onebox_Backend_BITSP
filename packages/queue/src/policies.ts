@@ -18,6 +18,8 @@ export const RETRY_POLICIES: Record<QueueName, RetryPolicy> = {
   action: { attempts: 4, backoffMs: 10_000 },
   // Granting credits for a payment must not be lost: retry patiently.
   payments: { attempts: 8, backoffMs: 5_000 },
+  // A model call is charged once it has happened, so the charge must land.
+  usage: { attempts: 8, backoffMs: 2_000 },
 };
 
 export const deadLetterQueue = (queue: QueueName) => `${queue}-dlq`;
