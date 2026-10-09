@@ -114,6 +114,24 @@ export function registerCheckoutRoutes(scope: FastifyInstance, checkout: Checkou
     async (request) => checkout.cancel(user(request).userId),
   );
 
+  routes.post(
+    '/subscription/change',
+    {
+      schema: {
+        body: z.object({ plan: z.enum(PLAN_IDS), interval: z.enum(BILLING_INTERVALS) }),
+        response: { 200: subscription },
+      },
+    },
+    async (request) =>
+      checkout.change(user(request).userId, request.body.plan, request.body.interval),
+  );
+
+  routes.post(
+    '/portal',
+    { schema: { response: { 200: z.object({ url: z.string() }) } } },
+    async (request) => checkout.portal(user(request).userId),
+  );
+
   routes.get(
     '/history',
     {

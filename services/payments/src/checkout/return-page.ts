@@ -5,6 +5,10 @@ const PAGES = {
     title: 'Payment received',
     body: 'Your plan is being activated. You can close this tab and go back to OneBox.',
   },
+  portal: {
+    title: 'All set',
+    body: 'Your payment details are saved. You can close this tab and go back to OneBox.',
+  },
   cancelled: {
     title: 'Checkout closed',
     body: "You weren't charged. You can close this tab and go back to OneBox.",
@@ -42,6 +46,6 @@ export function registerReturnRoutes(scope: FastifyInstance) {
         'content-security-policy',
         "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
       )
-      .send(page(result === 'paid' ? PAGES.paid : PAGES.cancelled));
+      .send(page(result === 'paid' || result === 'portal' ? PAGES[result] : PAGES.cancelled));
   });
 }

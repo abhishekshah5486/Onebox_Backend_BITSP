@@ -13,7 +13,15 @@ export interface StripeSubscription {
   cancel_at_period_end: boolean;
   current_period_start?: number;
   current_period_end?: number;
-  items?: { data: { current_period_start?: number; current_period_end?: number }[] };
+  items?: {
+    data: {
+      id: string;
+      price?: { id: string };
+      current_period_start?: number;
+      current_period_end?: number;
+    }[];
+  };
+  latest_invoice?: string | { id: string } | null;
   metadata?: Record<string, string>;
 }
 
@@ -139,6 +147,44 @@ export function createStripe(
 
     retrieveSubscription: (id: string) =>
       call<StripeSubscription>('GET', `/subscriptions/${encodeURIComponent(id)}`),
+
+    // Moves the subscription to another price now, invoicing the prorated difference at once.
+    // Fails, changing nothing, if that payment doesn't go through.
+    changePrice: (subscription: StripeSubscription, priceId: string) =>
+      call<StripeSubscription>(
+        'POST',
+        `/subscriptions/${encodeURIComponent(subscription.id)}?expand[]=latest_invoice`,
+        {
+          items: { 0: { id: subscription.items?.data[0]?.id, price: priceId } },
+          proration_behavior: 'always_invoice',
+          payment_behavior: 'error_if_incomplete',
+          cancel_at_period_end: false,
+        },
+      ),
+
+    // Stripe's page for changing the card and seeing invoices. Without a saved portal setup
+    // (a new account) one is made first.
+    async portalSession(customerId: string, returnUrl: string) {
+      const open = () =>
+        call<{ url: string }>('POST', '/billing_portal/sessions', {
+          customer: customerId,
+          return_url: returnUrl,
+        });
+      try {
+        return (await open()).url;
+      } catch (err) {
+        if (!/configuration/i.test((err as Error).message)) throw err;
+        await call('POST', '/billing_portal/configurations', {
+          business_profile: { headline: 'OneBox billing' },
+          features: {
+            payment_method_update: { enabled: true },
+            invoice_history: { enabled: true },
+            customer_update: { enabled: true, allowed_updates: { 0: 'email', 1: 'address' } },
+          },
+        });
+        return (await open()).url;
+      }
+    },
 
     // The paid period is kept; Stripe ends the subscription when it runs out.
     cancelAtPeriodEnd: (id: string) =>

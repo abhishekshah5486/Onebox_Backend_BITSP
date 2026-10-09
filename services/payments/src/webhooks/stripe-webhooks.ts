@@ -112,12 +112,14 @@ export function createStripeWebhooks({
         }
         await recordPayment(sub, invoice, 'captured');
         // The first invoice starts the plan (the status check may already have said so, same
-        // key); each later one renews it.
+        // key), a plan change's prorated one moves it, and each later one renews it.
         await publish(
           events,
           invoice.billing_reason === 'subscription_create'
             ? 'subscription.activated'
-            : 'subscription.renewed',
+            : invoice.billing_reason === 'subscription_update'
+              ? 'subscription.changed'
+              : 'subscription.renewed',
           sub,
           { paymentId: invoice.id, key: invoice.id },
         );
