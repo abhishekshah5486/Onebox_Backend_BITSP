@@ -12,6 +12,7 @@ const account = z.object({
   email: z.string(),
   defaultPath: z.string(),
   connectedAt: z.string(),
+  updatedAt: z.string(),
 });
 const params = z.object({ id: z.uuid() });
 

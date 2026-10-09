@@ -92,6 +92,7 @@ export function createGoogleService({
     email: row.email,
     defaultPath: row.defaultPath,
     connectedAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   });
 
   return {
