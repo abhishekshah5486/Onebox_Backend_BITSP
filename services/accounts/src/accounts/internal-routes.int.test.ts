@@ -79,7 +79,17 @@ describe('internal accounts api', () => {
       tls: true,
       password: 'app-pass',
       userId,
+      smtp: { host: 'smtp.gmail.com', port: 465, tls: true },
     });
+    expect(res.json<{ emailAddress: string }>().emailAddress).toMatch(/@gmail\.com$/);
+  });
+
+  it('describes an account to internal callers without its secrets', async () => {
+    const { id, userId } = await connect();
+    const res = await app.inject({ url: `/internal/accounts/${id}`, headers: internal });
+    expect(res.json()).toMatchObject({ id, userId, provider: 'GMAIL', status: 'CONNECTED' });
+    expect(res.body).not.toContain('app-pass');
+    expect((await app.inject({ url: `/internal/accounts/${id}` })).statusCode).toBe(401);
   });
 
   it('lists only active accounts, without secrets', async () => {

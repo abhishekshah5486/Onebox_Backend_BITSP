@@ -19,6 +19,10 @@ export function registerInternalRoutes(
 
       routes.get('/accounts', async () => ({ items: await accounts.listActive() }));
 
+      routes.get('/accounts/:id', { schema: { params } }, async (request) =>
+        accounts.getSummary(request.params.id),
+      );
+
       routes.get('/accounts/:id/credentials', { schema: { params } }, async (request) =>
         accounts.getCredentials(request.params.id),
       );
