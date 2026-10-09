@@ -166,6 +166,8 @@ export function createCheckoutService({
         amount: periodPrice(row.plan, row.interval),
         currency: CURRENCY,
         status: 'captured',
+        // Stripe's checkout takes cards; Razorpay's webhook says which method was used.
+        method: row.provider === 'STRIPE' ? 'card' : null,
       })
       .onConflictDoNothing()
       .returning({ id: payments.id });
@@ -347,6 +349,78 @@ export function createCheckoutService({
       return subscriptionView(updated!);
     },
 
+    // Moves a paid plan to another plan or interval now; Stripe charges the prorated
+    // difference straight away, and billing gives the new plan's credits.
+    async change(userId: string, plan: PlanId, interval: BillingInterval) {
+      if (plan === 'FREE') {
+        throw new ValidationError(
+          'To move to Free, cancel your plan; it stays active until the end of the paid period.',
+        );
+      }
+      const row = await liveSubscription(userId);
+      if (!row) throw new NotFoundError('You have no paid plan to change');
+      if (row.plan === plan && row.interval === interval) {
+        throw new ValidationError("You're already on that plan");
+      }
+      if (row.status !== 'active') {
+        throw new ConflictError(
+          "Your last payment didn't go through. Update your payment method, then try again.",
+          { code: 'PAYMENT_PENDING' },
+        );
+      }
+
+      let updated: SubscriptionRow;
+      let invoice: string | null = null;
+      if (row.provider === 'STRIPE') {
+        const priceId = await providerPlanId('STRIPE', plan, interval);
+        const remote = await stripe!.changePrice(
+          await stripe!.retrieveSubscription(row.providerSubscriptionId),
+          priceId,
+        );
+        updated = await saveStripeSubscription(db, row, remote);
+        invoice =
+          typeof remote.latest_invoice === 'string'
+            ? remote.latest_invoice
+            : (remote.latest_invoice?.id ?? null);
+      } else {
+        if (row.cancelAtPeriodEnd) {
+          throw new ConflictError('This plan is set to end. Choose a new plan once it has ended.');
+        }
+        const planId = await providerPlanId('RAZORPAY', plan, interval);
+        updated = await refreshRazorpay(
+          row,
+          await razorpay!.changePlan(row.providerSubscriptionId, planId),
+        );
+      }
+      const [changed] = await db
+        .update(subscriptions)
+        .set({ plan, interval, cancelAtPeriodEnd: false })
+        .where(eq(subscriptions.id, updated.id))
+        .returning();
+      await publish(events, 'subscription.changed', changed!, {
+        paymentId: invoice,
+        key: invoice ?? `${changed!.id}-${plan}-${interval}-${Date.now()}`,
+      });
+      logger.info({ userId, from: row.plan, to: plan, interval }, 'plan changed');
+      return subscriptionView(changed!);
+    },
+
+    // Stripe's own page for the card on file and past invoices.
+    async portal(userId: string) {
+      if (!stripe) throw new ServiceUnavailableError('Stripe is not set up');
+      const [customer] = await db
+        .select()
+        .from(customers)
+        .where(and(eq(customers.userId, userId), eq(customers.provider, 'STRIPE')));
+      if (!customer) throw new NotFoundError('You have no card saved with Stripe yet');
+      return {
+        url: await stripe.portalSession(
+          customer.providerCustomerId,
+          `${publicApiUrl}/checkout-return/stripe?result=portal`,
+        ),
+      };
+    },
+
     async history(userId: string) {
       const rows = await db
         .select()
@@ -356,6 +430,7 @@ export function createCheckoutService({
         .limit(100);
       return rows.map((row) => ({
         id: row.id,
+        provider: row.provider,
         amount: row.amount,
         currency: row.currency,
         status: row.status,

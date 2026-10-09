@@ -1,4 +1,4 @@
-# Takes payments through Razorpay (Stripe later) and reports them to billing.
+# Takes payments through Razorpay or Stripe and reports them to billing.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,6 +27,10 @@ spec:
             - { name: REDIS_URL, value: 'redis://redis:6379' }
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
             - { name: PAYMENTS_MODE, value: 'test' }
+            # Where Stripe sends the browser back after checkout; set by scripts/stripe-webhook.sh.
+            - name: PUBLIC_API_URL
+              valueFrom:
+                { secretKeyRef: { name: onebox-secrets, key: PUBLIC_API_URL, optional: true } }
             - name: RAZORPAY_TEST_API_KEY
               valueFrom:
                 {

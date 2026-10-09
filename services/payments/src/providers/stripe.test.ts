@@ -55,7 +55,7 @@ describe('stripe', () => {
         id: 's',
         status: 'active',
         cancel_at_period_end: false,
-        items: { data: [{ current_period_start: 1, current_period_end: 20 }] },
+        items: { data: [{ id: 'si_1', current_period_start: 1, current_period_end: 20 }] },
       }),
     ).toEqual({ start: new Date(1000), end: new Date(20_000) });
   });

@@ -39,7 +39,11 @@ export function createRazorpay(
 ) {
   const auth = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString('base64')}`;
 
-  async function call<T>(method: 'GET' | 'POST', path: string, body?: object): Promise<T> {
+  async function call<T>(
+    method: 'GET' | 'POST' | 'PATCH',
+    path: string,
+    body?: object,
+  ): Promise<T> {
     const response = await send(`${API}${path}`, {
       method,
       headers: {
@@ -129,6 +133,14 @@ export function createRazorpay(
       call<RazorpaySubscription>('GET', `/subscriptions/${encodeURIComponent(id)}`),
 
     // At the cycle end by default, so the paid period is kept.
+    // Moves the subscription to another plan straight away.
+    changePlan: (id: string, planId: string) =>
+      call<RazorpaySubscription>('PATCH', `/subscriptions/${encodeURIComponent(id)}`, {
+        plan_id: planId,
+        schedule_change_at: 'now',
+        customer_notify: 1,
+      }),
+
     cancelSubscription: (id: string, atCycleEnd = true) =>
       call<RazorpaySubscription>('POST', `/subscriptions/${encodeURIComponent(id)}/cancel`, {
         cancel_at_cycle_end: atCycleEnd ? 1 : 0,

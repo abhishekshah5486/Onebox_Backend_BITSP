@@ -58,6 +58,8 @@ export const PAYMENT_EVENT_TYPES = [
   'subscription.renewed',
   // Ends at the period end (or now); no more renewals.
   'subscription.cancelled',
+  // Moved to another plan or interval mid-period; its credits start now.
+  'subscription.changed',
   // Renewal payments failed repeatedly; the plan is paused until paid.
   'subscription.halted',
   'payment.failed',
@@ -76,3 +78,15 @@ export const paymentEventPayloadSchema = z.object({
 });
 
 export type PaymentEventPayload = z.infer<typeof paymentEventPayloadSchema>;
+
+// llm-proxy -> billing: one model call that cost money, charged once per call id.
+export const usageEventPayloadSchema = z.object({
+  callId: z.uuid(),
+  purpose: z.string().min(1).max(40),
+  model: z.string().min(1).max(100),
+  modelName: z.string().min(1).max(200),
+  costUsd: z.number().min(0),
+  occurredAt: z.iso.datetime(),
+});
+
+export type UsageEventPayload = z.infer<typeof usageEventPayloadSchema>;

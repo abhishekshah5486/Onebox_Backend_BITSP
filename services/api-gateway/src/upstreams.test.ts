@@ -39,6 +39,7 @@ describe('defineUpstreams', () => {
       '/api/v1/accounts',
       '/api/v1/settings',
       '/api/v1/payments',
+      '/api/v1/billing',
       '/api/v1/mail',
       '/api/v1/llm',
       '/api/v1/ai',

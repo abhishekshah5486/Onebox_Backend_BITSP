@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { migrateLlm } from '../db/migrate';
 import { llmCalls } from '../db/schema';
 import { ProviderError, type ProviderAdapter, type ProviderRequest } from '../providers/types';
+import type { Billing } from './billing';
 import { createBreaker } from './breaker';
 import { createCatalog } from './catalog';
 import { createCompleter } from './complete';
@@ -46,6 +47,14 @@ const fake: ProviderAdapter = {
   },
 };
 
+// Stands in for the billing service: who may call, and what was charged.
+const charges: { userId: string; callId: string; costUsd: number; modelName: string }[] = [];
+const broke = new Set<string>();
+const billing: Billing = {
+  allowed: async (userId) => !broke.has(userId),
+  charge: async (userId, call) => void charges.push({ userId, ...call }),
+};
+
 const setup = () => {
   const catalog = createCatalog(client.db, new Set(['OPENAI', 'GEMINI'] as const));
   const complete = createCompleter({
@@ -57,6 +66,7 @@ const setup = () => {
     logger,
     cacheTtlSeconds: 60,
     timeoutMs: 1000,
+    billing,
   });
   return { catalog, complete };
 };
@@ -152,6 +162,27 @@ describe('llm proxy', () => {
     expect(usage.totals.costUsd).toBeCloseTo(0.000171, 9);
     expect(usage.calls.map((call) => call.cacheHit)).toEqual([true, false]);
     expect(usage.calls.map((call) => call.fellBack)).toEqual([false, false]);
+  });
+
+  it('charges paid calls once, not cache hits, and refuses users out of credits', async () => {
+    const userId = randomUUID();
+    script['gpt-6-sol'] = () => '{"labels":["Leads"]}';
+    await setup().catalog.choose(userId, 'classify', 'gpt-6-sol');
+    await ask(userId, 'Same mail');
+    await ask(userId, 'Same mail');
+
+    const mine = charges.filter((charge) => charge.userId === userId);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ purpose: 'classify', model: 'gpt-6-sol' });
+    expect(mine[0]!.costUsd).toBeCloseTo(0.000228, 9);
+    const [row] = await client.db.select().from(llmCalls).where(eq(llmCalls.id, mine[0]!.callId));
+    expect(row?.status).toBe('ok');
+
+    broke.add(userId);
+    // A cached answer is free, so it is still served.
+    expect((await ask(userId, 'Same mail')).cached).toBe(true);
+    await expect(ask(userId)).rejects.toMatchObject({ statusCode: 402, code: 'OUT_OF_CREDITS' });
+    expect(calls.filter((model) => model === 'gpt-6-sol')).toHaveLength(1);
   });
 
   it('skips a model that keeps failing, and reports when nothing can answer', async () => {

@@ -54,12 +54,25 @@ const razorpayFetch: typeof fetch = async (input, init) => {
 const stripeCalls: { method: string; path: string; body?: URLSearchParams }[] = [];
 const completed = new Set<string>();
 const cancelling = new Set<string>();
+// Each subscription's current price; new ones start on Standard monthly.
+const prices = new Map<string, string>();
+let portalSetUp = false;
 let nextSession = 0;
 const stripeSubscription = (id: string) => ({
   id,
   status: 'active',
   cancel_at_period_end: cancelling.has(id),
-  items: { data: [{ current_period_start: 1_791_000_000, current_period_end: 1_793_600_000 }] },
+  items: {
+    data: [
+      {
+        id: `si_${id}`,
+        price: { id: prices.get(id) ?? 'price_standard_monthly' },
+        current_period_start: 1_791_000_000,
+        current_period_end: 1_793_600_000,
+      },
+    ],
+  },
+  latest_invoice: prices.has(id) ? `in_change_${id}` : null,
   metadata: { userId: 'someone' },
 });
 const stripeFetch: typeof fetch = async (input, init) => {
@@ -67,12 +80,34 @@ const stripeFetch: typeof fetch = async (input, init) => {
   const method = init?.method ?? 'GET';
   const body = init?.body ? new URLSearchParams(init.body as string) : undefined;
   stripeCalls.push({ method, path, ...(body && { body }) });
-  const json = (value: unknown) => new Response(JSON.stringify(value));
-  if (path === '/prices') return json({ id: 'price_standard_monthly' });
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+  if (path === '/prices') {
+    // e.g. price_standard_monthly, from "OneBox Standard" billed every month.
+    const plan = body!.get('product_data[name]')!.split(' ')[1]!.toLowerCase();
+    const interval = body!.get('recurring[interval]') === 'year' ? 'annual' : 'monthly';
+    return json({ id: `price_${plan}_${interval}` });
+  }
   if (path === '/customers') return json({ id: `cus_${stripeCalls.length}` });
   if (path === '/checkout/sessions') {
     const id = `cs_${++nextSession}`;
     return json({ id, url: `https://checkout.stripe.com/c/${id}`, status: 'open' });
+  }
+  if (path === '/billing_portal/configurations') {
+    portalSetUp = true;
+    return json({ id: 'bpc_1' });
+  }
+  if (path === '/billing_portal/sessions') {
+    return portalSetUp
+      ? json({ url: `https://billing.stripe.com/p/${body!.get('customer')}` })
+      : json(
+          {
+            error: {
+              message:
+                'No configuration provided and your test mode default configuration has not been created.',
+            },
+          },
+          400,
+        );
   }
   const session = path.match(/^\/checkout\/sessions\/([^?]+)/)?.[1];
   if (session) {
@@ -87,7 +122,12 @@ const stripeFetch: typeof fetch = async (input, init) => {
     });
   }
   const subscription = path.match(/^\/subscriptions\/([^?]+)/)![1]!;
-  if (method === 'POST') cancelling.add(subscription);
+  if (method === 'POST') {
+    const price = body?.get('items[0][price]');
+    if (price) prices.set(subscription, price);
+    if (body?.get('cancel_at_period_end') === 'true') cancelling.add(subscription);
+    else cancelling.delete(subscription);
+  }
   return json(stripeSubscription(subscription));
 };
 
@@ -369,7 +409,9 @@ describe('stripe', () => {
       url: '/payments/history',
       headers: as(user),
     });
-    expect(history.json<{ items: unknown[] }>().items).toHaveLength(1);
+    expect(history.json<{ items: unknown[] }>().items).toEqual([
+      expect.objectContaining({ provider: 'STRIPE', method: 'card', amount: 49_900 }),
+    ]);
   });
 
   it('cancels a Stripe plan at the end of the period', async () => {
@@ -416,6 +458,63 @@ describe('stripe', () => {
     };
     expect((await webhook(deleted)).statusCode).toBe(200);
     expect(published.at(-1)!.payload).toMatchObject({ type: 'subscription.cancelled' });
+  });
+
+  it('changes a Stripe plan straight away and tells billing once', async () => {
+    const who = randomUUID();
+    const { sessionId } = (await start(who)).json<{ sessionId: string }>();
+    completed.add(sessionId);
+    await status(who, sessionId);
+
+    const change = (plan: string, interval = 'monthly') =>
+      app.inject({
+        method: 'POST',
+        url: '/payments/subscription/change',
+        headers: as(who),
+        payload: { plan, interval },
+      });
+    expect((await change('STANDARD')).statusCode).toBe(400);
+    const res = await change('PRO');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ plan: 'PRO', interval: 'monthly', status: 'active' });
+    const update = stripeCalls.at(-1)!;
+    expect(update.path).toBe(`/subscriptions/sub_for_${sessionId}?expand[]=latest_invoice`);
+    expect(update.body!.get('items[0][id]')).toBe(`si_sub_for_${sessionId}`);
+    expect(update.body!.get('items[0][price]')).toBe('price_pro_monthly');
+    expect(update.body!.get('proration_behavior')).toBe('always_invoice');
+
+    // The prorated invoice's webhook names the same plan and dedupes with the change.
+    const invoice = `in_change_sub_for_${sessionId}`;
+    const paid = {
+      id: `evt_${randomUUID()}`,
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: invoice,
+          amount_paid: 100_000,
+          amount_due: 100_000,
+          currency: 'inr',
+          billing_reason: 'subscription_update',
+          parent: { subscription_details: { subscription: `sub_for_${sessionId}` } },
+        },
+      },
+    };
+    expect((await webhook(paid)).statusCode).toBe(200);
+    const changes = published.filter((e) => e.jobId === `subscription-changed-${invoice}`);
+    expect(changes.map((e) => e.payload.plan)).toEqual(['PRO', 'PRO']);
+  });
+
+  it("opens Stripe's billing page, setting it up the first time", async () => {
+    const res = await app.inject({ method: 'POST', url: '/payments/portal', headers: as(user) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ url: string }>().url).toMatch(/^https:\/\/billing\.stripe\.com\/p\/cus_/);
+    expect(stripeCalls.some((c) => c.path === '/billing_portal/configurations')).toBe(true);
+    const noCard = await app.inject({
+      method: 'POST',
+      url: '/payments/portal',
+      headers: as(randomUUID()),
+    });
+    expect(noCard.statusCode).toBe(404);
   });
 
   it('shows a return page after checkout', async () => {

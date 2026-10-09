@@ -13,4 +13,5 @@ resources:
   - llm-proxy.yaml
   - ai.yaml
   - payments.yaml
+  - billing.yaml
   - api-gateway.yaml

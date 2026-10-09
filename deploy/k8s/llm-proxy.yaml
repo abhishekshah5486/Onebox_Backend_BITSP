@@ -24,6 +24,7 @@ spec:
             - name: CREDENTIALS_ENCRYPTION_KEY
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - { name: BILLING_SERVICE_URL, value: 'http://billing:4009' }
             - { name: REDIS_URL, value: 'redis://redis:6379' }
             # A missing key leaves that provider's models unavailable rather than failing startup.
             - name: OPENAI_API_KEY

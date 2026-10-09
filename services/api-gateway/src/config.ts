@@ -11,6 +11,7 @@ const schema = z.object({
   LLM_PROXY_SERVICE_URL: z.url().default('http://localhost:4006'),
   AI_SERVICE_URL: z.url().default('http://localhost:4007'),
   PAYMENTS_SERVICE_URL: z.url().default('http://localhost:4008'),
+  BILLING_SERVICE_URL: z.url().default('http://localhost:4009'),
 });
 
 export type GatewayConfig = z.infer<typeof schema>;

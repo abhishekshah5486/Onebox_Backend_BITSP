@@ -54,6 +54,20 @@ describe('razorpay', () => {
     await expect(failure).rejects.toThrow(/subscriptions aren't turned on/);
   });
 
+  it('moves a subscription to another plan straight away', async () => {
+    let sent: { method?: string; url: string; body: unknown } | undefined;
+    const send: typeof fetch = async (input, init) => {
+      sent = { method: init?.method, url: input as string, body: JSON.parse(init!.body as string) };
+      return new Response(JSON.stringify({ id: 'sub_1', status: 'active' }));
+    };
+    await createRazorpay(keys, logger, send).changePlan('sub_1', 'plan_pro');
+    expect(sent).toEqual({
+      method: 'PATCH',
+      url: 'https://api.razorpay.com/v1/subscriptions/sub_1',
+      body: { plan_id: 'plan_pro', schedule_change_at: 'now', customer_notify: 1 },
+    });
+  });
+
   it('accepts only checkout results signed with the key secret', () => {
     const razorpay = createRazorpay(keys, logger);
     const signature = sign('secret', 'pay_1|sub_1');

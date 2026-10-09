@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createJobEnvelope, QUEUES, type MailboxChangePayload } from '@onebox/contracts';
 import { connectMongo, type MongoHandle } from '@onebox/db-mongo';
+import { PaymentRequiredError } from '@onebox/errors';
 import { createLogger } from '@onebox/logger';
 import { createProducer } from '@onebox/queue';
 import { startMongo, startRedis, type TestMongo, type TestRedis } from '@onebox/testing';
@@ -130,6 +131,27 @@ describe('classification', () => {
     await expect(suggestions.decide(randomUUID(), id, 'Meetings', true)).rejects.toThrow(
       'not found',
     );
+  });
+
+  it('leaves the mail unsorted, without retrying, when the user is out of credits', async () => {
+    const userId = randomUUID();
+    const accountId = randomUUID();
+    await createLabelRules(collections).save(userId, {
+      accountId,
+      path: 'Leads',
+      name: 'Leads',
+      description: 'Prospects asking about pricing or buying',
+      mode: 'auto',
+    });
+    const llm = vi.fn<LlmClient>(async () => {
+      throw new PaymentRequiredError('The user is out of AI credits', { code: 'OUT_OF_CREDITS' });
+    });
+    const envelope = job(userId, accountId);
+    await createClassifyHandler({ collections, llm, changes })(envelope, context);
+    expect(llm).toHaveBeenCalledTimes(1);
+    expect(
+      await collections.classifications.findOne({ _id: envelope.payload.messageId }),
+    ).toBeNull();
   });
 
   it('makes no model call when the account has no described labels', async () => {

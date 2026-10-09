@@ -13,6 +13,7 @@ const schema = z.object({
   REDIS_URL: z.string().regex(/^rediss?:\/\//, 'must be a redis url'),
   CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
   AUTH_SERVICE_URL: z.url().default('http://localhost:4001'),
+  BILLING_SERVICE_URL: z.url().default('http://localhost:4009'),
   // A provider without a key is skipped; its models show as unavailable.
   OPENAI_API_KEY: optionalKey,
   GEMINI_API_KEY: optionalKey,

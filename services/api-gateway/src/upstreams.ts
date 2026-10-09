@@ -66,6 +66,12 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       access: 'authenticated',
     },
     {
+      prefix: '/api/v1/billing',
+      url: config.BILLING_SERVICE_URL,
+      rewritePrefix: '/billing',
+      access: 'authenticated',
+    },
+    {
       prefix: '/api/v1/mail',
       url: config.MAIL_SERVICE_URL,
       rewritePrefix: '/mail',
