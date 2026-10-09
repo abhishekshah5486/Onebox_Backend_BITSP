@@ -5,7 +5,7 @@ services:
     image: redis:8.10.2-alpine
     # BullMQ requires noeviction so queued jobs are never silently dropped.
     command: redis-server --appendonly yes --maxmemory-policy noeviction
-    ports: ['6379:6379']
+    ports: ['127.0.0.1:6379:6379']
     volumes: [redis-data:/data]
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
@@ -18,7 +18,7 @@ services:
       discovery.type: single-node
       xpack.security.enabled: 'false'
       ES_JAVA_OPTS: -Xms512m -Xmx512m
-    ports: ['9200:9200']
+    ports: ['127.0.0.1:9200:9200']
     volumes: [es-data:/usr/share/elasticsearch/data]
     healthcheck:
       test: ['CMD-SHELL', 'curl -fs localhost:9200/_cluster/health?wait_for_status=yellow']
@@ -32,7 +32,7 @@ services:
     environment:
       AWS_ACCESS_KEY_ID: ${BLOB_ACCESS_KEY:?set BLOB_ACCESS_KEY in .env}
       AWS_SECRET_ACCESS_KEY: ${BLOB_SECRET_KEY:?set BLOB_SECRET_KEY in .env}
-    ports: ['8333:8333']
+    ports: ['127.0.0.1:8333:8333']
     volumes: [objects-data:/data]
 
   greenmail:
@@ -42,12 +42,12 @@ services:
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0
         -Dgreenmail.auth.disabled -Dgreenmail.verbose
-    ports: ['3025:3025', '3143:3143', '3993:3993']
+    ports: ['127.0.0.1:3025:3025', '127.0.0.1:3143:3143', '127.0.0.1:3993:3993']
 
   qdrant:
     image: qdrant/qdrant:v1.19.2
     profiles: [vector]
-    ports: ['6333:6333']
+    ports: ['127.0.0.1:6333:6333']
     volumes: [qdrant-data:/qdrant/storage]
 
 volumes:
