@@ -45,6 +45,16 @@ describe('findUnsubscribe', () => {
     });
   });
 
+  it('scans a huge body of unclosed links quickly and still finds the footer link', () => {
+    const html =
+      '<a href="x">'.repeat(300_000) + '<a href="https://shop.example/out">Unsubscribe</a>';
+    const started = performance.now();
+    expect(findUnsubscribe(undefined, html, '')).toMatchObject({
+      url: 'https://shop.example/out',
+    });
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
   it('finds a link on an unsubscribe line in plain text', () => {
     expect(
       findUnsubscribe(undefined, null, 'Thanks\nTo unsubscribe visit https://x.example/out).'),

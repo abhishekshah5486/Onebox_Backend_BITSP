@@ -11,6 +11,8 @@ interface ListHeader {
   'unsubscribe-post'?: { name?: string };
 }
 
+// How much of the end of an HTML body is searched for an unsubscribe link.
+const MAX_HTML_SCAN = 200_000;
 const MAX_LENGTH = 2048;
 const WORDS = /unsubscribe|opt[\s-]?out|email preferences|manage (your )?subscription/i;
 
@@ -53,8 +55,11 @@ export function findUnsubscribe(
   }
 
   if (html) {
-    for (const match of html.matchAll(
-      /<a\b[^>]*?href\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi,
+    // Unsubscribe links sit in the footer, so only the end is scanned, and every part of the
+    // pattern is bounded: an unclosed <a> repeated through a huge message cannot stall ingest.
+    const tail = html.length > MAX_HTML_SCAN ? html.slice(-MAX_HTML_SCAN) : html;
+    for (const match of tail.matchAll(
+      /<a\b[^>]{0,1000}?href\s*=\s*(["'])([^"']{0,2048})\1[^>]{0,1000}>((?:(?!<a\b)[\s\S]){0,2000}?)<\/a>/gi,
     )) {
       const href = decode(match[2]!);
       const label = match[3]!.replace(/<[^>]+>/g, ' ');
