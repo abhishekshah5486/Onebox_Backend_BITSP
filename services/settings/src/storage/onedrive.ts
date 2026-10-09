@@ -1,6 +1,6 @@
 import { ExternalServiceError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
-import { ExpiredGrantError, type StorageProvider } from './provider';
+import { ACCESS_DENIED, ExpiredGrantError, type StorageProvider } from './provider';
 
 // "common" accepts both personal Microsoft accounts and work or school accounts.
 const AUTHORITY = 'https://login.microsoftonline.com/common/oauth2/v2.0';
@@ -78,7 +78,9 @@ export function oneDrive(
       }
       const scopes = (body.scope ?? '').split(' ').filter(Boolean);
       if (!scopes.some((scope) => /(^|\/)Files\.ReadWrite$/i.test(scope))) {
-        throw new ValidationError('Allow OneBox to save files to OneDrive, then try again.');
+        throw new ValidationError('Allow OneBox to save files to OneDrive, then try again.', {
+          code: ACCESS_DENIED,
+        });
       }
       const email = emailFromIdToken(body.id_token);
       if (!email) throw new ExternalServiceError('Microsoft did not share the account address');

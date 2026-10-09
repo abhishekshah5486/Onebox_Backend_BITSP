@@ -37,3 +37,6 @@ export const PROVIDER_NAMES: Record<StorageProviderId, string> = {
   ONEDRIVE: 'OneDrive',
   DROPBOX: 'Dropbox',
 };
+
+// The error code for a sign-in where the person did not give OneBox the access it needs.
+export const ACCESS_DENIED = 'STORAGE_ACCESS_DENIED';

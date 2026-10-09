@@ -27,7 +27,20 @@ export function registerStorageRoutes(scope: FastifyInstance, storage: StorageSe
     '/storage',
     {
       schema: {
-        response: { 200: z.object({ providers: z.array(provider), accounts: z.array(account) }) },
+        response: {
+          200: z.object({
+            providers: z.array(provider),
+            accounts: z.array(account),
+            failures: z.array(
+              z.object({
+                provider,
+                reason: z.enum(['ACCESS_DENIED', 'FAILED']),
+                message: z.string(),
+                at: z.string(),
+              }),
+            ),
+          }),
+        },
       },
     },
     async (request) => storage.list(userId(request)),
@@ -38,10 +51,10 @@ export function registerStorageRoutes(scope: FastifyInstance, storage: StorageSe
     {
       schema: {
         body: z.object({ provider }),
-        response: { 200: z.object({ url: z.string() }) },
+        response: { 200: z.object({ url: z.string(), expiresAt: z.string() }) },
       },
     },
-    async (request) => ({ url: storage.authUrl(userId(request), request.body.provider) }),
+    async (request) => storage.authUrl(userId(request), request.body.provider),
   );
 
   routes.patch(
@@ -110,6 +123,7 @@ export function registerStorageCallbacks(app: HttpServer, storage: StorageServic
       const name = PROVIDER_NAMES[id];
       const { code, state, error } = request.query;
       if (error || !code || !state) {
+        if (state) storage.refuse(id, state, error ?? 'missing_code');
         return send(400, `${name} was not connected`, 'You can close this window and try again.');
       }
       try {

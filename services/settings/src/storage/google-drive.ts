@@ -1,6 +1,6 @@
 import { ExternalServiceError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
-import { ExpiredGrantError, type StorageProvider } from './provider';
+import { ACCESS_DENIED, ExpiredGrantError, type StorageProvider } from './provider';
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const SCOPES = ['openid', 'email', DRIVE_SCOPE];
@@ -74,7 +74,9 @@ export function googleDrive(
       }
       const scopes = (body.scope ?? '').split(' ').filter(Boolean);
       if (!scopes.includes(DRIVE_SCOPE)) {
-        throw new ValidationError('Allow OneBox to see the Drive files it uses, then try again.');
+        throw new ValidationError('Allow OneBox to see the Drive files it uses, then try again.', {
+          code: ACCESS_DENIED,
+        });
       }
       const email = emailFromIdToken(body.id_token);
       if (!email) throw new ExternalServiceError('Google did not share the account address');
