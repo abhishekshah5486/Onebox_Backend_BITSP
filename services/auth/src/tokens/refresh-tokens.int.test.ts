@@ -75,4 +75,14 @@ describe('refresh tokens', () => {
     const results = await Promise.allSettled([tokens.rotate(token), tokens.rotate(token)]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
   });
+
+  it('never leaves a usable successor when logout races a rotation', async () => {
+    for (let i = 0; i < 10; i++) {
+      const token = await tokens.issue(userId);
+      const [rotated] = await Promise.allSettled([tokens.rotate(token), tokens.revoke(token)]);
+      if (rotated.status === 'fulfilled') {
+        await expect(tokens.rotate(rotated.value.refreshToken)).rejects.toBeDefined();
+      }
+    }
+  });
 });
