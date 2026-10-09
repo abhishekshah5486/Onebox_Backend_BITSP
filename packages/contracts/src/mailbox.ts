@@ -35,6 +35,9 @@ export const historyStateSchema = z.object({
   status: z.enum(HISTORY_STATUSES),
   error: z.string().nullable(),
   updatedAt: z.iso.datetime(),
+  // The oldest UID the last page tried, stored or not, so the next page starts below it even
+  // when none of that page's messages could be kept.
+  cursor: z.object({ uidValidity: z.number().int(), uid: z.number().int() }).optional(),
 });
 
 export type HistoryState = z.infer<typeof historyStateSchema>;

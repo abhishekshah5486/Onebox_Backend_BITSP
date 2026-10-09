@@ -43,6 +43,7 @@ export function createHistoryHandler(deps: HistoryDeps) {
       const lock = await client.getMailboxLock(folder);
       let jobIds: string[] = [];
       let remaining = 0;
+      let batch: number[] = [];
       try {
         if (Number(client.mailbox && client.mailbox.uidValidity) !== uidValidity) {
           await store.setHistory(
@@ -57,7 +58,7 @@ export function createHistoryHandler(deps: HistoryDeps) {
         const older = (
           (await client.search({ uid: `1:${beforeUid - 1}` }, { uid: true })) || []
         ).sort((a, b) => a - b);
-        const batch = older.slice(-count);
+        batch = older.slice(-count);
         remaining = older.length - batch.length;
         if (batch.length > 0) {
           ({ jobIds } = await fetchAndEnqueue(client, batch, {
@@ -76,7 +77,13 @@ export function createHistoryHandler(deps: HistoryDeps) {
 
       // Only report done once the mail is actually stored, so the next page is ready to show.
       await producer.waitUntilProcessed(jobIds, { timeoutMs: deps.ingestTimeoutMs ?? 120_000 });
-      await store.setHistory(accountId, key, remaining > 0 ? 'idle' : 'complete');
+      await store.setHistory(
+        accountId,
+        key,
+        remaining > 0 ? 'idle' : 'complete',
+        null,
+        batch[0] === undefined ? undefined : { uidValidity, uid: batch[0] },
+      );
       logger.info({ accountId, role, fetched: jobIds.length, remaining }, 'older mail fetched');
     } catch (err) {
       if (err instanceof AuthenticationFailedError) {

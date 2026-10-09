@@ -44,10 +44,11 @@ export function createMailboxStore(redis: Redis) {
       key: string,
       status: HistoryState['status'],
       error: string | null = null,
+      cursor?: HistoryState['cursor'],
     ) =>
       redis.set(
         mailboxKeys.history(accountId, key),
-        JSON.stringify({ status, error, updatedAt: new Date().toISOString() }),
+        JSON.stringify({ status, error, updatedAt: new Date().toISOString(), cursor }),
         'EX',
         TTL_SECONDS,
       ),

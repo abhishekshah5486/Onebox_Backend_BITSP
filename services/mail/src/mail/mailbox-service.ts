@@ -145,23 +145,30 @@ export function createMailboxService({ collections, store, historyProducer, logg
         });
       }
 
-      await historyProducer.enqueue(
+      // Below both the oldest stored message and the oldest one the last page tried, which differ
+      // when that page could not keep some of its messages.
+      const cursor =
+        history?.cursor?.uidValidity === counts.uidValidity ? history.cursor.uid : Infinity;
+      const beforeUid = Math.min(oldest.uid, cursor);
+      const { duplicate } = await historyProducer.enqueue(
         createJobEnvelope({
-          jobId: `${accountId}-${createHash('sha256').update(keyOf(view)).digest('hex').slice(0, 16)}-${counts.uidValidity}-${oldest.uid}`,
+          jobId: `${accountId}-${createHash('sha256').update(keyOf(view)).digest('hex').slice(0, 16)}-${counts.uidValidity}-${beforeUid}`,
           userId,
           accountId,
           payload: {
             folder: counts.folder,
             role: counts.role,
             uidValidity: counts.uidValidity,
-            beforeUid: oldest.uid,
+            beforeUid,
             count: HISTORY_BATCH_SIZE,
           },
         }),
         { retryFailed: true },
       );
-      await store.setHistory(accountId, keyOf(view), 'fetching');
-      logger.info({ accountId, view, beforeUid: oldest.uid }, 'older mail requested');
+      // A page already fetched is not fetched again, so it must not be shown as in progress.
+      if (duplicate) return summary(userId, accountId, view);
+      await store.setHistory(accountId, keyOf(view), 'fetching', null, history?.cursor);
+      logger.info({ accountId, view, beforeUid }, 'older mail requested');
       return summary(userId, accountId, view);
     },
   };

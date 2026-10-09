@@ -801,6 +801,26 @@ describe('mail api', () => {
       });
     });
 
+    it('starts below the last page tried, even when that page stored nothing', async () => {
+      const userId = randomUUID();
+      const accountId = await seed(userId, 3);
+      await withCounts(userId, accountId, 500);
+      const oldestUid = (
+        await collections.messages.find({ accountId }).sort({ uid: 1 }).limit(1).toArray()
+      )[0]!.uid;
+      // The previous page tried messages down to this UID but could not keep any of them.
+      await store.setHistory(accountId, 'inbox', 'idle', null, {
+        uidValidity: 1,
+        uid: oldestUid - 50,
+      });
+
+      expect((await requestHistory(userId, accountId)).json()).toMatchObject({
+        history: { status: 'fetching' },
+      });
+      const [job] = await historyJobs(accountId);
+      expect(job!.data).toMatchObject({ payload: { beforeUid: oldestUid - 50 } });
+    });
+
     it('does nothing once the whole mailbox is fetched', async () => {
       const userId = randomUUID();
       const accountId = await seed(userId, 1);
