@@ -271,6 +271,19 @@ describe('attachments and contacts', () => {
     });
     expect(uploaded.blobKey.startsWith('uploads/user-1/')).toBe(true);
     expect((await send({ ...message, attachments: [uploaded] })).statusCode).toBe(200);
+
+    const download = (key: string, who = 'user-1') =>
+      app.inject({
+        url: `/mail/uploads/file?key=${encodeURIComponent(key)}&name=${encodeURIComponent('Q4 plan.json')}`,
+        headers: as(who),
+      });
+    const file = await download(uploaded.blobKey);
+    expect(file.statusCode).toBe(200);
+    expect(file.body).toBe('{"seats":20}');
+    expect(file.headers['content-disposition']).toContain("filename*=UTF-8''Q4%20plan.json");
+    // Someone else's file, or a path that tries to climb out, is not served.
+    expect((await download(uploaded.blobKey, 'someone-else')).statusCode).toBe(404);
+    expect((await download('uploads/user-1/../user-2/x')).statusCode).toBe(404);
   });
 
   it('forwards a stored attachment and suggests people the user has mailed', async () => {

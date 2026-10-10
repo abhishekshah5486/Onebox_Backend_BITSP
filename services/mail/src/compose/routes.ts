@@ -121,6 +121,27 @@ export function registerComposeRoutes(
         async (request) => ({ items: await compose.contacts(userId(request), request.query.q) }),
       );
 
+      routes.get(
+        '/uploads/file',
+        {
+          schema: {
+            querystring: z.object({
+              key: z.string().min(1).max(500),
+              name: z.string().min(1).max(255),
+            }),
+          },
+        },
+        async (request, reply) => {
+          const blob = await compose.download(userId(request), request.query.key);
+          const name = encodeURIComponent(request.query.name);
+          return reply
+            .header('content-type', blob.contentType ?? 'application/octet-stream')
+            .header('content-disposition', `attachment; filename*=UTF-8''${name}`)
+            .header('cache-control', 'private, no-store')
+            .send(blob.body);
+        },
+      );
+
       routes.post(
         '/uploads/from-message',
         {

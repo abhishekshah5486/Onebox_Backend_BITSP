@@ -83,11 +83,15 @@ export function createComposeService({
 }) {
   const { drafts, outbox } = collections;
 
+  // Uploads and stored attachments belong to the user whose id they're filed under.
+  const owns = (userId: string, blobKey: string) =>
+    [`uploads/${userId}/`, `attachments/${userId}/`].some((prefix) => blobKey.startsWith(prefix)) &&
+    !blobKey.includes('..');
+
   // Only the user's own uploads and stored attachments can go out with their mail.
   function checkAttachments(userId: string, list: OutgoingAttachment[]) {
     for (const attachment of list) {
-      const own = [`uploads/${userId}/`, `attachments/${userId}/`];
-      if (!own.some((prefix) => attachment.blobKey.startsWith(prefix))) {
+      if (!owns(userId, attachment.blobKey)) {
         throw new ValidationError(`The attachment ${attachment.filename} is not available`);
       }
     }
@@ -141,6 +145,13 @@ export function createComposeService({
         contentType: file.contentType,
         sizeBytes: file.body.length,
       } satisfies OutgoingAttachment;
+    },
+
+    // An attached file's contents, to open or download it while writing.
+    async download(userId: string, blobKey: string) {
+      const blob = owns(userId, blobKey) ? await blobs.get(blobKey) : null;
+      if (!blob) throw new NotFoundError('That file is not available');
+      return blob;
     },
 
     // An attachment of a stored message, to forward it.
