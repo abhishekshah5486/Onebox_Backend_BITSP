@@ -10,9 +10,16 @@ export const hasCategories = (client: ImapFlow, role: string) =>
 // Gmail exposes categories only through its own search syntax. Caller holds the folder lock.
 export async function readCategories(
   client: ImapFlow,
-  scope: { uid: string } | { seq: string } | { all: true },
+  range: { uid: string } | { seq: string } | { all: true },
 ): Promise<Map<number, MailCategory[]>> {
   const result = new Map<number, MailCategory[]>();
+  // Gmail matches nothing when X-GM-RAW is paired with a sequence range, so name the UIDs.
+  let scope = range;
+  if ('seq' in range) {
+    const uids = (await client.search({ seq: range.seq }, { uid: true })) || [];
+    if (!uids.length) return result;
+    scope = { uid: uids.join(',') };
+  }
   for (const category of MAIL_CATEGORIES) {
     const uids =
       (await client.search({ ...scope, gmraw: `category:${category}` }, { uid: true })) || [];

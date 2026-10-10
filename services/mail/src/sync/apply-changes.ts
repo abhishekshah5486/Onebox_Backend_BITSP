@@ -222,6 +222,7 @@ export function createChangesHandler(
               isRead: 1,
               isStarred: 1,
               category: 1,
+              categories: 1,
               movingTo: 1,
             },
           },
