@@ -22,7 +22,7 @@ import type { ProviderAdapter } from './providers/types';
 
 const logger = createLogger({ service: 'llm-proxy', pretty: process.stdout.isTTY });
 const config = loadLlmProxyConfig();
-const pg = createPgClient(config.DATABASE_URL);
+const pg = createPgClient(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX });
 await pg.ping();
 await migrateLlm(pg, logger);
 

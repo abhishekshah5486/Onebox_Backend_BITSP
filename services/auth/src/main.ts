@@ -8,7 +8,7 @@ import { createAuthDeps } from './wiring';
 
 const logger = createLogger({ service: 'auth', pretty: process.stdout.isTTY });
 const config = loadAuthConfig();
-const pg = createPgClient(config.DATABASE_URL);
+const pg = createPgClient(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX });
 
 await pg.ping();
 logger.info('database connected');

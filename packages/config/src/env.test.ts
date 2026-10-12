@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { envBoolean, envPort } from './env';
+import { envBoolean, envPoolSize, envPort } from './env';
 
 describe('envBoolean', () => {
   it.each([
@@ -23,5 +23,16 @@ describe('envPort', () => {
 
   it.each(['0', '65536', '80.5', 'http'])('rejects %s', (input) => {
     expect(envPort.safeParse(input).success).toBe(false);
+  });
+});
+
+describe('envPoolSize', () => {
+  it('defaults to a small pool and accepts a larger one', () => {
+    expect(envPoolSize.parse(undefined)).toBe(2);
+    expect(envPoolSize.parse('8')).toBe(8);
+  });
+
+  it.each(['0', '51', 'many'])('rejects %s', (input) => {
+    expect(envPoolSize.safeParse(input).success).toBe(false);
   });
 });

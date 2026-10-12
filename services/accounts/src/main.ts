@@ -10,7 +10,7 @@ import { createImapVerifier } from './imap/verify-imap';
 
 const logger = createLogger({ service: 'accounts', pretty: process.stdout.isTTY });
 const config = loadAccountsConfig();
-const pg = createPgClient(config.DATABASE_URL);
+const pg = createPgClient(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX });
 
 await pg.ping();
 logger.info('database connected');

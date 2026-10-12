@@ -13,7 +13,7 @@ const REFILL_EVERY_MS = 10 * 60_000;
 
 const logger = createLogger({ service: 'billing', pretty: process.stdout.isTTY });
 const config = loadBillingConfig();
-const pg = createPgClient(config.DATABASE_URL);
+const pg = createPgClient(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX });
 
 await pg.ping();
 logger.info('database connected');

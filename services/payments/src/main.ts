@@ -15,7 +15,7 @@ import { createStripeWebhooks } from './webhooks/stripe-webhooks';
 
 const logger = createLogger({ service: 'payments', pretty: process.stdout.isTTY });
 const config = loadPaymentsConfig();
-const pg = createPgClient(config.DATABASE_URL);
+const pg = createPgClient(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX });
 
 await pg.ping();
 logger.info('database connected');
