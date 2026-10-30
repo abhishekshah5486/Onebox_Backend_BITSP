@@ -5,7 +5,7 @@ import { startMongo, type TestMongo } from '@onebox/testing';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { mailCollections, type MailCollections, type ThreadDoc } from '../db/collections';
 import { enableThreadPreImages, startLiveFeed } from './live-feed';
-import { RESUME_KEY, startSearchFeed } from './search-feed';
+import { BACKFILL_KEY, RESUME_KEY, START_KEY, startSearchFeed } from './search-feed';
 import { storedMessage } from '../test/fixtures';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
@@ -74,45 +74,90 @@ describe('live feed', () => {
 });
 
 describe('search feed', () => {
-  it('backfills stored mail, follows changes, and resumes where it stopped', async () => {
-    await collections.messages.insertOne({
-      ...storedMessage(),
-      htmlBody: '<p>x</p>',
-    });
-    const redis = memoryRedis();
-    const index = recordingQueue();
-    const embed = recordingQueue();
-
-    const first = startSearchFeed({
+  const copy = (id: string, overrides: Parameters<typeof storedMessage>[0] = {}) => ({
+    ...storedMessage({ _id: id, messageIdHeader: '<quote@acme>', ...overrides }),
+    htmlBody: '<p>x</p>',
+  });
+  const feedWith = (redis: ReturnType<typeof memoryRedis>, queue = recordingQueue()) => ({
+    queue,
+    feed: startSearchFeed({
       db: handle.db,
       messages: collections.messages,
       redis,
-      queues: [index, embed],
+      queues: [queue],
       logger,
-    });
-    await vi.waitFor(() => expect(index.jobs).toHaveLength(1), { timeout: 10_000 });
-    expect(index.jobs[0]!.payload).toMatchObject({ op: 'upsert', doc: { messageId: 'm1' } });
-    expect(embed.jobs).toHaveLength(1);
+    }),
+  });
+
+  it('backfills each email once, however many folders hold it', async () => {
+    await collections.messages.deleteMany({});
+    await collections.messages.insertMany([
+      copy('m1'),
+      copy('m2', { folder: '[Gmail]/All Mail', role: 'archive' }),
+      copy('m3', { messageIdHeader: null }),
+    ]);
+    const redis = memoryRedis();
+    const { queue, feed } = feedWith(redis);
+    await vi.waitFor(() => expect(redis.store.has(START_KEY)).toBe(true), { timeout: 10_000 });
+    await feed.close();
+
+    expect(queue.jobs).toHaveLength(2);
+    const copies = queue.jobs.map((job) =>
+      job.payload.op === 'upsert' ? job.payload.doc.copies.map((c) => c.messageId) : [],
+    );
+    expect(copies).toEqual(expect.arrayContaining([['m1', 'm2'], ['m3']]));
+    expect(redis.store.has(BACKFILL_KEY)).toBe(false);
+  });
+
+  it('rebuilds the whole email on a change, and removes a copy by id', async () => {
+    const redis = memoryRedis();
+    const { queue, feed } = feedWith(redis);
+    await vi.waitFor(() => expect(redis.store.has(START_KEY)).toBe(true), { timeout: 10_000 });
     await new Promise((resolve) => setTimeout(resolve, 500));
+    queue.jobs.length = 0;
 
     await collections.messages.updateOne({ _id: 'm1' }, { $set: { pendingSince: new Date() } });
-    await collections.messages.updateOne({ _id: 'm1' }, { $set: { isRead: true } });
-    await vi.waitFor(() => expect(index.jobs).toHaveLength(2), { timeout: 10_000 });
-    expect(index.jobs[1]!.payload).toMatchObject({ op: 'upsert', doc: { isRead: true } });
+    await collections.messages.updateOne({ _id: 'm2' }, { $set: { isRead: true } });
+    await collections.messages.deleteOne({ _id: 'm1' });
+    await vi.waitFor(() => expect(queue.jobs).toHaveLength(2), { timeout: 10_000 });
+
+    const [changed, removed] = queue.jobs.map((job) => job.payload);
+    expect(changed).toMatchObject({ op: 'upsert', doc: { userId: 'u1' } });
+    expect(removed).toMatchObject({ op: 'delete', messageId: 'm1' });
+    expect(removed!.version).toBeGreaterThan(changed!.version);
     await vi.waitFor(() => expect(redis.store.has(RESUME_KEY)).toBe(true));
-    await first.close();
+    await feed.close();
 
     // Changes made while it was stopped arrive once it starts again, without a second backfill.
-    await collections.messages.deleteOne({ _id: 'm1' });
-    const second = startSearchFeed({
-      db: handle.db,
-      messages: collections.messages,
-      redis,
-      queues: [index],
-      logger,
-    });
-    await vi.waitFor(() => expect(index.jobs).toHaveLength(3), { timeout: 10_000 });
-    expect(index.jobs[2]!.payload).toEqual({ op: 'delete', messageId: 'm1' });
-    await second.close();
+    await collections.messages.deleteOne({ _id: 'm2' });
+    const again = feedWith(redis);
+    await vi.waitFor(() => expect(again.queue.jobs).toHaveLength(1), { timeout: 10_000 });
+    expect(again.queue.jobs[0]!.payload).toMatchObject({ op: 'delete', messageId: 'm2' });
+    await again.feed.close();
+  });
+
+  it('starts after its backfill when stopped before any change arrived', async () => {
+    await collections.messages.deleteMany({});
+    await collections.messages.insertOne(copy('m5', { isStarred: true }));
+    const redis = memoryRedis();
+    const first = feedWith(redis);
+    await vi.waitFor(() => expect(redis.store.has(START_KEY)).toBe(true), { timeout: 10_000 });
+    await first.feed.close();
+    expect(redis.store.has(RESUME_KEY)).toBe(false);
+
+    await collections.messages.updateOne({ _id: 'm5' }, { $set: { isStarred: false } });
+    const second = feedWith(redis, first.queue);
+    await vi.waitFor(() => expect(first.queue.jobs).toHaveLength(2), { timeout: 10_000 });
+    expect(first.queue.jobs.map((job) => job.jobId.split('-')[0])).toEqual(['backfill', 'change']);
+    await second.feed.close();
+  });
+
+  it('re-queues an interrupted backfill under the same job ids', async () => {
+    const redis = memoryRedis();
+    redis.store.set(BACKFILL_KEY, 'run1');
+    const { queue, feed } = feedWith(redis);
+    await vi.waitFor(() => expect(redis.store.has(START_KEY)).toBe(true), { timeout: 10_000 });
+    await feed.close();
+    expect(queue.jobs[0]!.jobId).toMatch(/^backfill-run1-[0-9a-f]{40}$/);
   });
 });

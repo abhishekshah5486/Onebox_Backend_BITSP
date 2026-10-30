@@ -12,57 +12,73 @@ import { Timestamp } from 'mongodb';
 import type { MessageDoc } from '../db/collections';
 
 export const RESUME_KEY = 'search:feed:resume';
+// Where the stream starts once the backfill is queued, until it has a resume token of its own.
+export const START_KEY = 'search:feed:start';
+// Kept while a backfill is under way, so a restart re-queues under the same job ids.
+export const BACKFILL_KEY = 'search:feed:backfill';
 const BACKFILL_BATCH = 500;
 const RESTART_DELAY_MS = 5_000;
 // Resume tokens the server no longer has (history rolled past them, or a malformed token).
 const LOST_HISTORY = new Set([280, 286]);
 // Changes search doesn't care about: bookkeeping while an action reaches the server.
 const IGNORED_FIELDS = new Set(['pendingSince', 'movingTo', 'flags', 'unsubscribe']);
-// Bodies are never needed for search and can be huge, so they're left out of the stream.
-const WITHOUT_HTML = { 'fullDocument.htmlBody': 0 } as const;
+// Bodies are never needed for search and can be huge, so they're left out.
+const WITHOUT_HTML = { htmlBody: 0 } as const;
 
 type IndexedMessage = Omit<MessageDoc, 'htmlBody'>;
+type CopyKey = Pick<MessageDoc, '_id' | 'userId' | 'accountId' | 'messageIdHeader'>;
 
-export function toSearchDocument(doc: IndexedMessage): SearchDocument {
-  const labels = new Set(doc.aiLabels ?? []);
-  if (doc.role === 'label') labels.add(doc.folder);
+const hash = (value: string) => createHash('sha1').update(value).digest('hex');
+
+// One email, whichever folders hold a copy of it; a copy without a Message-ID stands alone.
+export const searchKey = (copy: CopyKey) =>
+  hash([copy.userId, copy.accountId, copy.messageIdHeader ?? `copy:${copy._id}`].join('\n'));
+
+// A cluster time as one increasing number (ops within a second stay far below a million).
+export const versionOf = (time: Timestamp) => time.high * 1_000_000 + time.low;
+
+// The copies of one email, merged: content from the first, folders and flags from all.
+export function toSearchDocument(copies: IndexedMessage[]): SearchDocument {
+  const sorted = [...copies].sort((a, b) => a._id.localeCompare(b._id));
+  const doc = sorted[0]!;
   return {
-    messageId: doc._id,
+    key: searchKey(doc),
+    copies: sorted.map((copy) => ({ messageId: copy._id, folder: copy.folder, role: copy.role })),
     userId: doc.userId,
     accountId: doc.accountId,
     threadId: doc.threadId,
-    folder: doc.folder,
-    role: doc.role,
     from: doc.from,
     to: doc.to,
     cc: doc.cc,
     subject: doc.subject,
     body: (doc.textBody || doc.snippet).slice(0, MAX_INDEXED_BODY_CHARS),
     attachmentNames: doc.attachments.filter((a) => !a.inline).map((a) => a.filename),
-    labels: [...labels],
-    categories: doc.categories ?? [],
-    isRead: doc.isRead,
-    isStarred: doc.isStarred,
+    labels: [...new Set(sorted.flatMap((copy) => copy.aiLabels ?? []))],
+    categories: [...new Set(sorted.flatMap((copy) => copy.categories ?? []))],
+    isRead: sorted.every((copy) => copy.isRead),
+    isStarred: sorted.some((copy) => copy.isStarred),
     sizeBytes: doc.sizeBytes,
     receivedAt: doc.receivedAt.toISOString(),
   };
 }
 
-// What a change means for search: index the message again, drop it, or nothing.
-export function indexPayloadOf(change: ChangeStreamDocument<IndexedMessage>): IndexPayload | null {
+// The copy a change is about, if search cares: removed (by id) or changed (to rebuild from).
+export function changedCopy(
+  change: ChangeStreamDocument<IndexedMessage>,
+): { removed: string } | { changed: IndexedMessage } | null {
   switch (change.operationType) {
     case 'delete':
-      return { op: 'delete', messageId: change.documentKey._id };
+      return { removed: change.documentKey._id };
     case 'update': {
       const touched = Object.keys(change.updateDescription.updatedFields ?? {});
       const removed = change.updateDescription.removedFields ?? [];
       const relevant = [...touched, ...removed].some((field) => !IGNORED_FIELDS.has(field));
-      if (!relevant || !change.fullDocument) return null;
-      return { op: 'upsert', doc: toSearchDocument(change.fullDocument) };
+      // No document means it was deleted since; that delete has its own event.
+      return relevant && change.fullDocument ? { changed: change.fullDocument } : null;
     }
     case 'insert':
     case 'replace':
-      return { op: 'upsert', doc: toSearchDocument(change.fullDocument) };
+      return { changed: change.fullDocument };
     default:
       return null;
   }
@@ -75,9 +91,7 @@ export interface ResumeStore {
   del(key: string): Promise<unknown>;
 }
 
-const hash = (value: string) => createHash('sha1').update(value).digest('hex');
-
-// Keeps the search service's indexes in step with stored mail: every message once on first run,
+// Keeps the search service's indexes in step with stored mail: every email once on first run,
 // then each change, resuming after a restart from where it stopped.
 export function startSearchFeed({
   db,
@@ -102,48 +116,100 @@ export function startSearchFeed({
     }
   };
 
+  const copiesOf = (copy: CopyKey) =>
+    messages
+      .find(
+        copy.messageIdHeader
+          ? {
+              userId: copy.userId,
+              accountId: copy.accountId,
+              messageIdHeader: copy.messageIdHeader,
+            }
+          : { _id: copy._id },
+        { projection: WITHOUT_HTML },
+      )
+      .toArray() as Promise<IndexedMessage[]>;
+
   async function backfill(): Promise<Timestamp> {
     // Changes made while the backfill runs are picked up by the stream that starts here.
-    const { operationTime } = (await db.command({ ping: 1 })) as { operationTime: Timestamp };
-    const run = Date.now().toString(36);
+    // hello, unlike ping, reports the cluster time on Atlas too.
+    const { operationTime } = (await db.command({ hello: 1 })) as { operationTime?: Timestamp };
+    if (!operationTime) throw new Error('the database did not report its operation time');
+    const version = versionOf(operationTime);
+    const run = (await redis.get(BACKFILL_KEY)) ?? Date.now().toString(36);
+    await redis.set(BACKFILL_KEY, run);
+
     let count = 0;
-    const cursor = messages
-      .find({}, { projection: { htmlBody: 0 } })
-      .batchSize(BACKFILL_BATCH) as unknown as AsyncIterable<IndexedMessage>;
-    for await (const doc of cursor) {
-      if (closed) break;
-      await send(`backfill-${run}-${hash(doc._id)}`, doc.userId, {
-        op: 'upsert',
-        doc: toSearchDocument(doc),
-      });
+    let group: IndexedMessage[] = [];
+    const flush = async () => {
+      if (group.length === 0) return;
+      const doc = toSearchDocument(group);
+      await send(`backfill-${run}-${doc.key}`, doc.userId, { op: 'upsert', version, doc });
       count += 1;
+      group = [];
+    };
+    // Sorted so the copies of one email arrive together and become one document.
+    const cursor = messages
+      .find({}, { projection: WITHOUT_HTML })
+      .sort({ userId: 1, accountId: 1, messageIdHeader: 1 })
+      .batchSize(BACKFILL_BATCH) as unknown as AsyncIterable<IndexedMessage>;
+    for await (const copy of cursor) {
+      if (closed) throw new Error('search feed closed during backfill');
+      if (group[0] && searchKey(group[0]) !== searchKey(copy)) await flush();
+      group.push(copy);
     }
-    logger.info({ messages: count }, 'search backfill queued');
+    await flush();
+    logger.info({ emails: count }, 'search backfill queued');
     // The stream's start is inclusive, and the backfill already covered that last write.
-    return new Timestamp({ t: operationTime.high, i: operationTime.low + 1 });
+    const start = new Timestamp({ t: operationTime.high, i: operationTime.low + 1 });
+    await redis.set(START_KEY, JSON.stringify({ t: start.high, i: start.low }));
+    await redis.del(BACKFILL_KEY);
+    return start;
+  }
+
+  async function startPoint() {
+    const saved = await redis.get(RESUME_KEY);
+    if (saved) return { resumeAfter: JSON.parse(saved) as ResumeToken };
+    const at = await redis.get(START_KEY);
+    if (at) {
+      return { startAtOperationTime: new Timestamp(JSON.parse(at) as { t: number; i: number }) };
+    }
+    return { startAtOperationTime: await backfill() };
+  }
+
+  // The email as it stands now, so whichever job lands last carries the latest state.
+  async function payloadOf(
+    change: ChangeStreamDocument<IndexedMessage>,
+  ): Promise<{ userId: string; payload: IndexPayload } | null> {
+    const copy = changedCopy(change);
+    if (!copy || !('clusterTime' in change) || !change.clusterTime) return null;
+    const version = versionOf(change.clusterTime);
+    // A removed copy's owner isn't in its event; search finds it by the copy's id.
+    if ('removed' in copy) {
+      return { userId: 'system', payload: { op: 'delete', version, messageId: copy.removed } };
+    }
+    const copies = await copiesOf(copy.changed);
+    if (copies.length === 0) return null;
+    const doc = toSearchDocument(copies);
+    return { userId: doc.userId, payload: { op: 'upsert', version, doc } };
   }
 
   async function follow() {
-    const saved = await redis.get(RESUME_KEY);
-    const start = saved
-      ? { resumeAfter: JSON.parse(saved) as ResumeToken }
-      : { startAtOperationTime: await backfill() };
+    const start = await startPoint();
     if (closed) return;
     stream = messages.watch<IndexedMessage, ChangeStreamDocument<IndexedMessage>>(
       [
         { $match: { operationType: { $in: ['insert', 'update', 'replace', 'delete'] } } },
-        { $project: WITHOUT_HTML },
+        { $project: { 'fullDocument.htmlBody': 0 } },
       ],
       { fullDocument: 'updateLookup', ...start },
     );
-    logger.info({ resumed: Boolean(saved) }, 'search feed started');
+    logger.info({ resumed: 'resumeAfter' in start }, 'search feed started');
     for await (const change of stream) {
-      const payload = indexPayloadOf(change);
-      if (payload) {
-        // Deleted mail carries no owner in its change event; search deletes by message id alone.
-        const userId = payload.op === 'upsert' ? payload.doc.userId : 'system';
+      const job = await payloadOf(change);
+      if (job) {
         const token = (change._id as { _data: string })._data;
-        await send(`change-${hash(token)}`, userId, payload);
+        await send(`change-${hash(token)}`, job.userId, job.payload);
       }
       await redis.set(RESUME_KEY, JSON.stringify(change._id));
     }
@@ -152,10 +218,11 @@ export function startSearchFeed({
 
   const run = () => {
     follow().catch(async (err: unknown) => {
+      if (closed) return;
       const code = (err as { code?: number }).code;
       if (code !== undefined && LOST_HISTORY.has(code)) {
         logger.warn({ code }, 'search feed history lost, indexing everything again');
-        await redis.del(RESUME_KEY);
+        for (const key of [RESUME_KEY, START_KEY, BACKFILL_KEY]) await redis.del(key);
       } else {
         logger.warn({ err: (err as Error).message }, 'search feed interrupted, reopening');
       }
