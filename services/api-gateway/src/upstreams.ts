@@ -90,5 +90,18 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       rewritePrefix: '/ai',
       access: 'authenticated',
     },
+    // A long-lived stream of the user's live events.
+    {
+      prefix: '/api/v1/events',
+      url: config.REALTIME_SERVICE_URL,
+      rewritePrefix: '/events',
+      access: 'authenticated',
+    },
+    {
+      prefix: '/api/v1/search',
+      url: config.SEARCH_SERVICE_URL,
+      rewritePrefix: '/search',
+      access: 'authenticated',
+    },
   ];
 }

@@ -43,6 +43,8 @@ describe('defineUpstreams', () => {
       '/api/v1/mail',
       '/api/v1/llm',
       '/api/v1/ai',
+      '/api/v1/events',
+      '/api/v1/search',
     ]);
     expect(others.every((u) => u.access === 'authenticated')).toBe(true);
   });

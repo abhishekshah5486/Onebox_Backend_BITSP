@@ -28,6 +28,8 @@ spec:
             - { name: PAYMENTS_SERVICE_URL, value: 'http://payments:4008' }
             - { name: BILLING_SERVICE_URL, value: 'http://billing:4009' }
             - { name: MAIL_SERVICE_URL, value: 'http://mail:4003' }
+            - { name: REALTIME_SERVICE_URL, value: 'http://realtime:4010' }
+            - { name: SEARCH_SERVICE_URL, value: 'http://search:4011' }
           readinessProbe:
             httpGet: { path: /health/ready, port: 4000 }
             periodSeconds: 10
