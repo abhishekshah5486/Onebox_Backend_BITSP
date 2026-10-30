@@ -8,6 +8,7 @@ import { buildApp } from './app';
 import { createEmbedClient } from './clients/embed-client';
 import { createThreadLookup } from './clients/mail-client';
 import { loadSearchConfig } from './config';
+import { createIndexState } from './index-state';
 import { createKeywordIndex } from './keyword/keyword-index';
 import { createVectorIndex } from './semantic/vector-index';
 import { startWorkers } from './workers';
@@ -38,6 +39,7 @@ const workers = startWorkers({
   keyword,
   vector,
   embed,
+  state: createIndexState(redis),
   indexConcurrency: config.INDEX_CONCURRENCY,
   embedConcurrency: config.EMBED_CONCURRENCY,
 });

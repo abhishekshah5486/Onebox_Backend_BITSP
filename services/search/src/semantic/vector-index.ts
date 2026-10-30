@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
-import type { SearchDocument } from '@onebox/contracts';
+import type { SearchCopy, SearchDocument } from '@onebox/contracts';
 import type { QdrantClient, Schemas } from '@qdrant/js-client-rest';
 import { v5 as uuidv5 } from 'uuid';
+import { labelsOf } from '../index-state';
 import { HIDDEN_ROLES } from '../keyword/keyword-query';
 import type { ParsedQuery } from '../query/parse';
 
 // Enough for the gist of a mail while keeping each embedding cheap.
 const MAX_EMBEDDED_CHARS = 8_000;
-// Qdrant ids must be UUIDs, so message ids map onto one in a fixed namespace.
+// Qdrant ids must be UUIDs, so email keys map onto one in a fixed namespace.
 const POINT_NAMESPACE = '6f0c2a52-7d4b-4c55-9a8f-3a1d1b0e5c11';
 
 export type Embed = (texts: string[]) => Promise<number[][]>;
@@ -18,7 +19,7 @@ export interface SemanticHit {
   score: number;
 }
 
-export const pointId = (messageId: string) => uuidv5(messageId, POINT_NAMESPACE);
+export const pointId = (key: string) => uuidv5(key, POINT_NAMESPACE);
 
 export function embeddingText(doc: SearchDocument) {
   const from = doc.from ? `${doc.from.name ?? ''} <${doc.from.address}>`.trim() : '';
@@ -27,27 +28,45 @@ export function embeddingText(doc: SearchDocument) {
     .slice(0, MAX_EMBEDDED_CHARS);
 }
 
-const payloadOf = (doc: SearchDocument, contentHash: string) => ({
-  messageId: doc.messageId,
+interface Payload {
+  key: string;
+  copies: SearchCopy[];
+  roles: string[];
+  aiLabels: string[];
+  labels: string[];
+  version: number;
+  contentHash: string;
+  [field: string]: unknown;
+}
+
+const placesOf = (doc: Pick<SearchDocument, 'labels' | 'copies'>) => ({
+  copies: doc.copies,
+  roles: [...new Set(doc.copies.map((copy) => copy.role))],
+  aiLabels: doc.labels,
+  labels: labelsOf(doc).map((label) => label.toLowerCase()),
+});
+
+const payloadOf = (doc: SearchDocument, version: number, contentHash: string): Payload => ({
+  ...placesOf(doc),
+  key: doc.key,
   userId: doc.userId,
   accountId: doc.accountId,
   threadId: doc.threadId,
-  role: doc.role,
   from: [doc.from?.name, doc.from?.address].filter(Boolean).join(' '),
-  labels: doc.labels.map((label) => label.toLowerCase()),
   categories: doc.categories,
   isRead: doc.isRead,
   isStarred: doc.isStarred,
   hasAttachment: doc.attachmentNames.length > 0,
   sizeBytes: doc.sizeBytes,
   receivedAt: doc.receivedAt,
+  version,
   contentHash,
 });
 
 const INDEXED_FIELDS: [string, Schemas['PayloadFieldSchema']][] = [
   ['userId', { type: 'keyword', is_tenant: true }],
   ['threadId', 'keyword'],
-  ['role', 'keyword'],
+  ['roles', 'keyword'],
   ['labels', 'keyword'],
   ['categories', 'keyword'],
   ['contentHash', 'keyword'],
@@ -68,8 +87,8 @@ export function vectorFilter(userId: string, query: ParsedQuery): Schemas['Filte
     must.push({ key: 'labels', match: { value: label.toLowerCase() } });
   for (const category of query.categories)
     must.push({ key: 'categories', match: { value: category } });
-  if (query.in && query.in !== 'anywhere') must.push({ key: 'role', match: { value: query.in } });
-  if (!query.in) mustNot.push({ key: 'role', match: { any: HIDDEN_ROLES } });
+  if (query.in && query.in !== 'anywhere') must.push({ key: 'roles', match: { value: query.in } });
+  if (!query.in) mustNot.push({ key: 'roles', match: { any: HIDDEN_ROLES } });
   if (query.isUnread !== null) must.push({ key: 'isRead', match: { value: !query.isUnread } });
   if (query.isStarred) must.push({ key: 'isStarred', match: { value: true } });
   if (query.hasAttachment) must.push({ key: 'hasAttachment', match: { value: true } });
@@ -94,24 +113,15 @@ export function vectorFilter(userId: string, query: ParsedQuery): Schemas['Filte
   return { must, must_not: mustNot };
 }
 
+// Callers hold the email's lock, so reads and writes of one point don't interleave.
 export function createVectorIndex(client: QdrantClient, collection: string, dimensions: number) {
-  // The same mail is stored once per folder; an existing vector for its text is reused.
-  async function vectorFor(doc: SearchDocument, contentHash: string, embed: Embed) {
-    const { points } = await client.scroll(collection, {
-      filter: {
-        must: [
-          { key: 'userId', match: { value: doc.userId } },
-          { key: 'contentHash', match: { value: contentHash } },
-        ],
-      },
-      limit: 1,
-      with_vector: true,
-      with_payload: false,
+  async function current(key: string) {
+    const [point] = await client.retrieve(collection, {
+      ids: [pointId(key)],
+      with_payload: true,
+      with_vector: false,
     });
-    const existing = points[0]?.vector;
-    if (Array.isArray(existing) && typeof existing[0] === 'number') return existing as number[];
-    const [vector] = await embed([embeddingText(doc)]);
-    return vector!;
+    return point ? (point.payload as unknown as Payload) : null;
   }
 
   return {
@@ -130,27 +140,38 @@ export function createVectorIndex(client: QdrantClient, collection: string, dime
       }
     },
 
-    // Returns whether a new embedding was needed.
-    async upsert(doc: SearchDocument, embed: Embed) {
-      const id = pointId(doc.messageId);
+    // Embeds only when the text changed; returns what it did.
+    async upsert(doc: SearchDocument, version: number, embed: Embed) {
+      const id = pointId(doc.key);
       const contentHash = createHash('sha256').update(embeddingText(doc)).digest('hex');
-      const payload = payloadOf(doc, contentHash);
-      const [current] = await client.retrieve(collection, {
-        ids: [id],
-        with_payload: ['contentHash'],
-        with_vector: false,
-      });
-      if (current?.payload?.contentHash === contentHash) {
+      const payload = payloadOf(doc, version, contentHash);
+      const existing = await current(doc.key);
+      if (existing && existing.version > version) return 'stale' as const;
+      if (existing?.contentHash === contentHash) {
         await client.overwritePayload(collection, { points: [id], payload, wait: true });
-        return false;
+        return 'updated' as const;
       }
-      const vector = await vectorFor(doc, contentHash, embed);
-      await client.upsert(collection, { points: [{ id, vector, payload }], wait: true });
-      return true;
+      const [vector] = await embed([embeddingText(doc)]);
+      await client.upsert(collection, { points: [{ id, vector: vector!, payload }], wait: true });
+      return 'embedded' as const;
     },
 
-    async remove(messageId: string) {
-      await client.delete(collection, { points: [pointId(messageId)], wait: true });
+    // Drops one copy; the email goes with its last. Returns whether it is gone.
+    async removeCopy(key: string, messageId: string, version: number) {
+      const existing = await current(key);
+      if (!existing || existing.version > version) return false;
+      const copies = existing.copies.filter((copy) => copy.messageId !== messageId);
+      if (copies.length === existing.copies.length) return false;
+      if (copies.length === 0) {
+        await client.delete(collection, { points: [pointId(key)], wait: true });
+        return true;
+      }
+      await client.setPayload(collection, {
+        points: [pointId(key)],
+        payload: { ...placesOf({ labels: existing.aiLabels, copies }), version },
+        wait: true,
+      });
+      return false;
     },
 
     // Best match per conversation.
@@ -161,11 +182,11 @@ export function createVectorIndex(client: QdrantClient, collection: string, dime
         group_by: 'threadId',
         group_size: 1,
         limit,
-        with_payload: ['messageId', 'threadId'],
+        with_payload: ['copies', 'threadId'],
       });
       return groups.flatMap((group): SemanticHit[] => {
         const hit = group.hits[0];
-        const messageId = hit?.payload?.messageId;
+        const messageId = (hit?.payload?.copies as SearchCopy[] | undefined)?.[0]?.messageId;
         if (!hit || typeof messageId !== 'string') return [];
         return [{ threadId: String(group.id), messageId, score: hit.score }];
       });

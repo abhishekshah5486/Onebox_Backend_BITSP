@@ -60,8 +60,8 @@ export function keywordQuery(
 
   filter.push(...query.labels.map((label) => ({ term: { labels: label } })));
   filter.push(...query.categories.map((category) => ({ term: { categories: category } })));
-  if (query.in && query.in !== 'anywhere') filter.push({ term: { role: query.in } });
-  if (!query.in) mustNot.push({ terms: { role: HIDDEN_ROLES } });
+  if (query.in && query.in !== 'anywhere') filter.push({ term: { 'copies.role': query.in } });
+  if (!query.in) mustNot.push({ terms: { 'copies.role': HIDDEN_ROLES } });
   if (query.isUnread !== null) filter.push({ term: { isRead: !query.isUnread } });
   if (query.isStarred) filter.push({ term: { isStarred: true } });
   if (query.hasAttachment) filter.push({ exists: { field: 'attachmentNames' } });

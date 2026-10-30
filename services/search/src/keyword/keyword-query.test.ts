@@ -8,12 +8,12 @@ describe('keywordQuery', () => {
   it('scopes to the user and hides spam and trash by default', () => {
     const { bool } = build('');
     expect(bool.filter).toEqual([{ term: { userId: 'u1' } }]);
-    expect(bool.must_not).toEqual([{ terms: { role: ['spam', 'trash'] } }]);
+    expect(bool.must_not).toEqual([{ terms: { 'copies.role': ['spam', 'trash'] } }]);
   });
 
   it('includes spam and trash when a place is asked for', () => {
     expect(build('in:anywhere').bool.must_not).toEqual([]);
-    expect(build('in:spam').bool.filter).toContainEqual({ term: { role: 'spam' } });
+    expect(build('in:spam').bool.filter).toContainEqual({ term: { 'copies.role': 'spam' } });
   });
 
   it('needs every free word to match and each phrase in order', () => {

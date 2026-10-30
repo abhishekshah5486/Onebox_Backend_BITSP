@@ -4,12 +4,11 @@ import { parseQuery } from '../query/parse';
 import { embeddingText, pointId, vectorFilter } from './vector-index';
 
 const doc: SearchDocument = {
-  messageId: 'm1',
+  key: 'k1',
+  copies: [{ messageId: 'm1', folder: 'INBOX', role: 'inbox' }],
   userId: 'u1',
   accountId: 'a1',
   threadId: 't1',
-  folder: 'INBOX',
-  role: 'inbox',
   from: { name: 'Alice', address: 'alice@x.com' },
   to: [],
   cc: [],
@@ -25,10 +24,10 @@ const doc: SearchDocument = {
 };
 
 describe('vector index helpers', () => {
-  it('maps a message id onto a stable uuid', () => {
-    expect(pointId('m1')).toBe(pointId('m1'));
-    expect(pointId('m1')).not.toBe(pointId('m2'));
-    expect(pointId('m1')).toMatch(/^[0-9a-f-]{36}$/);
+  it('maps an email key onto a stable uuid', () => {
+    expect(pointId('k1')).toBe(pointId('k1'));
+    expect(pointId('k1')).not.toBe(pointId('k2'));
+    expect(pointId('k1')).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('embeds the subject, sender and a capped body', () => {
@@ -40,7 +39,7 @@ describe('vector index helpers', () => {
   it('filters by user and hides spam and trash by default', () => {
     expect(vectorFilter('u1', parseQuery(''))).toEqual({
       must: [{ key: 'userId', match: { value: 'u1' } }],
-      must_not: [{ key: 'role', match: { any: ['spam', 'trash'] } }],
+      must_not: [{ key: 'roles', match: { any: ['spam', 'trash'] } }],
     });
   });
 
@@ -54,7 +53,7 @@ describe('vector index helpers', () => {
         { key: 'from', match: { text: 'alice' } },
         { key: 'labels', match: { value: 'travel' } },
         { key: 'isStarred', match: { value: true } },
-        { key: 'role', match: { value: 'inbox' } },
+        { key: 'roles', match: { value: 'inbox' } },
       ]),
     );
     expect(filter.must_not).toEqual([]);

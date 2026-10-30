@@ -1,13 +1,18 @@
-import type { SearchDocument } from '@onebox/contracts';
+import type { SearchCopy, SearchDocument } from '@onebox/contracts';
+
+export const copy = (
+  messageId: string,
+  role: SearchCopy['role'] = 'inbox',
+  folder = role === 'inbox' ? 'INBOX' : role,
+): SearchCopy => ({ messageId, folder, role });
 
 export function searchDoc(overrides: Partial<SearchDocument> = {}): SearchDocument {
   return {
-    messageId: 'm1',
+    key: 'k1',
+    copies: [copy('m1')],
     userId: 'u1',
     accountId: 'a1',
     threadId: 't1',
-    folder: 'INBOX',
-    role: 'inbox',
     from: { name: 'Alice Smith', address: 'alice@example.com' },
     to: [{ name: null, address: 'me@example.com' }],
     cc: [],
