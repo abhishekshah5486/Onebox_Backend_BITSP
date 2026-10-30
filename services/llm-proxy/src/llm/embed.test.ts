@@ -75,6 +75,15 @@ describe('createEmbedder', () => {
       statusCode: 502,
     });
   });
+
+  it('treats a rejected key like a missing one', async () => {
+    stubOpenAi(401);
+    const embed = createEmbedder({ apiKey: 'wrong', logger });
+    await expect(embed({ userId, texts: ['a'], charge: false })).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'EMBEDDINGS_UNAVAILABLE',
+    });
+  });
 });
 
 describe('POST /internal/embed', () => {

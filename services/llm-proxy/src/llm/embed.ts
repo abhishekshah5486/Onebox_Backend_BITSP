@@ -73,6 +73,12 @@ export function createEmbedder({
     } catch (err) {
       if (!(err instanceof ProviderError)) throw err;
       logger.warn({ code: err.code, err: err.message }, 'embedding call failed');
+      // A rejected key is a setup problem, like no key at all: retrying won't help.
+      if (err.code === 'AUTH') {
+        throw new ServiceUnavailableError('Semantic search needs a working OpenAI key', {
+          code: 'EMBEDDINGS_UNAVAILABLE',
+        });
+      }
       throw new ExternalServiceError('The embedding model could not be reached', {
         code: err.code,
       });

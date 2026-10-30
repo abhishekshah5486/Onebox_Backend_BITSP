@@ -26,8 +26,12 @@ export function createEmbedClient(baseUrl: string, internalToken: string): Embed
     if (response.status === 402) {
       throw new PaymentRequiredError('You are out of AI credits', { code: 'OUT_OF_CREDITS' });
     }
+    // No working provider key: jobs stop retrying until it is fixed and they are replayed.
     if (response.status === 503) {
-      throw new ServiceUnavailableError('AI search is not set up', { code: 'EMBEDDINGS_OFF' });
+      throw new ServiceUnavailableError('AI search is not set up', {
+        code: 'EMBEDDINGS_OFF',
+        retryable: false,
+      });
     }
     if (!response.ok) throw new ExternalServiceError(`llm-proxy answered HTTP ${response.status}`);
     return ((await response.json()) as { vectors: number[][] }).vectors;
