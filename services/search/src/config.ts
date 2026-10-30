@@ -14,8 +14,8 @@ const schema = z.object({
   ELASTICSEARCH_INDEX: z.string().min(1).default('mail-messages'),
   QDRANT_URL: z.url().default('http://localhost:6333'),
   QDRANT_API_KEY: z.string().min(1).optional(),
-  QDRANT_COLLECTION: z.string().min(1).default('mail_messages'),
-  EMBEDDING_DIMENSIONS: z.coerce.number().int().min(64).max(4096).default(1024),
+  // Defaults to one named after the embedding model, so a new model starts a fresh collection.
+  QDRANT_COLLECTION: z.string().min(1).optional(),
   INDEX_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(8),
   EMBED_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
 });

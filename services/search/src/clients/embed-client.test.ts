@@ -1,6 +1,6 @@
 import { INTERNAL_TOKEN_HEADER } from '@onebox/auth-kit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createEmbedClient } from './embed-client';
+import { collectionFor, createEmbedClient, fetchEmbedModel } from './embed-client';
 
 const answer = (status: number, body: unknown = {}) =>
   vi.stubGlobal(
@@ -35,5 +35,35 @@ describe('createEmbedClient', () => {
     await expect(embed(request)).rejects.toMatchObject({ statusCode: 402 });
     answer(502);
     await expect(embed(request)).rejects.toMatchObject({ statusCode: 502, retryable: true });
+  });
+});
+
+describe('fetchEmbedModel', () => {
+  const model = { id: 'ollama/bge-m3', name: 'bge-m3 (local)', dimensions: 1024 };
+
+  it('waits for llm-proxy, then returns its model', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(model)));
+    vi.stubGlobal('fetch', fetchMock);
+    const onRetry = vi.fn();
+    await expect(fetchEmbedModel('http://llm-proxy', 'token', { onRetry })).resolves.toEqual(model);
+    expect(onRetry).toHaveBeenCalledOnce();
+    expect((fetchMock.mock.calls[1]![0] as URL).href).toBe('http://llm-proxy/internal/embed/model');
+  });
+
+  it('gives up after its retries', async () => {
+    answer(500);
+    await expect(fetchEmbedModel('http://llm-proxy', 'token', { retries: 0 })).rejects.toThrow(
+      /HTTP 500/,
+    );
+  });
+
+  it('names a collection per model and size', () => {
+    expect(collectionFor(model)).toBe('mail_ollama_bge_m3_1024');
+    expect(collectionFor({ ...model, id: 'openai/text-embedding-3-large' })).toBe(
+      'mail_openai_text_embedding_3_large_1024',
+    );
   });
 });

@@ -5,7 +5,7 @@ import { createLogger } from '@onebox/logger';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { Redis } from 'ioredis';
 import { buildApp } from './app';
-import { createEmbedClient } from './clients/embed-client';
+import { collectionFor, createEmbedClient, fetchEmbedModel } from './clients/embed-client';
 import { createThreadLookup } from './clients/mail-client';
 import { loadSearchConfig } from './config';
 import { createIndexState } from './index-state';
@@ -24,15 +24,19 @@ const qdrant = new QdrantClient({
   ...(config.QDRANT_API_KEY && { apiKey: config.QDRANT_API_KEY }),
 });
 
+const internalToken = deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY);
+const model = await fetchEmbedModel(config.LLM_PROXY_SERVICE_URL, internalToken, {
+  onRetry: (err) => logger.warn({ err: err.message }, 'waiting for llm-proxy'),
+});
+const collection = config.QDRANT_COLLECTION ?? collectionFor(model);
+logger.info({ model: model.id, dimensions: model.dimensions, collection }, 'embedding model');
+
 const keyword = createKeywordIndex(elastic, config.ELASTICSEARCH_INDEX);
-const vector = createVectorIndex(qdrant, config.QDRANT_COLLECTION, config.EMBEDDING_DIMENSIONS);
+const vector = createVectorIndex(qdrant, collection, model.dimensions);
 await keyword.ensure();
 await vector.ensure();
 
-const embed = createEmbedClient(
-  config.LLM_PROXY_SERVICE_URL,
-  deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
-);
+const embed = createEmbedClient(config.LLM_PROXY_SERVICE_URL, internalToken);
 const workers = startWorkers({
   redisUrl: config.REDIS_URL,
   logger,

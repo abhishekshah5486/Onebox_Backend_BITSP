@@ -4,6 +4,7 @@ import {
   PaymentRequiredError,
   ServiceUnavailableError,
 } from '@onebox/errors';
+import pRetry from 'p-retry';
 
 export interface EmbedRequest {
   userId: string;
@@ -37,3 +38,38 @@ export function createEmbedClient(baseUrl: string, internalToken: string): Embed
     return ((await response.json()) as { vectors: number[][] }).vectors;
   };
 }
+
+export interface EmbedModel {
+  id: string;
+  name: string;
+  dimensions: number;
+}
+
+// The model llm-proxy embeds with, waiting for llm-proxy if it is still starting.
+export function fetchEmbedModel(
+  baseUrl: string,
+  internalToken: string,
+  { retries = 30, onRetry }: { retries?: number; onRetry?: (error: Error) => void } = {},
+): Promise<EmbedModel> {
+  return pRetry(
+    async () => {
+      const response = await fetch(new URL('/internal/embed/model', baseUrl), {
+        headers: { [INTERNAL_TOKEN_HEADER]: internalToken },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok)
+        throw new ExternalServiceError(`llm-proxy answered HTTP ${response.status}`);
+      return (await response.json()) as EmbedModel;
+    },
+    {
+      retries,
+      minTimeout: 1_000,
+      maxTimeout: 5_000,
+      onFailedAttempt: ({ error }) => onRetry?.(error),
+    },
+  );
+}
+
+// e.g. mail_ollama_bge_m3_1024: vectors from different models never share a collection.
+export const collectionFor = (model: EmbedModel) =>
+  `mail_${model.id.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${model.dimensions}`;

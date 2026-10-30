@@ -12,8 +12,6 @@ describe('loadSearchConfig', () => {
       ELASTICSEARCH_URL: 'http://localhost:9200',
       ELASTICSEARCH_INDEX: 'mail-messages',
       QDRANT_URL: 'http://localhost:6333',
-      QDRANT_COLLECTION: 'mail_messages',
-      EMBEDDING_DIMENSIONS: 1024,
     });
   });
 
