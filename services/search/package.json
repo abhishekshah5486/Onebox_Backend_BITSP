@@ -1,0 +1,35 @@
+{
+  "name": "@onebox/search-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@elastic/elasticsearch": "^9.5.1",
+    "@onebox/auth-kit": "*",
+    "@onebox/config": "*",
+    "@onebox/contracts": "*",
+    "@onebox/crypto": "*",
+    "@onebox/errors": "*",
+    "@onebox/http": "*",
+    "@onebox/logger": "*",
+    "@onebox/queue": "*",
+    "@qdrant/js-client-rest": "^1.20.0",
+    "bytes": "^3.1.2",
+    "fastify": "^5.12.5",
+    "fastify-type-provider-zod": "^7.0.0",
+    "ioredis": "^6.0.0",
+    "search-query-parser": "^1.6.0",
+    "uuid": "^14.0.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*",
+    "@types/bytes": "^3.1.6"
+  }
+}
