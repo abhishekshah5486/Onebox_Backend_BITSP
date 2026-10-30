@@ -63,6 +63,11 @@ export function registerLlmRoutes(
       '/internal/embed',
       { preHandler: requireInternal(deps.internalToken), schema: { body: embedBody } },
       async (request) => deps.embed(request.body),
+    )
+    .get(
+      '/internal/embed/model',
+      { preHandler: requireInternal(deps.internalToken) },
+      async () => deps.embed.model,
     );
 
   void app.register(
