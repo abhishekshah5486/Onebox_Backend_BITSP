@@ -6,6 +6,8 @@ import {
   mailboxChangePayloadSchema,
   QUEUES,
   type HistoryPayload,
+  type IndexPayload,
+  liveChannel,
   type MailboxOpPayload,
   type SendPayload,
 } from '@onebox/contracts';
@@ -33,6 +35,8 @@ import { createMailboxService } from './mail/mailbox-service';
 import { createLabelService } from './mail/label-service';
 import { createThreadActions } from './mail/thread-actions';
 import { createChangesHandler } from './sync/apply-changes';
+import { enableThreadPreImages, startLiveFeed } from './feed/live-feed';
+import { startSearchFeed } from './feed/search-feed';
 import { backfillAttachmentRefs, migrateFolderRoles } from './threads/thread-store';
 
 const logger = createLogger({ service: 'mail', pretty: process.stdout.isTTY });
@@ -122,6 +126,30 @@ if (config.MAIL_ROLE !== 'api') {
     { redisUrl: config.REDIS_URL, logger, concurrency: 1 },
   );
   cleanups.push(consumer.close, changes.close);
+
+  // Live updates for open apps, and keeping search's indexes in step with stored mail.
+  await enableThreadPreImages(mongo.db);
+  const live = startLiveFeed({
+    threads: collections.threads,
+    publish: (userId, event) => redis.publish(liveChannel(userId), JSON.stringify(event)),
+    logger,
+  });
+  const indexProducer = createProducer<IndexPayload>(QUEUES.index, {
+    redisUrl: config.REDIS_URL,
+    logger,
+  });
+  const embedProducer = createProducer<IndexPayload>(QUEUES.embed, {
+    redisUrl: config.REDIS_URL,
+    logger,
+  });
+  const searchFeed = startSearchFeed({
+    db: mongo.db,
+    messages: collections.messages,
+    redis,
+    queues: [indexProducer, embedProducer],
+    logger,
+  });
+  cleanups.push(live.close, searchFeed.close, indexProducer.close, embedProducer.close);
   logger.info({ concurrency: config.INGEST_CONCURRENCY }, 'ingest worker started');
   void backfillAttachmentRefs(collections)
     .then((count) => count > 0 && logger.info({ count }, 'attachment lists added to older threads'))
