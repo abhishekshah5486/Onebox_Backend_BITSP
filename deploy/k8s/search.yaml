@@ -1,0 +1,56 @@
+# Keyword (Elasticsearch) and AI (Qdrant) search, and the workers that keep both indexes current.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: search }
+  template:
+    metadata:
+      labels: { app: search }
+    spec:
+      # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: search
+          image: onebox/search:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4011 }]
+          env:
+            - { name: REDIS_URL, value: 'redis://redis:6379' }
+            - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - { name: MAIL_SERVICE_URL, value: 'http://mail:4003' }
+            - { name: LLM_PROXY_SERVICE_URL, value: 'http://llm-proxy:4006' }
+            - { name: ELASTICSEARCH_URL, value: 'http://elasticsearch:9200' }
+            - { name: QDRANT_URL, value: 'http://qdrant:6333' }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+          # Startup waits for the search stores and creates the index and collection.
+          startupProbe:
+            httpGet: { path: /health/live, port: 4011 }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4011 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4011 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search
+spec:
+  selector: { app: search }
+  ports: [{ port: 4011 }]

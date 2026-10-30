@@ -1,0 +1,44 @@
+# Vector store for AI search; rebuilt from MongoDB if lost.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 1Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: qdrant }
+  template:
+    metadata:
+      labels: { app: qdrant }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.19.2
+          ports: [{ containerPort: 6333 }]
+          readinessProbe:
+            httpGet: { path: /readyz, port: 6333 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts: [{ name: data, mountPath: /qdrant/storage }]
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: qdrant-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+spec:
+  selector: { app: qdrant }
+  ports: [{ port: 6333 }]
