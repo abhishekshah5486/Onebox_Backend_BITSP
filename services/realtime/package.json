@@ -1,0 +1,26 @@
+{
+  "name": "@onebox/realtime-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "build": "tsup",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@onebox/auth-kit": "*",
+    "@onebox/config": "*",
+    "@onebox/contracts": "*",
+    "@onebox/errors": "*",
+    "@onebox/http": "*",
+    "@onebox/logger": "*",
+    "fastify": "^5.12.5",
+    "ioredis": "^6.0.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@onebox/testing": "*"
+  }
+}
