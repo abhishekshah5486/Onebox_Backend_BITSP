@@ -13,6 +13,7 @@ import { createBillingClient } from './llm/billing';
 import { createBreaker } from './llm/breaker';
 import { createCatalog } from './llm/catalog';
 import { createCompleter } from './llm/complete';
+import { createEmbedder } from './llm/embed';
 import { createUsage } from './llm/usage';
 import { anthropicAdapter } from './providers/anthropic';
 import { geminiAdapter } from './providers/gemini';
@@ -81,6 +82,7 @@ const app = buildApp({
       timeoutMs: config.CALL_TIMEOUT_MS,
       billing,
     }),
+    embed: createEmbedder({ apiKey: config.OPENAI_API_KEY, billing, logger }),
     usage: createUsage(pg.db),
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     internalToken,

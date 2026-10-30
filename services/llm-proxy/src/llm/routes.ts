@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { PROVIDERS, PURPOSES } from '../db/schema';
 import { AUTO, type Catalog } from './catalog';
 import type { Completer } from './complete';
+import type { Embedder } from './embed';
 import type { Usage } from './usage';
 
 const message = z.object({
@@ -30,11 +31,18 @@ const completeBody = z.object({
   traceId: z.string().max(100).optional(),
 });
 
+const embedBody = z.object({
+  userId: z.uuid(),
+  texts: z.array(z.string().min(1).max(32_000)).min(1).max(64),
+  charge: z.boolean(),
+});
+
 export function registerLlmRoutes(
   app: HttpServer,
   deps: {
     catalog: Catalog;
     complete: Completer;
+    embed: Embedder;
     usage: Usage;
     verifyToken: TokenVerifier;
     internalToken: string;
@@ -50,6 +58,11 @@ export function registerLlmRoutes(
       '/internal/complete',
       { preHandler: requireInternal(deps.internalToken), schema: { body: completeBody } },
       async (request) => complete(request.body),
+    )
+    .post(
+      '/internal/embed',
+      { preHandler: requireInternal(deps.internalToken), schema: { body: embedBody } },
+      async (request) => deps.embed(request.body),
     );
 
   void app.register(
