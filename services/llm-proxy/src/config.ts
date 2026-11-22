@@ -32,8 +32,7 @@ const schema = z.object({
   PROVIDER_CHECK_TIMEOUT_MS: z.coerce.number().int().min(1000).default(20_000),
   // Lets users point at servers on this machine or its network (e.g. LM Studio); off in production.
   PROVIDER_ALLOW_PRIVATE_URLS: envBoolean.default(false),
-  // The providers offered for own keys, in the order shown; any other catalogue provider still
-  // works for models already added. Empty offers the whole catalogue.
+  // The providers listed first for own keys, in this order; the rest of the catalogue follows.
   PROVIDER_FEATURED: z
     .string()
     .default(

@@ -237,13 +237,16 @@ export function createProviderDirectory({
   }
 
   return {
-    // The providers to offer: the featured ones in their order, else everything.
+    // Every provider: the featured ones first in their order, then the rest by name.
     async providers() {
       const everything = await all();
-      if (!featured.length) return everything;
-      return featured
+      const first = featured
         .map((id) => everything.find((provider) => provider.id === id))
         .filter((provider) => provider !== undefined);
+      const rest = everything
+        .filter((provider) => !featured.includes(provider.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return [...first, ...rest];
     },
     async provider(id: string) {
       return (await all()).find((provider) => provider.id === id) ?? null;

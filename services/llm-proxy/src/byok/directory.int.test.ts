@@ -57,7 +57,7 @@ describe('provider directory', () => {
     expect(await offline.provider('nope')).toBeNull();
   });
 
-  it('offers only the featured providers, in their order, yet still finds the others', async () => {
+  it('offers the featured providers first, in their order, then the rest by name', async () => {
     const featured = createProviderDirectory({
       db: client.db,
       url: 'https://models.dev/api.json',
@@ -66,11 +66,12 @@ describe('provider directory', () => {
       featured: ['openai', 'openai-compatible', 'missing', 'amazon-bedrock'],
       fetchFn: async () => Response.json(catalogFixture),
     });
-    expect((await featured.providers()).map((provider) => provider.id)).toEqual([
-      'openai',
-      'openai-compatible',
-      'amazon-bedrock',
-    ]);
+    const ids = (await featured.providers()).map((provider) => provider.id);
+    expect(ids.slice(0, 3)).toEqual(['openai', 'openai-compatible', 'amazon-bedrock']);
+    expect(ids).toContain('lmstudio');
+    expect(ids).not.toContain('missing');
+    const names = (await featured.providers()).slice(3).map((provider) => provider.name);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
     expect(await featured.provider('lmstudio')).not.toBeNull();
   });
 });
