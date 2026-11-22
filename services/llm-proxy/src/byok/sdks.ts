@@ -30,9 +30,13 @@ interface Sdk {
   create(settings: Settings, providerId: string): SdkProvider;
 }
 
+// A redirect could lead past the base URL check to a private address, so none are followed.
+const noRedirects: typeof fetch = (input, init) => fetch(input, { ...init, redirect: 'error' });
+
 const base = (settings: Settings) => ({
   ...(settings.apiKey && { apiKey: settings.apiKey }),
   ...(settings.baseURL && { baseURL: settings.baseURL }),
+  fetch: noRedirects,
 });
 
 const keyed = (create: (options: ReturnType<typeof base>) => SdkProvider): Sdk => ({
@@ -70,6 +74,7 @@ export const SDKS: Record<string, Sdk> = {
       createAzure({
         resourceName: settings.resourceName,
         apiKey: settings.apiKey,
+        fetch: noRedirects,
         ...(settings.apiVersion && { apiVersion: settings.apiVersion }),
       }),
   },
@@ -81,6 +86,7 @@ export const SDKS: Record<string, Sdk> = {
     create: (settings) =>
       createAmazonBedrock({
         region: settings.region,
+        fetch: noRedirects,
         ...(settings.apiKey
           ? { apiKey: settings.apiKey }
           : { accessKeyId: settings.accessKeyId, secretAccessKey: settings.secretAccessKey }),
@@ -93,6 +99,7 @@ export const SDKS: Record<string, Sdk> = {
       createVertex({
         project: settings.project,
         location: settings.location,
+        fetch: noRedirects,
         googleAuthOptions: { credentials: JSON.parse(settings.credentials ?? '{}') as object },
       }),
   },
