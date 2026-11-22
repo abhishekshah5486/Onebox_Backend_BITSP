@@ -63,8 +63,10 @@ describe('embedding catalog', () => {
       local: true,
       dimensions: 1024,
       usdPerMillionTokens: 0,
-      description: '566M, 8,192 token context',
+      description: '566M parameters',
+      contextTokens: 8192,
     });
+    expect(items[3]).toMatchObject({ contextTokens: 2048, usdPerMillionTokens: 0.15 });
   });
 
   it("keeps each user's pick, falling back to the default", async () => {

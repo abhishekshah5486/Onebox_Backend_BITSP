@@ -118,6 +118,8 @@ export const embeddingModels = llmSchema.table('embedding_models', {
   name: text('name').notNull(),
   description: text('description').notNull(),
   dimensions: integer('dimensions').notNull(),
+  // The most tokens of an email the model reads.
+  contextTokens: integer('context_tokens'),
   // Shortened on request (Matryoshka models); others always return their own size.
   sendDimensions: boolean('send_dimensions').notNull().default(false),
   // USD per million tokens.

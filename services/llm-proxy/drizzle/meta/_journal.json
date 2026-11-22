@@ -50,6 +50,13 @@
       "when": 1795363449323,
       "tag": "0006_embedding_models",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795364738723,
+      "tag": "0007_embedding_context",
+      "breakpoints": true
     }
   ]
 }

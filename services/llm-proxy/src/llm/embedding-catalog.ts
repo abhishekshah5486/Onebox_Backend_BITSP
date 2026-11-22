@@ -26,17 +26,24 @@ export interface EmbeddingOption {
   name: string;
   description: string;
   dimensions: number;
+  contextTokens: number | null;
   local: boolean;
   available: boolean;
   usdPerMillionTokens: number;
 }
 
-const option = (model: EmbeddingModel, available: boolean, description: string) => ({
+const option = (
+  model: EmbeddingModel,
+  available: boolean,
+  description: string,
+  contextTokens: number | null,
+): EmbeddingOption => ({
   id: model.id,
   provider: model.id.split('/')[0]!,
   name: model.name,
   description,
   dimensions: model.dimensions,
+  contextTokens,
   local: model.local,
   available,
   usdPerMillionTokens: model.usdPerMillionTokens,
@@ -101,11 +108,12 @@ export function createEmbeddingCatalog({
           sendDimensions: false,
           local: true,
         };
-        const about = [
-          pulled.details.parameter_size,
-          context && `${context.toLocaleString('en')} token context`,
-        ];
-        return { model, description: about.filter(Boolean).join(', ') };
+        const size = pulled.details.parameter_size;
+        return {
+          model,
+          description: size ? `${size} parameters` : '',
+          contextTokens: context ?? null,
+        };
       }),
     );
     return found.filter((entry) => entry !== null);
@@ -162,8 +170,12 @@ export function createEmbeddingCatalog({
     async list(): Promise<EmbeddingOption[]> {
       const { hosted, local } = load();
       return [
-        ...(await local).map(({ model, description }) => option(model, true, description)),
-        ...(await hosted).map((row) => option(hostedModel(row), usable(row), row.description)),
+        ...(await local).map(({ model, description, contextTokens }) =>
+          option(model, true, description, contextTokens),
+        ),
+        ...(await hosted).map((row) =>
+          option(hostedModel(row), usable(row), row.description, row.contextTokens),
+        ),
       ];
     },
 
