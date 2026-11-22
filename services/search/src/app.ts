@@ -1,4 +1,4 @@
-import { currentUser, requireUser, type TokenVerifier } from '@onebox/auth-kit';
+import { currentUser, requireInternal, requireUser, type TokenVerifier } from '@onebox/auth-kit';
 import { searchModeSchema } from '@onebox/contracts';
 import { createServer, registerHealthRoutes, type HealthCheck } from '@onebox/http';
 import type { Logger } from '@onebox/logger';
@@ -24,6 +24,9 @@ export interface AppDeps {
   embed: EmbedClient;
   lookupThreads: ThreadLookup;
   verifyToken: TokenVerifier;
+  internalToken: string;
+  // Queues embedding a user's mail again with their model, into their current store.
+  rebuild: (userId: string) => Promise<void>;
 }
 
 interface Hit {
@@ -61,11 +64,10 @@ export function buildApp(deps: AppDeps) {
       let total: number;
       let more: boolean;
       if (mode === 'semantic') {
-        // The model the user's mail is embedded with, which may trail a fresh pick.
-        const model = await deps.models.active(userId);
+        // The model the user's mail is embedded with (which may trail a fresh pick), in their store.
+        const { model, index } = await deps.models.searchTarget(userId);
         const [vector] = await deps.embed({ userId, texts: [text], charge: true, model: model.id });
         const limit = Math.min((page + 1) * pageSize, MAX_SEMANTIC_RESULTS);
-        const index = await deps.models.indexFor(model);
         const ranked = await index.search(userId, vector!, query, limit);
         hits = ranked.slice(page * pageSize).map((hit) => ({ ...hit, highlights: [] }));
         total = ranked.length;
@@ -122,6 +124,20 @@ export function buildApp(deps: AppDeps) {
   );
 
   // Which model semantic search uses for the user, and how far a switch to another has got.
+  // Settings calls this when a user moves their vectors to another store.
+  routes.post(
+    '/internal/semantic/rebuild',
+    {
+      preHandler: requireInternal(deps.internalToken),
+      schema: { body: z.object({ userId: z.uuid() }) },
+    },
+    async (request, reply) => {
+      deps.models.forgetStore(request.body.userId);
+      await deps.rebuild(request.body.userId);
+      return reply.code(202).send();
+    },
+  );
+
   routes.get('/search/semantic', { preHandler: requireUser(deps.verifyToken) }, async (request) => {
     const { userId } = currentUser(request);
     const [active, rebuild] = await Promise.all([

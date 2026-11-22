@@ -8,6 +8,8 @@ const schema = z.object({
   AUTH_SERVICE_URL: z.url().default('http://localhost:4001'),
   MAIL_SERVICE_URL: z.url().default('http://localhost:4003'),
   LLM_PROXY_SERVICE_URL: z.url().default('http://localhost:4006'),
+  // Says where each user keeps their vectors.
+  SETTINGS_SERVICE_URL: z.url().default('http://localhost:4004'),
   // Signs calls to llm-proxy for embeddings.
   CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
   ELASTICSEARCH_URL: z.url().default('http://localhost:9200'),

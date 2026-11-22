@@ -35,10 +35,12 @@ function setup() {
   const active = { id: 'ollama/bge-m3', name: 'bge-m3', dimensions: 1024, local: true };
   const models = {
     active: vi.fn(async () => active),
-    indexFor: vi.fn(async () => vector),
+    searchTarget: vi.fn(async () => ({ model: active, index: vector })),
+    forgetStore: vi.fn(),
     rebuildOf: vi.fn(async (): Promise<RebuildState | null> => null),
   };
   const embed = vi.fn(async () => [[0.1, 0.2]]);
+  const rebuild = vi.fn(async (_userId: string) => {});
   const lookupThreads = vi.fn(async (_auth: string, ids: string[]) =>
     ids.filter((id) => id !== 'gone').map((id) => ({ id })),
   );
@@ -50,8 +52,10 @@ function setup() {
     embed,
     lookupThreads,
     verifyToken,
+    internalToken: 'internal',
+    rebuild,
   });
-  return { app, keyword, vector, models, embed, lookupThreads };
+  return { app, keyword, vector, models, embed, lookupThreads, rebuild };
 }
 
 describe('GET /search', () => {
@@ -197,5 +201,23 @@ describe('GET /search/semantic/estimate', () => {
     expect(embed).toHaveBeenCalledWith(
       expect.objectContaining({ charge: false, model: 'ollama/nomic-embed-text' }),
     );
+  });
+});
+
+describe('POST /internal/semantic/rebuild', () => {
+  it("re-reads the user's store and queues their mail to embed again, for other services only", async () => {
+    const { app, models, rebuild } = setup();
+    const userId = '6f1c2b8e-1a4d-4c7e-9b1a-2f3e4d5c6b7a';
+    const call = (headers = {}) =>
+      app.inject({
+        method: 'POST',
+        url: '/internal/semantic/rebuild',
+        headers,
+        payload: { userId },
+      });
+    expect((await call()).statusCode).toBe(401);
+    expect((await call({ 'x-onebox-internal-token': 'internal' })).statusCode).toBe(202);
+    expect(models.forgetStore).toHaveBeenCalledWith(userId);
+    expect(rebuild).toHaveBeenCalledWith(userId);
   });
 });
