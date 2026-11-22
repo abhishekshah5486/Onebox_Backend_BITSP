@@ -4,7 +4,8 @@ import { NotFoundError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import { and, asc, count, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { userModels, type ModelKind, type UserModelRow } from '../db/schema';
+import { userModelChoices, userModels, type ModelKind, type UserModelRow } from '../db/schema';
+import { OWN_PREFIX } from '../llm/catalog';
 import type { DirectoryProvider, ProviderDirectory } from './directory';
 import { checkSettings, connect, discoverModels, probe } from './probe';
 import type { Settings } from './sdks';
@@ -178,9 +179,30 @@ export function createUserModels({
       return view(updated!);
     },
 
+    async owns(userId: string, id: string, kind: ModelKind) {
+      const [row] = await db
+        .select({ id: userModels.id })
+        .from(userModels)
+        .where(
+          and(eq(userModels.id, id), eq(userModels.userId, userId), eq(userModels.kind, kind)),
+        );
+      return row !== undefined;
+    },
+
+    // Features that used the model go back to the default.
     async remove(userId: string, id: string) {
       const row = await owned(userId, id);
-      await db.delete(userModels).where(eq(userModels.id, row.id));
+      await db.transaction(async (tx) => {
+        await tx.delete(userModels).where(eq(userModels.id, row.id));
+        await tx
+          .delete(userModelChoices)
+          .where(
+            and(
+              eq(userModelChoices.userId, userId),
+              eq(userModelChoices.modelId, `${OWN_PREFIX}${row.id}`),
+            ),
+          );
+      });
       logger.info({ userId, id }, 'user model removed');
     },
 

@@ -5,6 +5,7 @@ import { Ajv, type ValidateFunction } from 'ajv';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import type { Redis } from 'ioredis';
 import {
+  PROVIDERS,
   llmCalls,
   type AttemptRecord,
   type ModelRow,
@@ -19,7 +20,9 @@ import {
 } from '../providers/types';
 import type { Billing } from './billing';
 import type { Breaker } from './breaker';
-import type { Catalog } from './catalog';
+import { sdkAdapter } from '../byok/sdk-adapter';
+import type { UserModels } from '../byok/user-models';
+import { AUTO, OWN_PREFIX, type Catalog } from './catalog';
 
 export interface CompleteInput {
   userId: string;
@@ -40,7 +43,8 @@ export interface CompleteInput {
 export interface CompleteResult {
   output: unknown;
   model: string;
-  provider: Provider;
+  // OneBox's provider, or the catalogue id of a user's own (e.g. "groq").
+  provider: string;
   usage: CallUsage;
   cached: boolean;
   attempts: AttemptRecord[];
@@ -55,6 +59,18 @@ export interface CallUsage {
 }
 
 type Prices = Pick<ModelRow, 'inputPrice' | 'outputPrice' | 'cacheReadPrice' | 'cacheWritePrice'>;
+
+// A model the call may be answered by: one of OneBox's, or the user's own (free to OneBox).
+interface Candidate {
+  id: string;
+  name: string;
+  provider: string;
+  hosted: Provider | null;
+  adapter: ProviderAdapter;
+  prices: Prices;
+}
+
+const FREE: Prices = { inputPrice: 0, outputPrice: 0, cacheReadPrice: 0, cacheWritePrice: 0 };
 
 // What one reply cost in USD; prices are per million tokens and cached input is billed at its own rate.
 export function costOf(prices: Prices, reply: Omit<ProviderResponse, 'text'>) {
@@ -87,6 +103,7 @@ export function createCompleter({
   cacheTtlSeconds,
   timeoutMs,
   billing,
+  userModels,
 }: {
   db: PostgresJsDatabase;
   redis: Redis;
@@ -98,6 +115,8 @@ export function createCompleter({
   timeoutMs: number;
   // Credits: checked before a model is asked, charged after. Absent, calls are free.
   billing?: Billing;
+  // Models users added with their own keys, picked as "user:<id>".
+  userModels?: Pick<UserModels, 'resolve'>;
 }) {
   const ajv = new Ajv({ strict: false, allErrors: true });
   const validators = new Map<string, ValidateFunction>();
@@ -126,7 +145,7 @@ export function createCompleter({
   }
 
   async function tryModel(
-    model: ModelRow,
+    model: Candidate,
     input: CompleteInput,
     attempts: AttemptRecord[],
     usage: CallUsage,
@@ -136,11 +155,11 @@ export function createCompleter({
       usage.outputTokens += reply.outputTokens;
       usage.cacheReadTokens += reply.cacheReadTokens;
       usage.cacheWriteTokens += reply.cacheWriteTokens;
-      usage.costUsd += reply.costUsd ?? costOf(model, reply);
+      usage.costUsd += reply.costUsd ?? costOf(model.prices, reply);
     };
-    const adapter = adapters[model.provider]!;
+    const { adapter } = model;
     const request = {
-      model: model.id,
+      model: model.hosted ? model.id : '',
       messages: input.messages,
       schema: input.schema,
       maxOutputTokens: input.maxOutputTokens ?? 1024,
@@ -206,6 +225,29 @@ export function createCompleter({
     return null;
   }
 
+  async function ownModel(userId: string, requested: string): Promise<Candidate | null> {
+    if (!requested.startsWith(OWN_PREFIX) || !userModels) return null;
+    try {
+      const { row, provider, sdk } = await userModels.resolve(
+        userId,
+        requested.slice(OWN_PREFIX.length),
+      );
+      if (row.kind !== 'llm') return null;
+      return {
+        id: requested,
+        name: row.name,
+        provider: provider.id,
+        hosted: null,
+        adapter: sdkAdapter(sdk.languageModel(row.modelId)),
+        prices: FREE,
+      };
+    } catch (err) {
+      // A removed model falls back to Auto rather than failing the feature.
+      logger.warn({ userId, requested, err: (err as Error).message }, 'own model unusable');
+      return null;
+    }
+  }
+
   return async function complete(input: CompleteInput): Promise<CompleteResult> {
     const started = Date.now();
     const requested = input.model ?? (await catalog.choiceOf(input.userId, input.purpose));
@@ -261,7 +303,7 @@ export function createCompleter({
           status: 'ok',
           cacheHit: true,
           modelUsed: cached.model,
-          provider: cached.provider,
+          provider: PROVIDERS.find((provider) => provider === cached.provider) ?? null,
           inputTokens: 0,
           outputTokens: 0,
           cacheReadTokens: 0,
@@ -272,16 +314,37 @@ export function createCompleter({
       }
     }
 
-    if (billing && !(await billing.allowed(input.userId))) {
-      throw new PaymentRequiredError(
-        "You're out of AI credits. Upgrade your plan or wait for your credits to reset.",
-        { code: 'OUT_OF_CREDITS' },
-      );
-    }
-
-    const chain = await catalog.chain(input.purpose, requested);
+    // The user's own model first, with OneBox's Auto route behind it should it fail.
+    const own = await ownModel(input.userId, requested);
+    const hosted = (await catalog.chain(input.purpose, own ? AUTO : requested)).flatMap((model) => {
+      const adapter = adapters[model.provider];
+      return adapter
+        ? [
+            {
+              id: model.id,
+              name: model.name,
+              provider: model.provider,
+              hosted: model.provider,
+              adapter,
+              prices: model,
+            },
+          ]
+        : [];
+    });
+    const chain: Candidate[] = own ? [own, ...hosted] : hosted;
+    let creditsChecked = false;
     for (const model of chain) {
-      if (!adapters[model.provider]) continue;
+      // Credits matter only once OneBox's own models are asked.
+      if (model.hosted && billing && !creditsChecked) {
+        creditsChecked = true;
+        if (!(await billing.allowed(input.userId))) {
+          if (own) break;
+          throw new PaymentRequiredError(
+            "You're out of AI credits. Upgrade your plan or wait for your credits to reset.",
+            { code: 'OUT_OF_CREDITS' },
+          );
+        }
+      }
       if (await breaker.isOpen(model.id)) {
         attempts.push({
           model: model.id,
@@ -298,7 +361,7 @@ export function createCompleter({
       if (input.cache !== false && cacheTtlSeconds > 0) {
         await redis.set(cacheKey, JSON.stringify(result), 'EX', cacheTtlSeconds);
       }
-      const callId = await record({ status: 'ok', modelUsed: model.id, provider: model.provider });
+      const callId = await record({ status: 'ok', modelUsed: model.id, provider: model.hosted });
       if (billing && callId && usage.costUsd > 0) {
         await billing
           .charge(input.userId, {

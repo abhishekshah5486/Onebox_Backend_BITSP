@@ -71,6 +71,13 @@
       "when": 1795368900861,
       "tag": "0009_user_models",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795369669873,
+      "tag": "0010_own_model_choices",
+      "breakpoints": true
     }
   ]
 }

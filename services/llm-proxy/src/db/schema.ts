@@ -57,9 +57,8 @@ export const userModelChoices = llmSchema.table(
   {
     userId: uuid('user_id').notNull(),
     purpose: text('purpose').notNull(),
-    modelId: text('model_id')
-      .notNull()
-      .references(() => models.id),
+    // A catalogue model, or "user:<id>" for one the user added; so not a foreign key.
+    modelId: text('model_id').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow()

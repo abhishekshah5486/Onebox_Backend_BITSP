@@ -11,13 +11,20 @@ import {
 } from '../db/schema';
 
 export const AUTO = 'auto';
+// A model the user added with their own key: "user:<id>".
+export const OWN_PREFIX = 'user:';
 
 // The catalogue and Auto routes change only with a migration, and the database is a slow
 // round trip away, so they are read once a minute rather than on every request.
 const CATALOG_TTL_MS = 60_000;
 
 // The catalogue, the user's pick per purpose, and the order models are tried in.
-export function createCatalog(db: PostgresJsDatabase, configured: Set<Provider>) {
+export function createCatalog(
+  db: PostgresJsDatabase,
+  configured: Set<Provider>,
+  // Whether a "user:<id>" pick is one of the user's own language models.
+  ownsModel: (userId: string, id: string) => Promise<boolean> = async () => false,
+) {
   const available = (model: ModelRow) => model.enabled && configured.has(model.provider);
 
   let cached: { at: number; models: Promise<ModelRow[]>; routes: Promise<RouteRow[]> } | null =
@@ -84,9 +91,17 @@ export function createCatalog(db: PostgresJsDatabase, configured: Set<Provider>)
           .where(and(eq(userModelChoices.userId, userId), eq(userModelChoices.purpose, purpose)));
         return;
       }
-      const model = (await all()).find((row) => row.id === modelId);
-      if (!model) throw new NotFoundError('Unknown model');
-      if (!available(model)) throw new ValidationError(`${model.name} is not available right now`);
+      if (modelId.startsWith(OWN_PREFIX)) {
+        if (!(await ownsModel(userId, modelId.slice(OWN_PREFIX.length)))) {
+          throw new NotFoundError('Unknown model');
+        }
+      } else {
+        const model = (await all()).find((row) => row.id === modelId);
+        if (!model) throw new NotFoundError('Unknown model');
+        if (!available(model)) {
+          throw new ValidationError(`${model.name} is not available right now`);
+        }
+      }
       await db
         .insert(userModelChoices)
         .values({ userId, purpose, modelId })
