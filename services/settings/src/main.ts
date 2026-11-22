@@ -42,6 +42,7 @@ const app = buildApp({
       db: pg.db,
       encryptionKey: config.CREDENTIALS_ENCRYPTION_KEY,
       logger,
+      allowPrivateHosts: config.ALLOW_PRIVATE_STORAGE_HOSTS,
       providers: {
         ...(config.GOOGLE_CLIENT_ID &&
           config.GOOGLE_CLIENT_SECRET && {
@@ -82,7 +83,7 @@ const app = buildApp({
       db: pg.db,
       encryptionKey: config.CREDENTIALS_ENCRYPTION_KEY,
       logger,
-      allowPrivateHosts: config.ALLOW_PRIVATE_INDEXING_HOSTS,
+      allowPrivateHosts: config.ALLOW_PRIVATE_STORAGE_HOSTS,
       notifySearch: async (userId) => {
         const response = await fetch(`${config.SEARCH_SERVICE_URL}/internal/semantic/rebuild`, {
           method: 'POST',

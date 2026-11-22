@@ -489,7 +489,7 @@ describe('cloud storage', () => {
     await connect('me@gmail.com', 'at-3');
 
     const listed = await accounts();
-    expect(listed.providers).toEqual(['GOOGLE_DRIVE', 'ONEDRIVE', 'DROPBOX']);
+    expect(listed.providers).toEqual(['GOOGLE_DRIVE', 'ONEDRIVE', 'DROPBOX', 'S3', 'AZURE_BLOB']);
     expect(listed.accounts.every((a) => a.provider === 'GOOGLE_DRIVE')).toBe(true);
     expect(listed.accounts.map((a) => a.email)).toEqual(['me@gmail.com', 'work@gmail.com']);
     const [me, work] = listed.accounts;

@@ -57,6 +57,13 @@
       "when": 1795370077021,
       "tag": "0007_indexing_stores",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795370576464,
+      "tag": "0008_key_storage",
+      "breakpoints": true
     }
   ]
 }
