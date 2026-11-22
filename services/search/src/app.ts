@@ -9,7 +9,10 @@ import type { ThreadLookup } from './clients/mail-client';
 import type { KeywordIndex } from './keyword/keyword-index';
 import { freeText, parseQuery } from './query/parse';
 import type { SemanticModels } from './semantic/models';
+import { embeddingText } from './semantic/vector-index';
 
+// Emails embedded to time a model before switching to it.
+const ESTIMATE_SAMPLE = 16;
 // Meaning-based results are ranked, not paged deep: past this they stop being relevant.
 const MAX_SEMANTIC_RESULTS = 100;
 
@@ -87,6 +90,34 @@ export function buildApp(deps: AppDeps) {
           : [];
       });
       return { mode, items, total, nextPage: more ? page + 1 : null };
+    },
+  );
+
+  // How long switching to a model would take: a sample of the user's own mail is timed with it.
+  // The first page also wakes the model (a local one loads into memory), so the second is timed.
+  routes.get(
+    '/search/semantic/estimate',
+    {
+      preHandler: requireUser(deps.verifyToken),
+      schema: { querystring: z.object({ model: z.string().min(1).max(200) }) },
+    },
+    async (request) => {
+      const { userId } = currentUser(request);
+      const emails = await deps.keyword.countOf(userId);
+      const pages = deps.keyword.documentsOf(userId, ESTIMATE_SAMPLE);
+      let timedMs = 0;
+      let timed = 0;
+      for (let round = 0; round < 2; round += 1) {
+        const { value: page } = await pages.next();
+        if (!page) break;
+        const texts = page.map(({ doc }) => embeddingText(doc));
+        const started = performance.now();
+        await deps.embed({ userId, texts, charge: false, model: request.query.model });
+        [timedMs, timed] = [performance.now() - started, texts.length];
+      }
+      await pages.return(undefined);
+      const seconds = timed ? Math.ceil(((timedMs / timed) * emails) / 1000) : 0;
+      return { emails, seconds };
     },
   );
 

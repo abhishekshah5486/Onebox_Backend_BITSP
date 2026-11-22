@@ -14,6 +14,7 @@ export interface RebuildState {
   modelId: string;
   done: number;
   total: number;
+  startedAt: string;
 }
 
 // Which model each user's mail is embedded and searched with. Searches use the "active" model
@@ -82,13 +83,23 @@ export function createSemanticModels({
 
     async startRebuild(userId: string, modelId: string, total: number) {
       await redis.del(rebuildKey(userId));
-      await redis.hset(rebuildKey(userId), { modelId, done: 0, total });
+      await redis.hset(rebuildKey(userId), {
+        modelId,
+        done: 0,
+        total,
+        startedAt: new Date().toISOString(),
+      });
     },
     progress: (userId: string, done: number) => redis.hincrby(rebuildKey(userId), 'done', done),
     async rebuildOf(userId: string): Promise<RebuildState | null> {
       const state = await redis.hgetall(rebuildKey(userId));
       if (!state.modelId) return null;
-      return { modelId: state.modelId, done: Number(state.done), total: Number(state.total) };
+      return {
+        modelId: state.modelId,
+        done: Number(state.done),
+        total: Number(state.total),
+        startedAt: state.startedAt ?? new Date().toISOString(),
+      };
     },
 
     // The rebuild is done: searches switch over and the old model's vectors go.

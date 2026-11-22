@@ -2,6 +2,7 @@ import { PaymentRequiredError, UnauthorizedError } from '@onebox/errors';
 import { createLogger } from '@onebox/logger';
 import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from './app';
+import { searchDoc } from './test-doc';
 import type { KeywordIndex } from './keyword/keyword-index';
 import type { RebuildState, SemanticModels } from './semantic/models';
 
@@ -142,16 +143,59 @@ describe('GET /search', () => {
 describe('GET /search/semantic', () => {
   it("reports the user's model and how far a switch has got", async () => {
     const { app, models } = setup();
-    models.rebuildOf.mockResolvedValueOnce({
+    const rebuild = {
       modelId: 'ollama/nomic-embed-text',
       done: 64,
       total: 200,
-    });
+      startedAt: '2026-11-22T10:00:00.000Z',
+    };
+    models.rebuildOf.mockResolvedValueOnce(rebuild);
     const response = await app.inject({ url: '/search/semantic', headers: auth });
     expect(response.json()).toEqual({
       active: { id: 'ollama/bge-m3', name: 'bge-m3', dimensions: 1024, local: true },
-      rebuild: { modelId: 'ollama/nomic-embed-text', done: 64, total: 200 },
+      rebuild,
     });
     expect((await app.inject({ url: '/search/semantic' })).statusCode).toBe(401);
+  });
+});
+
+describe('GET /search/semantic/estimate', () => {
+  it("times the model on a sample of the user's own mail, after waking it", async () => {
+    const { app, keyword, embed } = setup();
+    const page = Array.from({ length: 16 }, (_, i) => ({
+      doc: searchDoc({ key: `k${i}` }),
+      version: 1,
+    }));
+    Object.assign(keyword, {
+      countOf: vi.fn(async () => 1_600),
+      documentsOf: vi.fn(async function* () {
+        yield page;
+        yield page;
+        yield page;
+      }),
+    });
+    // The first (warm-up) call is slow; the timed one takes 160ms for 16 emails.
+    embed
+      .mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return [];
+      })
+      .mockImplementationOnce(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        return [];
+      });
+    const response = await app.inject({
+      url: '/search/semantic/estimate?model=ollama/nomic-embed-text',
+      headers: auth,
+    });
+    const { emails, seconds } = response.json<{ emails: number; seconds: number }>();
+    expect(emails).toBe(1_600);
+    // About 10ms an email: 16s, not the 40s the warm-up would suggest.
+    expect(seconds).toBeGreaterThanOrEqual(16);
+    expect(seconds).toBeLessThan(25);
+    expect(embed).toHaveBeenCalledTimes(2);
+    expect(embed).toHaveBeenCalledWith(
+      expect.objectContaining({ charge: false, model: 'ollama/nomic-embed-text' }),
+    );
   });
 });
