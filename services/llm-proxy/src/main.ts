@@ -20,6 +20,7 @@ import { createBreaker } from './llm/breaker';
 import { createCatalog } from './llm/catalog';
 import { createCompleter } from './llm/complete';
 import { createEmbeddings } from './llm/embed';
+import { createProviderDirectory } from './byok/directory';
 import { createEmbeddingCatalog } from './llm/embedding-catalog';
 import { createUsage } from './llm/usage';
 import { anthropicAdapter } from './providers/anthropic';
@@ -108,6 +109,12 @@ const app = buildApp({
     }),
     embed: createEmbeddings({ catalog: embeddingCatalog, billing, logger }),
     embeddingCatalog,
+    directory: createProviderDirectory({
+      db: pg.db,
+      url: config.PROVIDER_CATALOG_URL,
+      ttlMs: config.PROVIDER_CATALOG_TTL_MS,
+      logger,
+    }),
     reembed: async (userId, modelId) => {
       await reembedJobs.enqueue(
         createJobEnvelope({

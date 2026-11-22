@@ -1,4 +1,5 @@
 import { currentUser, requireInternal, requireUser, type TokenVerifier } from '@onebox/auth-kit';
+import { NotFoundError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -6,6 +7,7 @@ import { PROVIDERS, PURPOSES } from '../db/schema';
 import { AUTO, type Catalog } from './catalog';
 import type { Completer } from './complete';
 import type { Embeddings } from './embed';
+import type { ProviderDirectory } from '../byok/directory';
 import type { EmbeddingCatalog } from './embedding-catalog';
 import type { Usage } from './usage';
 
@@ -49,6 +51,8 @@ export function registerLlmRoutes(
     // Tells search to embed the user's mail again with their new model.
     reembed: (userId: string, modelId: string) => Promise<void>;
     usage: Usage;
+    // Providers users can bring their own keys for.
+    directory: ProviderDirectory;
     verifyToken: TokenVerifier;
     internalToken: string;
   },
@@ -135,6 +139,25 @@ export function registerLlmRoutes(
       );
 
       // The models semantic search can embed with, and the user's pick.
+      // Cards for the provider grid; the models come with one provider, on opening it.
+      routes.get('/providers', async () => ({
+        items: (await deps.directory.providers()).map(({ models, ...provider }) => ({
+          ...provider,
+          modelCount: models.length,
+          embeddings: models.some((model) => model.embedding),
+        })),
+      }));
+
+      routes.get(
+        '/providers/:id',
+        { schema: { params: z.object({ id: z.string().min(1).max(100) }) } },
+        async (request) => {
+          const provider = await deps.directory.provider(request.params.id);
+          if (!provider) throw new NotFoundError('No such provider');
+          return provider;
+        },
+      );
+
       routes.get('/embeddings', async (request) => {
         const [items, chosen] = await Promise.all([
           deps.embeddingCatalog.list(),
