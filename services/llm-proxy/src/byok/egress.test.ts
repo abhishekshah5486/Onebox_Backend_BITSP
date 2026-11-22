@@ -11,7 +11,7 @@ describe('checkEgress', () => {
     'http://[::1]:8080',
     'http://0.0.0.0',
   ])('refuses %s', async (url) => {
-    await expect(checkEgress(url, false)).rejects.toThrow(/private or local/);
+    await expect(checkEgress(url, false)).rejects.toThrow(/private network|could not be resolved/);
   });
 
   it('allows public addresses, and local ones when the server is set up for it', async () => {
