@@ -4,6 +4,7 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { z } from 'zod';
 import { providerCatalog } from '../db/schema';
 import { sdkFor } from './sdks';
+import extraProviders from './extra-providers.json';
 
 // The models.dev shape, as far as OneBox reads it.
 const modelSchema = z.object({
@@ -198,7 +199,8 @@ export function createProviderDirectory({
     const response = await fetchFn(url, { signal: AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body: unknown = await response.json();
-    const providers = parseCatalog(body, logoBase);
+    // Providers models.dev doesn't list yet; its own entry wins once it does.
+    const providers = parseCatalog({ ...extraProviders, ...(body as object) }, logoBase);
     await db
       .insert(providerCatalog)
       .values({ source: SOURCE, body: providers, fetchedAt: new Date() })

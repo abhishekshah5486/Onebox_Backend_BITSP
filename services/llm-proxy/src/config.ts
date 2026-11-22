@@ -36,7 +36,7 @@ const schema = z.object({
   PROVIDER_FEATURED: z
     .string()
     .default(
-      'openai,anthropic,google,deepseek,openai-compatible,openrouter,azure,amazon-bedrock,lmstudio,google-vertex,cohere,togetherai,xai,groq,fireworks-ai,mistral,minimax',
+      'openai,anthropic,google,deepseek,multiverse,openai-compatible,openrouter,azure,amazon-bedrock,lmstudio,google-vertex,cohere,togetherai,xai,groq,fireworks-ai,mistral,minimax',
     )
     .transform((list) =>
       list

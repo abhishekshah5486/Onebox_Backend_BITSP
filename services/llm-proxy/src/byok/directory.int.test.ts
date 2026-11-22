@@ -39,6 +39,7 @@ describe('provider directory', () => {
       'amazon-bedrock',
       'fireworks-ai',
       'lmstudio',
+      'multiverse',
       'openai',
       'openai-compatible',
     ]);
@@ -55,6 +56,28 @@ describe('provider directory', () => {
     ]);
     expect(down).toHaveBeenCalledTimes(1);
     expect(await offline.provider('nope')).toBeNull();
+  });
+
+  it('adds providers models.dev lacks, set up like any OpenAI-compatible one', async () => {
+    const directory = createProviderDirectory({
+      db: client.db,
+      url: 'https://models.dev/api.json',
+      ttlMs: 60_000,
+      logger,
+      fetchFn: async () => Response.json(catalogFixture),
+    });
+    const multiverse = await directory.provider('multiverse');
+    expect(multiverse).toMatchObject({
+      name: 'Multiverse Computing',
+      npm: '@ai-sdk/openai-compatible',
+    });
+    expect(multiverse!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'baseURL', default: 'https://api.compactif.ai/v1' }),
+        expect.objectContaining({ key: 'apiKey', secret: true, required: true }),
+      ]),
+    );
+    expect(multiverse!.models.map((model) => model.id)).toContain('carina-60b');
   });
 
   it('offers the featured providers first, in their order, then the rest by name', async () => {

@@ -1,0 +1,17 @@
+{
+  "multiverse": {
+    "id": "multiverse",
+    "name": "Multiverse Computing",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.compactif.ai/v1",
+    "doc": "https://docs.compactif.ai/",
+    "env": ["MULTIVERSE_API_KEY"],
+    "models": {
+      "glm-5-3": { "id": "glm-5-3", "name": "GLM 5.3 (CompactifAI)" },
+      "glm-5-2": { "id": "glm-5-2", "name": "GLM 5.2 (CompactifAI)" },
+      "quasar-1-2-358b": { "id": "quasar-1-2-358b", "name": "Quasar 1.2 358B" },
+      "carina-60b": { "id": "carina-60b", "name": "Carina 60B" },
+      "qwen-3-8-27b": { "id": "qwen-3-8-27b", "name": "Qwen 3.8 27B (CompactifAI)" }
+    }
+  }
+}
