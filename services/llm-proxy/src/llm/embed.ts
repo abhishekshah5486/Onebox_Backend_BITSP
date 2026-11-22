@@ -20,6 +20,8 @@ export interface EmbeddingModel {
   needsKey: boolean;
   // Only some models can be shortened on request; others always return their own size.
   sendDimensions: boolean;
+  // Runs beside OneBox (Ollama) rather than at a provider.
+  local: boolean;
 }
 
 export interface EmbeddingSettings {
@@ -45,6 +47,7 @@ export function embeddingModel(settings: EmbeddingSettings): EmbeddingModel {
       apiKey: settings.openAiKey,
       needsKey: true,
       sendDimensions: true,
+      local: false,
     };
   }
   const apiName = settings.model ?? 'bge-m3';
@@ -58,6 +61,7 @@ export function embeddingModel(settings: EmbeddingSettings): EmbeddingModel {
     apiKey: undefined,
     needsKey: false,
     sendDimensions: false,
+    local: true,
   };
 }
 
@@ -76,7 +80,7 @@ export interface EmbedResult {
 
 // Which model it uses goes with it, so search can keep one vector index per model.
 export type Embedder = ((input: EmbedInput) => Promise<EmbedResult>) & {
-  model: { id: string; name: string; dimensions: number };
+  model: { id: string; name: string; dimensions: number; local: boolean };
 };
 
 interface EmbeddingsResponse {
@@ -163,6 +167,6 @@ export function createEmbedder({
     return { model: model.id, dimensions: model.dimensions, vectors };
   };
   return Object.assign(embed, {
-    model: { id: model.id, name: model.name, dimensions: model.dimensions },
+    model: { id: model.id, name: model.name, dimensions: model.dimensions, local: model.local },
   });
 }

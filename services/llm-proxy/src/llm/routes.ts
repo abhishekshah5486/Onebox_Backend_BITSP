@@ -99,6 +99,13 @@ export function registerLlmRoutes(
                 ),
                 purposes: z.array(z.enum(PURPOSES)),
                 choices: z.record(z.string(), z.string()),
+                // What semantic search embeds mail with; set by the server, not chosen per user.
+                embedding: z.object({
+                  id: z.string(),
+                  name: z.string(),
+                  dimensions: z.number(),
+                  local: z.boolean(),
+                }),
               }),
             },
           },
@@ -108,7 +115,7 @@ export function registerLlmRoutes(
             catalog.list(),
             catalog.choices(userId(request)),
           ]);
-          return { items, purposes: [...PURPOSES], choices };
+          return { items, purposes: [...PURPOSES], choices, embedding: deps.embed.model };
         },
       );
 

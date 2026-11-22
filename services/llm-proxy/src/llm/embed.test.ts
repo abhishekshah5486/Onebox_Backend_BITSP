@@ -109,7 +109,12 @@ describe('createEmbedder', () => {
     const paid = billing();
     const model = embeddingModel(settings({ provider: 'ollama', openAiKey: undefined }));
     const embed = createEmbedder({ model, billing: paid, logger });
-    expect(embed.model).toEqual({ id: 'ollama/bge-m3', name: 'bge-m3 (local)', dimensions: 2 });
+    expect(embed.model).toEqual({
+      id: 'ollama/bge-m3',
+      name: 'bge-m3 (local)',
+      dimensions: 2,
+      local: true,
+    });
 
     await embed({ userId, texts: ['a'], charge: true });
     const [url, init] = fetchMock.mock.calls[0]!;
@@ -129,24 +134,32 @@ describe('createEmbedder', () => {
   });
 });
 
-describe('POST /internal/embed', () => {
-  it('only answers other OneBox services', async () => {
-    const embed: Embedder = Object.assign(
-      vi.fn(async () => ({ model: 'm', dimensions: 2, vectors: [[1, 2]] })),
-      { model: { id: 'ollama/bge-m3', name: 'bge-m3 (local)', dimensions: 1024 } },
-    );
-    const app = buildApp({
-      logger,
-      checks: {},
-      routes: {
-        catalog: {} as never,
-        complete: vi.fn(),
-        embed,
-        usage: {} as never,
-        verifyToken: vi.fn(),
-        internalToken: 'secret',
-      },
-    });
+describe('embedding routes', () => {
+  const localModel = { id: 'ollama/bge-m3', name: 'bge-m3 (local)', dimensions: 1024, local: true };
+  const embed: Embedder = Object.assign(
+    vi.fn(async () => ({ model: 'm', dimensions: 2, vectors: [[1, 2]] })),
+    { model: localModel },
+  );
+  const app = buildApp({
+    logger,
+    checks: {},
+    routes: {
+      catalog: { list: async () => [], choices: async () => ({}) } as never,
+      complete: vi.fn(),
+      embed,
+      usage: {} as never,
+      verifyToken: vi.fn(async () => ({ userId, email: 'a@b.c' })),
+      internalToken: 'secret',
+    },
+  });
+
+  it('shows signed-in users which model search embeds with', async () => {
+    const res = await app.inject({ url: '/llm/models', headers: { authorization: 'Bearer t' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ embedding: unknown }>().embedding).toEqual(localModel);
+  });
+
+  it('only answers other OneBox services on internal routes', async () => {
     const body = { userId, texts: ['hello'], charge: false };
 
     const outside = await app.inject({ method: 'POST', url: '/internal/embed', payload: body });
@@ -166,7 +179,7 @@ describe('POST /internal/embed', () => {
       url: '/internal/embed/model',
       headers: { [INTERNAL_TOKEN_HEADER]: 'secret' },
     });
-    expect(model.json()).toEqual({ id: 'ollama/bge-m3', name: 'bge-m3 (local)', dimensions: 1024 });
+    expect(model.json()).toEqual(localModel);
     expect((await app.inject({ url: '/internal/embed/model' })).statusCode).toBe(401);
   });
 });
