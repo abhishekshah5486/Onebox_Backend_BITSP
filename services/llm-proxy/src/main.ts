@@ -105,6 +105,7 @@ const embeddingCatalog = createEmbeddingCatalog({
   },
   defaultModel: config.EMBEDDING_DEFAULT_MODEL,
   logger,
+  userModels,
 });
 const reembedJobs = createProducer<ReembedPayload>(QUEUES.reembed, {
   redisUrl: config.REDIS_URL,

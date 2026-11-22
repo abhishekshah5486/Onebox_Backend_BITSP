@@ -9,6 +9,8 @@ import {
   type EmbeddingModelRow,
   type Provider,
 } from '../db/schema';
+import type { UserModels } from '../byok/user-models';
+import { OWN_PREFIX } from './catalog';
 import type { EmbeddingModel } from './embed';
 
 // Hosted rows change only with a migration and Ollama's models only when one is pulled.
@@ -30,6 +32,8 @@ export interface EmbeddingOption {
   local: boolean;
   available: boolean;
   usdPerMillionTokens: number;
+  // Added by the user with their own key.
+  own: boolean;
 }
 
 const option = (
@@ -45,6 +49,7 @@ const option = (
   dimensions: model.dimensions,
   contextTokens,
   local: model.local,
+  own: false,
   available,
   usdPerMillionTokens: model.usdPerMillionTokens,
 });
@@ -66,6 +71,7 @@ export function createEmbeddingCatalog({
   keys,
   defaultModel,
   logger,
+  userModels,
 }: {
   db: PostgresJsDatabase;
   ollama: Pick<Ollama, 'list' | 'show'>;
@@ -73,6 +79,8 @@ export function createEmbeddingCatalog({
   keys: Partial<Record<Provider, string>>;
   defaultModel: string;
   logger: Logger;
+  // Embedding models users added with their own keys, picked as "user:<id>".
+  userModels?: Pick<UserModels, 'list' | 'owns' | 'resolve'>;
 }) {
   const hostedModel = (row: EmbeddingModelRow): EmbeddingModel => ({
     id: row.id,
@@ -155,6 +163,35 @@ export function createEmbeddingCatalog({
     return pulled ? { model: pulled.model, available: true } : null;
   }
 
+  // A user's own embedding model, ready to call with their key.
+  async function ownModel(userId: string | undefined, id: string): Promise<EmbeddingModel> {
+    try {
+      if (!userId || !userModels) throw new Error('no user');
+      const { row, sdk } = await userModels.resolve(userId, id.slice(OWN_PREFIX.length));
+      if (row.kind !== 'embedding' || !row.dimensions || !sdk.embeddingModel) {
+        throw new Error('not an embedding model');
+      }
+      return {
+        id,
+        apiName: row.modelId,
+        name: row.name,
+        dimensions: row.dimensions,
+        usdPerMillionTokens: 0,
+        baseUrl: '',
+        apiKey: undefined,
+        needsKey: false,
+        sendDimensions: false,
+        local: false,
+        sdk: sdk.embeddingModel(row.modelId),
+      };
+    } catch (err) {
+      logger.warn({ userId, id, err: (err as Error).message }, 'own embedding model unusable');
+      throw new ServiceUnavailableError(`The embedding model ${id} is not available`, {
+        code: 'EMBEDDINGS_UNAVAILABLE',
+      });
+    }
+  }
+
   async function choiceOf(userId: string) {
     const [row] = await db
       .select()
@@ -167,9 +204,22 @@ export function createEmbeddingCatalog({
     defaultModel,
     choiceOf,
 
-    async list(): Promise<EmbeddingOption[]> {
+    async list(userId?: string): Promise<EmbeddingOption[]> {
       const { hosted, local } = load();
+      const own = userId && userModels ? await userModels.list(userId, 'embedding') : [];
       return [
+        ...own.map((model) => ({
+          id: `${OWN_PREFIX}${model.id}`,
+          provider: model.providerId,
+          name: model.name,
+          description: `${model.providerName}, your own key`,
+          dimensions: model.dimensions ?? 0,
+          contextTokens: model.contextTokens,
+          local: false,
+          available: true,
+          usdPerMillionTokens: 0,
+          own: true,
+        })),
         ...(await local).map(({ model, description, contextTokens }) =>
           option(model, true, description, contextTokens),
         ),
@@ -182,6 +232,7 @@ export function createEmbeddingCatalog({
     // The model to embed with: the one asked for, else the user's pick, else the default.
     async resolve(userId: string | undefined, id?: string): Promise<EmbeddingModel> {
       const wanted = id ?? (userId ? await choiceOf(userId) : defaultModel);
+      if (wanted.startsWith(OWN_PREFIX)) return ownModel(userId, wanted);
       const found = await find(wanted);
       if (!found?.available) {
         throw new ServiceUnavailableError(`The embedding model ${wanted} is not available`, {
@@ -192,6 +243,16 @@ export function createEmbeddingCatalog({
     },
 
     async choose(userId: string, modelId: string) {
+      if (modelId.startsWith(OWN_PREFIX)) {
+        const owned = await userModels?.owns(userId, modelId.slice(OWN_PREFIX.length), 'embedding');
+        if (!owned) throw new NotFoundError(`No embedding model ${modelId}`);
+        const model = await ownModel(userId, modelId);
+        await db
+          .insert(userEmbeddingChoices)
+          .values({ userId, modelId })
+          .onConflictDoUpdate({ target: userEmbeddingChoices.userId, set: { modelId } });
+        return model;
+      }
       const found = await find(modelId);
       if (!found) throw new NotFoundError(`No embedding model ${modelId}`);
       if (!found.available) {

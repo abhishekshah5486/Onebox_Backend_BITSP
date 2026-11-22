@@ -213,14 +213,17 @@ export function registerLlmRoutes(
         '/user-models/:id',
         { schema: { params: z.object({ id: z.uuid() }) } },
         async (request, reply) => {
-          await deps.userModels.remove(userId(request), request.params.id);
+          const user = userId(request);
+          const { wasSearchModel } = await deps.userModels.remove(user, request.params.id);
+          // Semantic search goes back to the default model, so the mail is embedded with it.
+          if (wasSearchModel) await deps.reembed(user, deps.embeddingCatalog.defaultModel);
           return reply.code(204).send();
         },
       );
 
       routes.get('/embeddings', async (request) => {
         const [items, chosen] = await Promise.all([
-          deps.embeddingCatalog.list(),
+          deps.embeddingCatalog.list(userId(request)),
           deps.embeddingCatalog.choiceOf(userId(request)),
         ]);
         return { items, chosen, default: deps.embeddingCatalog.defaultModel };

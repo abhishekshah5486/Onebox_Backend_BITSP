@@ -4,7 +4,13 @@ import { NotFoundError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import { and, asc, count, eq } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { userModelChoices, userModels, type ModelKind, type UserModelRow } from '../db/schema';
+import {
+  userEmbeddingChoices,
+  userModelChoices,
+  userModels,
+  type ModelKind,
+  type UserModelRow,
+} from '../db/schema';
 import { OWN_PREFIX } from '../llm/catalog';
 import type { DirectoryProvider, ProviderDirectory } from './directory';
 import { checkSettings, connect, discoverModels, probe } from './probe';
@@ -192,18 +198,21 @@ export function createUserModels({
     // Features that used the model go back to the default.
     async remove(userId: string, id: string) {
       const row = await owned(userId, id);
-      await db.transaction(async (tx) => {
+      const picked = `${OWN_PREFIX}${row.id}`;
+      const searchChoices = await db.transaction(async (tx) => {
         await tx.delete(userModels).where(eq(userModels.id, row.id));
         await tx
           .delete(userModelChoices)
+          .where(and(eq(userModelChoices.userId, userId), eq(userModelChoices.modelId, picked)));
+        return tx
+          .delete(userEmbeddingChoices)
           .where(
-            and(
-              eq(userModelChoices.userId, userId),
-              eq(userModelChoices.modelId, `${OWN_PREFIX}${row.id}`),
-            ),
-          );
+            and(eq(userEmbeddingChoices.userId, userId), eq(userEmbeddingChoices.modelId, picked)),
+          )
+          .returning();
       });
       logger.info({ userId, id }, 'user model removed');
+      return { wasSearchModel: searchChoices.length > 0 };
     },
 
     // A ready-to-call model, for the AI features and semantic search.
