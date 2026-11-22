@@ -173,6 +173,7 @@ describe('preferences', () => {
       ],
       chipsHidden: [],
       inboxTabs: ['promotions', 'social', 'updates', 'forums'],
+      setupDone: false,
       updatedAt: null,
     });
   });
@@ -183,12 +184,13 @@ describe('preferences', () => {
       app.inject({ method: 'PATCH', url: '/settings/preferences', headers: as(userId), payload });
 
     await patch({ markSeenOnFetch: false, timezone: 'Asia/Kolkata' });
-    await patch({ sidebarHidden: ['spam'], inboxTabs: ['promotions'] });
+    await patch({ sidebarHidden: ['spam'], inboxTabs: ['promotions'], setupDone: true });
     const res = await patch({ autonomyMode: 'SEMI', signature: '— Abhishek' });
 
     expect(res.json()).toMatchObject({
       sidebarHidden: ['spam'],
       inboxTabs: ['promotions'],
+      setupDone: true,
       markSeenOnFetch: false,
       autonomyMode: 'SEMI',
       signature: '— Abhishek',

@@ -64,6 +64,13 @@
       "when": 1795370576464,
       "tag": "0008_key_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795371726799,
+      "tag": "0009_setup_done",
+      "breakpoints": true
     }
   ]
 }

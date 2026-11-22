@@ -48,6 +48,8 @@ export const userPreferences = settingsSchema.table('user_preferences', {
     .array()
     .notNull()
     .default(sql`ARRAY['promotions','social','updates','forums']::text[]`),
+  // The first-run setup (own models, storage) was finished or skipped.
+  setupDone: boolean('setup_done').notNull().default(false),
   ...timestamps,
 });
 
