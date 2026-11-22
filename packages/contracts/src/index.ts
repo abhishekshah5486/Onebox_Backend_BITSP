@@ -10,3 +10,4 @@ export * from './realtime';
 export * from './search';
 export * from './send';
 export * from './storage';
+export * from './vector-stores';
