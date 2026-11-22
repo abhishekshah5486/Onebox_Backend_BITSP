@@ -3,11 +3,12 @@ import { NotFoundError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { PROVIDERS, PURPOSES } from '../db/schema';
+import { MODEL_KINDS, PROVIDERS, PURPOSES } from '../db/schema';
 import { AUTO, type Catalog } from './catalog';
 import type { Completer } from './complete';
 import type { Embeddings } from './embed';
 import type { ProviderDirectory } from '../byok/directory';
+import type { UserModels } from '../byok/user-models';
 import type { EmbeddingCatalog } from './embedding-catalog';
 import type { Usage } from './usage';
 
@@ -41,6 +42,18 @@ const embedBody = z.object({
   model: z.string().min(1).max(200).optional(),
 });
 
+const settingsSchema = z.record(z.string().max(50), z.string().max(20_000));
+const userModelBody = z.object({
+  kind: z.enum(MODEL_KINDS),
+  providerId: z.string().min(1).max(100),
+  modelId: z.string().trim().min(1).max(200),
+  name: z.string().max(100).optional(),
+  settings: settingsSchema,
+  contextTokens: z.number().int().positive().max(100_000_000).optional(),
+  reasoning: z.boolean().optional(),
+  multimodal: z.boolean().optional(),
+});
+
 export function registerLlmRoutes(
   app: HttpServer,
   deps: {
@@ -53,6 +66,7 @@ export function registerLlmRoutes(
     usage: Usage;
     // Providers users can bring their own keys for.
     directory: ProviderDirectory;
+    userModels: UserModels;
     verifyToken: TokenVerifier;
     internalToken: string;
   },
@@ -155,6 +169,52 @@ export function registerLlmRoutes(
           const provider = await deps.directory.provider(request.params.id);
           if (!provider) throw new NotFoundError('No such provider');
           return provider;
+        },
+      );
+
+      // Models found with the credentials typed so far, to fill the model picker.
+      routes.post(
+        '/providers/:id/models',
+        {
+          schema: {
+            params: z.object({ id: z.string().min(1).max(100) }),
+            body: z.object({ settings: settingsSchema }),
+          },
+        },
+        async (request) => ({
+          items: await deps.userModels.discover(request.params.id, request.body.settings),
+        }),
+      );
+
+      routes.get(
+        '/user-models',
+        { schema: { querystring: z.object({ kind: z.enum(MODEL_KINDS).optional() }) } },
+        async (request) => ({
+          items: await deps.userModels.list(userId(request), request.query.kind),
+        }),
+      );
+
+      routes.post('/user-models', { schema: { body: userModelBody } }, async (request, reply) =>
+        reply.code(201).send(await deps.userModels.add(userId(request), request.body)),
+      );
+
+      routes.patch(
+        '/user-models/:id',
+        {
+          schema: {
+            params: z.object({ id: z.uuid() }),
+            body: userModelBody.omit({ kind: true, providerId: true }).partial(),
+          },
+        },
+        async (request) => deps.userModels.update(userId(request), request.params.id, request.body),
+      );
+
+      routes.delete(
+        '/user-models/:id',
+        { schema: { params: z.object({ id: z.uuid() }) } },
+        async (request, reply) => {
+          await deps.userModels.remove(userId(request), request.params.id);
+          return reply.code(204).send();
         },
       );
 

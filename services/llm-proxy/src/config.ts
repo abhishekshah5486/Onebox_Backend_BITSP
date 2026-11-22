@@ -1,4 +1,4 @@
-import { envPoolSize, envPort, loadConfig } from '@onebox/config';
+import { envBoolean, envPoolSize, envPort, loadConfig } from '@onebox/config';
 import { encryptionKeySchema } from '@onebox/crypto';
 import { z } from 'zod';
 
@@ -28,6 +28,10 @@ const schema = z.object({
   OLLAMA_URL: z.url().default('http://localhost:11434'),
   // The public catalogue of providers and models users can bring their own keys for.
   PROVIDER_CATALOG_URL: z.url().default('https://models.dev/api.json'),
+  // How long a test call with a user's own credentials may take.
+  PROVIDER_CHECK_TIMEOUT_MS: z.coerce.number().int().min(1000).default(20_000),
+  // Lets users point at servers on this machine or its network (e.g. LM Studio); off in production.
+  PROVIDER_ALLOW_PRIVATE_URLS: envBoolean.default(false),
   PROVIDER_CATALOG_TTL_MS: z.coerce
     .number()
     .int()

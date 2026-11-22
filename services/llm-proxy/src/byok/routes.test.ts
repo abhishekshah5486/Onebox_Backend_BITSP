@@ -21,6 +21,7 @@ const app = buildApp({
       providers: async () => providers,
       provider: async (id: string) => providers.find((provider) => provider.id === id) ?? null,
     },
+    userModels: {} as never,
     verifyToken: vi.fn(async () => ({ userId: 'u1', email: 'a@b.c' })),
     internalToken: 'secret',
   },

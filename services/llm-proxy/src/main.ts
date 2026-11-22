@@ -21,6 +21,7 @@ import { createCatalog } from './llm/catalog';
 import { createCompleter } from './llm/complete';
 import { createEmbeddings } from './llm/embed';
 import { createProviderDirectory } from './byok/directory';
+import { createUserModels } from './byok/user-models';
 import { createEmbeddingCatalog } from './llm/embedding-catalog';
 import { createUsage } from './llm/usage';
 import { anthropicAdapter } from './providers/anthropic';
@@ -74,6 +75,13 @@ const billing = createBillingClient({
   logger,
 });
 
+const directory = createProviderDirectory({
+  db: pg.db,
+  url: config.PROVIDER_CATALOG_URL,
+  ttlMs: config.PROVIDER_CATALOG_TTL_MS,
+  logger,
+});
+
 const embeddingCatalog = createEmbeddingCatalog({
   db: pg.db,
   ollama: new Ollama({ host: config.OLLAMA_URL }),
@@ -109,10 +117,13 @@ const app = buildApp({
     }),
     embed: createEmbeddings({ catalog: embeddingCatalog, billing, logger }),
     embeddingCatalog,
-    directory: createProviderDirectory({
+    directory,
+    userModels: createUserModels({
       db: pg.db,
-      url: config.PROVIDER_CATALOG_URL,
-      ttlMs: config.PROVIDER_CATALOG_TTL_MS,
+      encryptionKey: config.CREDENTIALS_ENCRYPTION_KEY,
+      directory,
+      allowPrivateUrls: config.PROVIDER_ALLOW_PRIVATE_URLS,
+      timeoutMs: config.PROVIDER_CHECK_TIMEOUT_MS,
       logger,
     }),
     reembed: async (userId, modelId) => {

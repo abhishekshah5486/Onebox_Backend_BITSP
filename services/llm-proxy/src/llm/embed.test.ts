@@ -196,6 +196,7 @@ describe('embedding routes', () => {
       embed,
       embeddingCatalog: embeddingCatalog as never,
       directory: {} as never,
+      userModels: {} as never,
       reembed,
       usage: {} as never,
       verifyToken: vi.fn(async () => ({ userId, email: 'a@b.c' })),

@@ -147,3 +147,38 @@ export const providerCatalog = llmSchema.table('provider_catalog', {
   body: jsonb('body').notNull(),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
 });
+
+export const MODEL_KINDS = ['llm', 'embedding'] as const;
+export type ModelKind = (typeof MODEL_KINDS)[number];
+
+// A model a user added with their own credentials: an LLM for the AI features, or an
+// embedding model for semantic search.
+export const userModels = llmSchema.table(
+  'user_models',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    kind: text('kind', { enum: MODEL_KINDS }).notNull(),
+    // A provider in the catalogue (models.dev id), or "openai-compatible".
+    providerId: text('provider_id').notNull(),
+    modelId: text('model_id').notNull(),
+    name: text('name').notNull(),
+    // The provider's settings (keys, base URL, region...) as encrypted JSON.
+    credentials: text('credentials').notNull(),
+    // The last few characters of the key, to tell keys apart without showing them.
+    keyHint: text('key_hint'),
+    contextTokens: integer('context_tokens'),
+    reasoning: boolean('reasoning').notNull().default(false),
+    multimodal: boolean('multimodal').notNull().default(false),
+    // What the embedding model returns, measured when it was added.
+    dimensions: integer('dimensions'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [index('user_models_user_kind_idx').on(table.userId, table.kind)],
+);
+
+export type UserModelRow = typeof userModels.$inferSelect;
