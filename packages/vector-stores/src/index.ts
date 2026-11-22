@@ -67,7 +67,14 @@ export async function checkVectorStore(
 
 // The gist of a driver error, without stack or request dumps.
 function describe(err: unknown) {
-  const message = (err as Error)?.message ?? String(err);
+  // fetch and some drivers keep the real reason (e.g. ECONNREFUSED) in a chain of causes.
+  const parts: string[] = [];
+  for (let at: unknown = err, depth = 0; at && depth < 5; depth += 1) {
+    const e = at as { message?: string; code?: string; cause?: unknown };
+    parts.push([e.code, e.message ?? (typeof at === 'string' ? at : '')].filter(Boolean).join(' '));
+    at = e.cause;
+  }
+  const message = parts.join(': ');
   if (
     /401|403|unauthori[sz]ed|forbidden|authentication|invalid api key|auth fail|WRONGPASS|NOAUTH|permission/i.test(
       message,
@@ -76,7 +83,9 @@ function describe(err: unknown) {
     return 'The store rejected these credentials';
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(message)) return "Couldn't find that host";
-  if (/ECONNREFUSED|ETIMEDOUT|timed? ?out|unavailable|ECONNRESET/i.test(message)) {
+  if (
+    /ECONNREFUSED|ETIMEDOUT|timed? ?out|unavailable|ECONNRESET|failed to connect/i.test(message)
+  ) {
     return "Couldn't reach the store";
   }
   return `The store answered with an error: ${message.slice(0, 160)}`;
