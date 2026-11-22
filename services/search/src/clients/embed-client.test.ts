@@ -39,7 +39,7 @@ describe('createEmbedClient', () => {
 });
 
 describe('fetchEmbedModel', () => {
-  const model = { id: 'ollama/bge-m3', name: 'bge-m3 (local)', dimensions: 1024 };
+  const model = { id: 'ollama/bge-m3', name: 'bge-m3', dimensions: 1024, local: true };
 
   it('waits for llm-proxy, then returns its model', async () => {
     const fetchMock = vi
@@ -51,6 +51,14 @@ describe('fetchEmbedModel', () => {
     await expect(fetchEmbedModel('http://llm-proxy', 'token', { onRetry })).resolves.toEqual(model);
     expect(onRetry).toHaveBeenCalledOnce();
     expect((fetchMock.mock.calls[1]![0] as URL).href).toBe('http://llm-proxy/internal/embed/model');
+  });
+
+  it("asks for a user's own model", async () => {
+    answer(200, model);
+    await fetchEmbedModel('http://llm-proxy', 'token', { userId: 'u1' });
+    expect((vi.mocked(fetch).mock.calls[0]![0] as URL).href).toBe(
+      'http://llm-proxy/internal/embed/model?userId=u1',
+    );
   });
 
   it('gives up after its retries', async () => {

@@ -156,6 +156,46 @@ export function createVectorIndex(client: QdrantClient, collection: string, dime
       return 'embedded' as const;
     },
 
+    // Many emails in one embedding call, for rebuilding with a new model. Unchanged text isn't
+    // embedded again, so a rebuild that restarts picks up where it stopped. Returns how many
+    // were embedded.
+    async upsertMany(entries: { doc: SearchDocument; version: number }[], embed: Embed) {
+      const points = await client.retrieve(collection, {
+        ids: entries.map(({ doc }) => pointId(doc.key)),
+        with_payload: ['version', 'contentHash'],
+        with_vector: false,
+      });
+      const existing = new Map(points.map((point) => [String(point.id), point.payload]));
+      const fresh = entries.flatMap(({ doc, version }) => {
+        const id = pointId(doc.key);
+        const text = embeddingText(doc);
+        const contentHash = createHash('sha256').update(text).digest('hex');
+        const before = existing.get(id);
+        // A live write already put something newer here.
+        if (before && Number(before.version) > version) return [];
+        const payload = payloadOf(doc, version, contentHash);
+        return [{ id, text, payload, same: before?.contentHash === contentHash }];
+      });
+      for (const { id, payload } of fresh.filter((entry) => entry.same)) {
+        await client.overwritePayload(collection, { points: [id], payload, wait: true });
+      }
+      const changed = fresh.filter((entry) => !entry.same);
+      if (changed.length === 0) return 0;
+      const vectors = await embed(changed.map((entry) => entry.text));
+      await client.upsert(collection, {
+        points: changed.map(({ id, payload }, i) => ({ id, vector: vectors[i]!, payload })),
+        wait: true,
+      });
+      return changed.length;
+    },
+
+    // A user's vectors, once they've moved to another model.
+    removeUser: (userId: string) =>
+      client.delete(collection, {
+        filter: { must: [{ key: 'userId', match: { value: userId } }] },
+        wait: true,
+      }),
+
     // Drops one copy; the email goes with its last. Returns whether it is gone.
     async removeCopy(key: string, messageId: string, version: number) {
       const existing = await current(key);
@@ -192,6 +232,7 @@ export function createVectorIndex(client: QdrantClient, collection: string, dime
       });
     },
 
+    collection,
     ping: () => client.versionInfo(),
   };
 }

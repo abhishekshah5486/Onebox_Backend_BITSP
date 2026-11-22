@@ -11,6 +11,8 @@ export interface EmbedRequest {
   texts: string[];
   // Searches are charged to the user; keeping the index current is not.
   charge: boolean;
+  // Defaults to the user's own pick.
+  model?: string;
 }
 
 export type EmbedClient = (request: EmbedRequest) => Promise<number[][]>;
@@ -43,17 +45,25 @@ export interface EmbedModel {
   id: string;
   name: string;
   dimensions: number;
+  local: boolean;
 }
 
-// The model llm-proxy embeds with, waiting for llm-proxy if it is still starting.
+// The model a user embeds with (the server default without one), waiting for llm-proxy if it is
+// still starting.
 export function fetchEmbedModel(
   baseUrl: string,
   internalToken: string,
-  { retries = 30, onRetry }: { retries?: number; onRetry?: (error: Error) => void } = {},
+  {
+    userId,
+    retries = 30,
+    onRetry,
+  }: { userId?: string; retries?: number; onRetry?: (error: Error) => void } = {},
 ): Promise<EmbedModel> {
+  const url = new URL('/internal/embed/model', baseUrl);
+  if (userId) url.searchParams.set('userId', userId);
   return pRetry(
     async () => {
-      const response = await fetch(new URL('/internal/embed/model', baseUrl), {
+      const response = await fetch(url, {
         headers: { [INTERNAL_TOKEN_HEADER]: internalToken },
         signal: AbortSignal.timeout(5_000),
       });

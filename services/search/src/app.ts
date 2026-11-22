@@ -8,7 +8,7 @@ import type { EmbedClient } from './clients/embed-client';
 import type { ThreadLookup } from './clients/mail-client';
 import type { KeywordIndex } from './keyword/keyword-index';
 import { freeText, parseQuery } from './query/parse';
-import type { VectorIndex } from './semantic/vector-index';
+import type { SemanticModels } from './semantic/models';
 
 // Meaning-based results are ranked, not paged deep: past this they stop being relevant.
 const MAX_SEMANTIC_RESULTS = 100;
@@ -17,7 +17,7 @@ export interface AppDeps {
   logger: Logger;
   checks: Record<string, HealthCheck>;
   keyword: KeywordIndex;
-  vector: VectorIndex;
+  models: SemanticModels;
   embed: EmbedClient;
   lookupThreads: ThreadLookup;
   verifyToken: TokenVerifier;
@@ -58,9 +58,12 @@ export function buildApp(deps: AppDeps) {
       let total: number;
       let more: boolean;
       if (mode === 'semantic') {
-        const [vector] = await deps.embed({ userId, texts: [text], charge: true });
+        // The model the user's mail is embedded with, which may trail a fresh pick.
+        const model = await deps.models.active(userId);
+        const [vector] = await deps.embed({ userId, texts: [text], charge: true, model: model.id });
         const limit = Math.min((page + 1) * pageSize, MAX_SEMANTIC_RESULTS);
-        const ranked = await deps.vector.search(userId, vector!, query, limit);
+        const index = await deps.models.indexFor(model);
+        const ranked = await index.search(userId, vector!, query, limit);
         hits = ranked.slice(page * pageSize).map((hit) => ({ ...hit, highlights: [] }));
         total = ranked.length;
         more = ranked.length === limit && limit < MAX_SEMANTIC_RESULTS;
@@ -86,6 +89,16 @@ export function buildApp(deps: AppDeps) {
       return { mode, items, total, nextPage: more ? page + 1 : null };
     },
   );
+
+  // Which model semantic search uses for the user, and how far a switch to another has got.
+  routes.get('/search/semantic', { preHandler: requireUser(deps.verifyToken) }, async (request) => {
+    const { userId } = currentUser(request);
+    const [active, rebuild] = await Promise.all([
+      deps.models.active(userId),
+      deps.models.rebuildOf(userId),
+    ]);
+    return { active, rebuild };
+  });
 
   return app;
 }

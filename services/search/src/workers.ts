@@ -1,8 +1,10 @@
 import {
   indexPayloadSchema,
   QUEUES,
+  reembedPayloadSchema,
   type IndexPayload,
   type JobEnvelope,
+  type ReembedPayload,
   type SearchDocument,
 } from '@onebox/contracts';
 import type { Logger } from '@onebox/logger';
@@ -10,7 +12,10 @@ import { createConsumer } from '@onebox/queue';
 import type { EmbedClient } from './clients/embed-client';
 import type { IndexState } from './index-state';
 import type { KeywordIndex } from './keyword/keyword-index';
-import type { VectorIndex } from './semantic/vector-index';
+import type { SemanticModels } from './semantic/models';
+
+// Emails embedded per call while rebuilding with a new model.
+const REBUILD_BATCH = 32;
 
 export interface Index {
   name: string;
@@ -51,23 +56,69 @@ export const keywordHandler = (keyword: KeywordIndex, state: IndexState) =>
     state,
   );
 
-// Indexing isn't charged to the user; only their searches are.
-export const vectorHandler = (vector: VectorIndex, embed: EmbedClient, state: IndexState) =>
+// Indexing isn't charged to the user; only their searches are. Each model the user needs gets
+// the email: the one they search with and, while switching, the one they picked.
+export const vectorHandler = (models: SemanticModels, embed: EmbedClient, state: IndexState) =>
   indexHandler(
     {
       name: 'vector',
-      upsert: (doc, version) =>
-        vector.upsert(doc, version, (texts) => embed({ userId: doc.userId, texts, charge: false })),
-      removeCopy: (key, messageId, version) => vector.removeCopy(key, messageId, version),
+      async upsert(doc, version) {
+        for (const model of await models.targets(doc.userId)) {
+          const index = await models.indexFor(model);
+          await index.upsert(doc, version, (texts) =>
+            embed({ userId: doc.userId, texts, charge: false, model: model.id }),
+          );
+        }
+      },
+      // A removal doesn't say whose email it was, so every model's copy goes.
+      async removeCopy(key, messageId, version) {
+        const results = await Promise.all(
+          (await models.allIndexes()).map((index) => index.removeCopy(key, messageId, version)),
+        );
+        return results.some(Boolean);
+      },
     },
     state,
   );
+
+// Embeds all of a user's mail with the model they switched to, then moves their searches to it.
+// A newer switch makes this one moot; a restarted rebuild skips what is already embedded.
+export function reembedHandler({
+  models,
+  keyword,
+  embed,
+  logger,
+}: {
+  models: SemanticModels;
+  keyword: Pick<KeywordIndex, 'countOf' | 'documentsOf'>;
+  embed: EmbedClient;
+  logger: Logger;
+}) {
+  return async ({ userId, payload }: JobEnvelope<ReembedPayload>) => {
+    const isCurrent = async () =>
+      (await models.chosen(userId, { fresh: true })).id === payload.modelId;
+    if (!(await isCurrent())) return;
+    const model = await models.chosen(userId);
+    const index = await models.indexFor(model);
+    await models.startRebuild(userId, model.id, await keyword.countOf(userId));
+    let embedded = 0;
+    for await (const page of keyword.documentsOf(userId, REBUILD_BATCH)) {
+      if (!(await isCurrent())) return;
+      embedded += await index.upsertMany(page, (texts) =>
+        embed({ userId, texts, charge: false, model: model.id }),
+      );
+      await models.progress(userId, page.length);
+    }
+    await models.finishRebuild(userId, model);
+    logger.info({ userId, model: model.id, embedded }, 'mail embedded with the new model');
+  };
+}
 
 export interface WorkerDeps {
   redisUrl: string;
   logger: Logger;
   keyword: KeywordIndex;
-  vector: VectorIndex;
+  models: SemanticModels;
   embed: EmbedClient;
   state: IndexState;
   indexConcurrency: number;
@@ -85,8 +136,15 @@ export function startWorkers(deps: WorkerDeps) {
     createConsumer(
       QUEUES.embed,
       indexPayloadSchema,
-      vectorHandler(deps.vector, deps.embed, deps.state),
+      vectorHandler(deps.models, deps.embed, deps.state),
       { redisUrl, logger, concurrency: deps.embedConcurrency },
+    ),
+    // One mailbox at a time, so a rebuild doesn't starve live indexing of the embedding model.
+    createConsumer(
+      QUEUES.reembed,
+      reembedPayloadSchema,
+      reembedHandler({ models: deps.models, keyword: deps.keyword, embed: deps.embed, logger }),
+      { redisUrl, logger, concurrency: 1 },
     ),
   ];
   return { close: () => Promise.all(consumers.map((consumer) => consumer.close())) };

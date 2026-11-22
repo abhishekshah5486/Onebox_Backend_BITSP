@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { createIndexState, labelsOf, type IndexState } from './index-state';
 import { copy, searchDoc } from './test-doc';
 import { indexHandler, vectorHandler } from './workers';
-import type { VectorIndex } from './semantic/vector-index';
+import type { SemanticModels } from './semantic/models';
 
 let redisServer: TestRedis;
 let redis: Redis;
@@ -113,17 +113,32 @@ describe('index workers', () => {
     expect(index.docs.get('k1')!.doc.copies).toHaveLength(1);
   });
 
-  it('embeds for search without charging the user', async () => {
+  it('embeds with each model the user needs, without charging them', async () => {
     const embed = vi.fn(async () => [[1]]);
-    const vector = {
+    const vector = () => ({
       upsert: vi.fn(async (_doc: SearchDocument, _v: number, run: (t: string[]) => unknown) => {
         await run(['text']);
         return 'embedded' as const;
       }),
-      removeCopy: vi.fn(async () => false),
+      removeCopy: vi.fn(async () => true),
+    });
+    const indexes = { a: vector(), b: vector() };
+    const models = {
+      // Mid-switch: searching with a, moving to b.
+      targets: vi.fn(async () => [{ id: 'a' }, { id: 'b' }]),
+      indexFor: vi.fn(async (model: { id: 'a' | 'b' }) => indexes[model.id]),
+      allIndexes: vi.fn(async () => [indexes.a, indexes.b]),
     };
-    await vectorHandler(vector as unknown as VectorIndex, embed, state)(upsert(both, 1));
-    expect(embed).toHaveBeenCalledWith({ userId: 'u1', texts: ['text'], charge: false });
+    const handle = vectorHandler(models as unknown as SemanticModels, embed, state);
+    await handle(upsert(both, 1));
+    expect(embed.mock.calls).toEqual([
+      [{ userId: 'u1', texts: ['text'], charge: false, model: 'a' }],
+      [{ userId: 'u1', texts: ['text'], charge: false, model: 'b' }],
+    ]);
+
+    await handle(remove('m1', 2));
+    expect(indexes.a.removeCopy).toHaveBeenCalledWith('k1', 'm1', 2);
+    expect(indexes.b.removeCopy).toHaveBeenCalledWith('k1', 'm1', 2);
   });
 });
 

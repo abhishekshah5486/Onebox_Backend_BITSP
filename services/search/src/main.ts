@@ -5,12 +5,12 @@ import { createLogger } from '@onebox/logger';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { Redis } from 'ioredis';
 import { buildApp } from './app';
-import { collectionFor, createEmbedClient, fetchEmbedModel } from './clients/embed-client';
+import { createEmbedClient, fetchEmbedModel } from './clients/embed-client';
 import { createThreadLookup } from './clients/mail-client';
 import { loadSearchConfig } from './config';
 import { createIndexState } from './index-state';
 import { createKeywordIndex } from './keyword/keyword-index';
-import { createVectorIndex } from './semantic/vector-index';
+import { createSemanticModels } from './semantic/models';
 import { startWorkers } from './workers';
 
 const logger = createLogger({ service: 'search', pretty: process.stdout.isTTY });
@@ -25,23 +25,28 @@ const qdrant = new QdrantClient({
 });
 
 const internalToken = deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY);
-const model = await fetchEmbedModel(config.LLM_PROXY_SERVICE_URL, internalToken, {
+const defaultModel = await fetchEmbedModel(config.LLM_PROXY_SERVICE_URL, internalToken, {
   onRetry: (err) => logger.warn({ err: err.message }, 'waiting for llm-proxy'),
 });
-const collection = config.QDRANT_COLLECTION ?? collectionFor(model);
-logger.info({ model: model.id, dimensions: model.dimensions, collection }, 'embedding model');
+logger.info({ model: defaultModel.id }, 'default embedding model');
 
 const keyword = createKeywordIndex(elastic, config.ELASTICSEARCH_INDEX);
-const vector = createVectorIndex(qdrant, collection, model.dimensions);
 await keyword.ensure();
-await vector.ensure();
+const models = createSemanticModels({
+  qdrant,
+  redis,
+  fetchModel: (userId) =>
+    fetchEmbedModel(config.LLM_PROXY_SERVICE_URL, internalToken, { userId, retries: 2 }),
+  defaultModel,
+});
+await models.indexFor(defaultModel);
 
 const embed = createEmbedClient(config.LLM_PROXY_SERVICE_URL, internalToken);
 const workers = startWorkers({
   redisUrl: config.REDIS_URL,
   logger,
   keyword,
-  vector,
+  models,
   embed,
   state: createIndexState(redis),
   indexConcurrency: config.INDEX_CONCURRENCY,
@@ -53,10 +58,10 @@ const app = buildApp({
   checks: {
     redis: () => redis.ping(),
     elasticsearch: () => keyword.ping(),
-    qdrant: () => vector.ping(),
+    qdrant: () => qdrant.versionInfo(),
   },
   keyword,
-  vector,
+  models,
   embed,
   lookupThreads: createThreadLookup(config.MAIL_SERVICE_URL),
   verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),

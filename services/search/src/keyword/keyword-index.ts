@@ -133,6 +133,31 @@ export function createKeywordIndex(client: Client, index: string) {
       }
     },
 
+    countOf: async (userId: string) =>
+      (await client.count({ index, query: { term: { userId } } })).count,
+
+    // Every email of a user with its version, a page at a time, to embed again with a new model.
+    async *documentsOf(userId: string, pageSize: number) {
+      let after: estypes.SortResults | undefined;
+      for (;;) {
+        const page = await client.search<StoredDocument>({
+          index,
+          query: { term: { userId } },
+          sort: [{ key: 'asc' }],
+          size: pageSize,
+          version: true,
+          ...(after && { search_after: after }),
+        });
+        const hits = page.hits.hits.filter((hit) => hit._source);
+        if (hits.length === 0) return;
+        yield hits.map((hit) => {
+          const { aiLabels, ...doc } = hit._source!;
+          return { doc: { ...doc, labels: aiLabels }, version: hit._version! };
+        });
+        after = page.hits.hits.at(-1)!.sort;
+      }
+    },
+
     // One hit per conversation, newest first; total counts conversations.
     async search(
       userId: string,
