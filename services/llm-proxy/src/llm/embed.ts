@@ -5,6 +5,8 @@ import {
   ServiceUnavailableError,
 } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
+import { APICallError, type EmbeddingModelV4 } from '@ai-sdk/provider';
+import { embedMany } from 'ai';
 import { postJson, ProviderError } from '../providers/types';
 import type { Billing } from './billing';
 import type { EmbeddingCatalog } from './embedding-catalog';
@@ -23,6 +25,8 @@ export interface EmbeddingModel {
   sendDimensions: boolean;
   // Runs beside OneBox (Ollama) rather than at a provider.
   local: boolean;
+  // A user's own model, called through its AI SDK provider with their key.
+  sdk?: EmbeddingModelV4;
 }
 
 export interface EmbedInput {
@@ -57,6 +61,34 @@ interface EmbeddingsResponse {
   usage?: { total_tokens?: number };
 }
 
+// Same response shape as an /embeddings call, so the checks below hold for both.
+async function viaSdk(
+  model: EmbeddingModelV4,
+  texts: string[],
+  timeoutMs: number,
+): Promise<EmbeddingsResponse> {
+  try {
+    const { embeddings, usage } = await embedMany({
+      model,
+      values: texts,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(timeoutMs),
+    });
+    return {
+      data: embeddings.map((embedding, index) => ({ index, embedding })),
+      usage: { total_tokens: usage.tokens },
+    };
+  } catch (err) {
+    const status = APICallError.isInstance(err) ? err.statusCode : undefined;
+    throw new ProviderError(
+      (err as Error).message.slice(0, 300),
+      status === 401 || status === 403 ? 'AUTH' : status === 429 ? 'RATE_LIMITED' : 'PROVIDER_DOWN',
+      status === undefined || status === 429 || status >= 500,
+      status,
+    );
+  }
+}
+
 export function createEmbedder({
   model,
   billing,
@@ -82,16 +114,18 @@ export function createEmbedder({
     }
     let result: EmbeddingsResponse;
     try {
-      result = (await postJson(
-        `${model.baseUrl}/embeddings`,
-        model.apiKey ? { authorization: `Bearer ${model.apiKey}` } : {},
-        {
-          model: model.apiName,
-          input: texts,
-          ...(model.sendDimensions && { dimensions: model.dimensions }),
-        },
-        timeoutMs,
-      )) as EmbeddingsResponse;
+      result = model.sdk
+        ? await viaSdk(model.sdk, texts, timeoutMs)
+        : ((await postJson(
+            `${model.baseUrl}/embeddings`,
+            model.apiKey ? { authorization: `Bearer ${model.apiKey}` } : {},
+            {
+              model: model.apiName,
+              input: texts,
+              ...(model.sendDimensions && { dimensions: model.dimensions }),
+            },
+            timeoutMs,
+          )) as EmbeddingsResponse);
     } catch (err) {
       if (!(err instanceof ProviderError)) throw err;
       logger.warn({ code: err.code, err: err.message }, 'embedding call failed');
@@ -152,6 +186,8 @@ export function createEmbeddings({
 }) {
   const embedders = new Map<string, Embedder>();
   const embedderFor = (model: EmbeddingModel) => {
+    // Own models carry their user's credentials, which can change, so they aren't kept.
+    if (model.sdk) return createEmbedder({ model, billing, logger });
     // A re-pulled local model can change size, so the size is part of the key.
     const key = `${model.id}@${model.dimensions}`;
     let embedder = embedders.get(key);
