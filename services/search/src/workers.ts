@@ -20,19 +20,19 @@ const REBUILD_BATCH = 32;
 export interface Index {
   name: string;
   upsert(doc: SearchDocument, version: number): Promise<unknown>;
-  removeCopy(key: string, messageId: string, version: number): Promise<boolean>;
+  removeCopy(key: string, messageId: string, version: number, userId: string): Promise<boolean>;
 }
 
 // One worker at a time per email, so a copy removal never undoes another; versions settle the
 // rest, and removed copies stay out of any older write that lands later.
 export function indexHandler(index: Index, state: IndexState) {
-  return async ({ payload }: JobEnvelope<IndexPayload>) => {
+  return async ({ userId, payload }: JobEnvelope<IndexPayload>) => {
     if (payload.op === 'delete') {
       const key = await state.keyOfCopy(payload.messageId);
       await state.forgetCopy(payload.messageId, payload.version);
       if (key) {
         await state.withLock(`${index.name}:${key}`, () =>
-          index.removeCopy(key, payload.messageId, payload.version),
+          index.removeCopy(key, payload.messageId, payload.version, userId),
         );
       }
       return;
@@ -63,17 +63,18 @@ export const vectorHandler = (models: SemanticModels, embed: EmbedClient, state:
     {
       name: 'vector',
       async upsert(doc, version) {
-        for (const model of await models.targets(doc.userId)) {
-          const index = await models.indexFor(model);
+        for (const { model, index } of await models.targets(doc.userId)) {
           await index.upsert(doc, version, (texts) =>
             embed({ userId: doc.userId, texts, charge: false, model: model.id }),
           );
         }
       },
-      // A removal doesn't say whose email it was, so every model's copy goes.
-      async removeCopy(key, messageId, version) {
+      // A removal doesn't say which model the email was in, so every model's copy goes.
+      async removeCopy(key, messageId, version, userId) {
         const results = await Promise.all(
-          (await models.allIndexes()).map((index) => index.removeCopy(key, messageId, version)),
+          (await models.allIndexes(userId)).map((index) =>
+            index.removeCopy(key, messageId, version),
+          ),
         );
         return results.some(Boolean);
       },
@@ -99,18 +100,24 @@ export function reembedHandler({
       (await models.chosen(userId, { fresh: true })).id === payload.modelId;
     if (!(await isCurrent())) return;
     const model = await models.chosen(userId);
-    const index = await models.indexFor(model);
-    await models.startRebuild(userId, model.id, await keyword.countOf(userId));
+    // Into the store the user has now; moving it again queues another rebuild.
+    const store = await models.storeOf(userId, { fresh: true });
+    const sameStore = async () => (await models.storeOf(userId, { fresh: true })).id === store.id;
+    const index = await models.indexFor(model, store);
+    await models.startRebuild(userId, model.id, await keyword.countOf(userId), store.id);
     let embedded = 0;
     for await (const page of keyword.documentsOf(userId, REBUILD_BATCH)) {
-      if (!(await isCurrent())) return;
+      if (!(await isCurrent()) || !(await sameStore())) return;
       embedded += await index.upsertMany(page, (texts) =>
         embed({ userId, texts, charge: false, model: model.id }),
       );
       await models.progress(userId, page.length);
     }
-    await models.finishRebuild(userId, model);
-    logger.info({ userId, model: model.id, embedded }, 'mail embedded with the new model');
+    await models.finishRebuild(userId, model, store);
+    logger.info(
+      { userId, model: model.id, store: store.id, embedded },
+      'mail embedded with the new model',
+    );
   };
 }
 

@@ -125,8 +125,10 @@ describe('index workers', () => {
     const indexes = { a: vector(), b: vector() };
     const models = {
       // Mid-switch: searching with a, moving to b.
-      targets: vi.fn(async () => [{ id: 'a' }, { id: 'b' }]),
-      indexFor: vi.fn(async (model: { id: 'a' | 'b' }) => indexes[model.id]),
+      targets: vi.fn(async () => [
+        { model: { id: 'a' }, index: indexes.a },
+        { model: { id: 'b' }, index: indexes.b },
+      ]),
       allIndexes: vi.fn(async () => [indexes.a, indexes.b]),
     };
     const handle = vectorHandler(models as unknown as SemanticModels, embed, state);
