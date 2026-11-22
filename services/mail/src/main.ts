@@ -27,6 +27,7 @@ import { composeCollections, ensureComposeIndexes } from './compose/collections'
 import { createComposeService } from './compose/compose-service';
 import { googleDriveUploader } from './storage/google-drive';
 import { dropboxUploader } from './storage/dropbox';
+import { azureBlobUploader, s3Uploader } from './storage/object-store';
 import { oneDriveUploader } from './storage/onedrive';
 import { createStorageService } from './storage/storage';
 import { createIngestHandler } from './ingest/ingest-message';
@@ -182,6 +183,8 @@ const app = buildApp({
             GOOGLE_DRIVE: googleDriveUploader(logger),
             ONEDRIVE: oneDriveUploader(logger),
             DROPBOX: dropboxUploader(logger),
+            S3: s3Uploader(logger),
+            AZURE_BLOB: azureBlobUploader(logger),
           },
         }),
       }),
