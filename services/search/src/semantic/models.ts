@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import type { Redis } from 'ioredis';
 import { collectionFor, type EmbedModel } from '../clients/embed-client';
+import type { VectorStoreConnection } from '@onebox/contracts';
+import { openVectorStore } from '@onebox/vector-stores';
+import { createStoreIndex } from './store-index';
 import { createVectorIndex, type VectorIndex } from './vector-index';
 
 // A user's pick is re-read this often; a switch also refreshes it straight away.
@@ -9,16 +12,67 @@ const CHOSEN_TTL_S = 30;
 const STORE_TTL_MS = 30_000;
 const ONEBOX = 'onebox';
 
-// Where a user's vectors live: OneBox's Qdrant, or their own.
-export type StoreConnection =
-  { provider: 'ONEBOX' } | { provider: 'QDRANT'; url: string; apiKey: string | null };
+// Where a user's vectors live: OneBox's Qdrant, or a vector database of their own.
+export type StoreConnection = VectorStoreConnection;
+
+// What search needs from an index, whichever database holds it.
+export interface SemanticIndex {
+  collection: string;
+  ensure(): Promise<void>;
+  upsert: VectorIndex['upsert'];
+  upsertMany: VectorIndex['upsertMany'];
+  removeUser(userId: string): Promise<unknown>;
+  removeCopy(key: string, messageId: string, version: number, userId?: string): Promise<boolean>;
+  search: VectorIndex['search'];
+  ping(): Promise<unknown>;
+}
 
 export interface Store {
   id: string;
-  client: QdrantClient;
+  open(collection: string, dimensions: number): SemanticIndex;
+  // OneBox's collections in it.
+  collections(): Promise<string[]>;
 }
-// Every collection is named mail_<model>_<size>.
-const COLLECTION_PREFIX = 'mail_';
+// Every collection is named mail_<model>_<size>; stores that don't allow underscores or
+// lowercase turn that into e.g. mail-<model>-<size> or Mail_<model>_<size>.
+const OUR_COLLECTION = /^mail[_-]/i;
+
+function qdrantStore(id: string, client: QdrantClient): Store {
+  return {
+    id,
+    open: (collection, dimensions) => createVectorIndex(client, collection, dimensions),
+    async collections() {
+      return (await client.getCollections()).collections
+        .map(({ name }) => name)
+        .filter((name) => OUR_COLLECTION.test(name));
+    },
+  };
+}
+
+// A user's own store. Its id changes with its settings, so new keys or a new address count
+// as a move and the vectors are built there again.
+function ownStore(connection: Exclude<VectorStoreConnection, { provider: 'ONEBOX' }>): Store {
+  const id = `own:${createHash('sha256')
+    .update(JSON.stringify([connection.provider, Object.entries(connection.settings).sort()]))
+    .digest('hex')
+    .slice(0, 16)}`;
+  if (connection.provider === 'QDRANT') {
+    const { url, apiKey } = connection.settings;
+    return qdrantStore(
+      id,
+      new QdrantClient({ url: url ?? '', ...(apiKey && { apiKey }), checkCompatibility: false }),
+    );
+  }
+  const store = openVectorStore(connection.provider, connection.settings);
+  return {
+    id,
+    open: (collection, dimensions) =>
+      createStoreIndex(store.collection(collection, dimensions), () => store.check()),
+    async collections() {
+      return (await store.collections()).filter((name) => OUR_COLLECTION.test(name));
+    },
+  };
+}
 
 export type ModelStore = Pick<Redis, 'get' | 'set' | 'del' | 'hset' | 'hgetall' | 'hincrby'>;
 
@@ -54,28 +108,18 @@ export function createSemanticModels({
   // Which store the user's searchable vectors were last built in.
   const builtKey = (userId: string) => `search:semantic:store:${userId}`;
 
-  const onebox: Store = { id: ONEBOX, client: qdrant };
-  const clients = new Map<string, QdrantClient>();
+  const onebox = qdrantStore(ONEBOX, qdrant);
+  const owned = new Map<string, Store>();
   const stores = new Map<string, { at: number; store: Promise<Store> }>();
 
   // Keys never go to Redis; the store is asked for again every half minute.
   async function connect(userId: string): Promise<Store> {
     const connection = await fetchStore(userId);
     if (connection.provider === 'ONEBOX') return onebox;
-    const id = `own:${createHash('sha256')
-      .update(`${connection.url}\n${connection.apiKey ?? ''}`)
-      .digest('hex')
-      .slice(0, 16)}`;
-    let client = clients.get(id);
-    if (!client) {
-      client = new QdrantClient({
-        url: connection.url,
-        ...(connection.apiKey && { apiKey: connection.apiKey }),
-        checkCompatibility: false,
-      });
-      clients.set(id, client);
-    }
-    return { id, client };
+    const store = ownStore(connection);
+    // One client per store, however many users or lookups share it.
+    if (!owned.has(store.id)) owned.set(store.id, store);
+    return owned.get(store.id)!;
   }
 
   function storeOf(userId: string, { fresh = false } = {}) {
@@ -87,13 +131,13 @@ export function createSemanticModels({
     return store;
   }
 
-  const indexes = new Map<string, Promise<VectorIndex>>();
+  const indexes = new Map<string, Promise<SemanticIndex>>();
   function indexFor(model: EmbedModel, store: Store = onebox) {
     const collection = collectionFor(model);
     const key = `${store.id}/${collection}`;
     let index = indexes.get(key);
     if (!index) {
-      const created = createVectorIndex(store.client, collection, model.dimensions);
+      const created = store.open(collection, model.dimensions);
       index = created.ensure().then(() => created);
       // A failed setup is tried again next time.
       index.catch(() => indexes.delete(key));
@@ -103,9 +147,7 @@ export function createSemanticModels({
   }
 
   const collectionsIn = async (store: Store) =>
-    (await store.client.getCollections()).collections
-      .filter(({ name }) => name.startsWith(COLLECTION_PREFIX))
-      .map(({ name }) => createVectorIndex(store.client, name, 0));
+    (await store.collections()).map((name) => store.open(name, 0));
 
   async function chosen(userId: string, { fresh = false } = {}) {
     const cached = fresh ? null : await redis.get(chosenKey(userId));

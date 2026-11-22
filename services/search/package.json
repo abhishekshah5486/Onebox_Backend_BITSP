@@ -19,6 +19,7 @@
     "@onebox/http": "*",
     "@onebox/logger": "*",
     "@onebox/queue": "*",
+    "@onebox/vector-stores": "*",
     "@qdrant/js-client-rest": "^1.20.0",
     "bytes": "^3.1.2",
     "fastify": "^5.12.5",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@onebox/testing": "*",
-    "@types/bytes": "^3.1.6"
+    "@types/bytes": "^3.1.6",
+    "postgres": "3.4.9"
   }
 }

@@ -139,8 +139,8 @@ describe('index workers', () => {
     ]);
 
     await handle(remove('m1', 2));
-    expect(indexes.a.removeCopy).toHaveBeenCalledWith('k1', 'm1', 2);
-    expect(indexes.b.removeCopy).toHaveBeenCalledWith('k1', 'm1', 2);
+    expect(indexes.a.removeCopy).toHaveBeenCalledWith('k1', 'm1', 2, 'u1');
+    expect(indexes.b.removeCopy).toHaveBeenCalledWith('k1', 'm1', 2, 'u1');
   });
 });
 

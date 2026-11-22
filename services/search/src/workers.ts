@@ -73,7 +73,7 @@ export const vectorHandler = (models: SemanticModels, embed: EmbedClient, state:
       async removeCopy(key, messageId, version, userId) {
         const results = await Promise.all(
           (await models.allIndexes(userId)).map((index) =>
-            index.removeCopy(key, messageId, version),
+            index.removeCopy(key, messageId, version, userId),
           ),
         );
         return results.some(Boolean);

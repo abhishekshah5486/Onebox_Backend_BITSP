@@ -1,11 +1,6 @@
 import { INTERNAL_TOKEN_HEADER } from '@onebox/auth-kit';
-import { z } from 'zod';
+import { vectorStoreConnectionSchema as storeSchema } from '@onebox/contracts';
 import type { StoreConnection } from '../semantic/models';
-
-const storeSchema = z.discriminatedUnion('provider', [
-  z.object({ provider: z.literal('ONEBOX') }),
-  z.object({ provider: z.literal('QDRANT'), url: z.url(), apiKey: z.string().nullable() }),
-]);
 
 // Where the user keeps their vectors, with the key to reach them.
 export async function fetchStore(

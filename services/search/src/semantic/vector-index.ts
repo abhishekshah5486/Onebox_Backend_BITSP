@@ -28,7 +28,7 @@ export function embeddingText(doc: SearchDocument) {
     .slice(0, MAX_EMBEDDED_CHARS);
 }
 
-interface Payload {
+export interface Payload {
   key: string;
   copies: SearchCopy[];
   roles: string[];
@@ -39,14 +39,14 @@ interface Payload {
   [field: string]: unknown;
 }
 
-const placesOf = (doc: Pick<SearchDocument, 'labels' | 'copies'>) => ({
+export const placesOf = (doc: Pick<SearchDocument, 'labels' | 'copies'>) => ({
   copies: doc.copies,
   roles: [...new Set(doc.copies.map((copy) => copy.role))],
   aiLabels: doc.labels,
   labels: labelsOf(doc).map((label) => label.toLowerCase()),
 });
 
-const payloadOf = (doc: SearchDocument, version: number, contentHash: string): Payload => ({
+export const payloadOf = (doc: SearchDocument, version: number, contentHash: string): Payload => ({
   ...placesOf(doc),
   key: doc.key,
   userId: doc.userId,

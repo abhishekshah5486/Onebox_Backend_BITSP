@@ -3,6 +3,7 @@ import { createJobEnvelope } from '@onebox/contracts';
 import { createLogger } from '@onebox/logger';
 import {
   startElasticsearch,
+  startPgvector,
   startQdrant,
   startRedis,
   type TestRedis,
@@ -10,6 +11,7 @@ import {
 } from '@onebox/testing';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { Redis } from 'ioredis';
+import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EmbedModel } from '../clients/embed-client';
 import { createKeywordIndex, type KeywordIndex } from '../keyword/keyword-index';
@@ -86,7 +88,7 @@ describe("a user's own vector store", () => {
     expect(await count(oneboxServer.url, collection)).toBe(5);
 
     // The user moves to their own Qdrant: new mail notices and asks for a rebuild.
-    connection = { provider: 'QDRANT', url: ownServer.url, apiKey: null };
+    connection = { provider: 'QDRANT', settings: { url: ownServer.url } };
     models.forgetStore('u1');
     const targets = await models.targets('u1');
     expect(requestRebuild).toHaveBeenCalledWith(
@@ -115,4 +117,41 @@ describe("a user's own vector store", () => {
     expect(await count(oneboxServer.url, collection)).toBe(5);
     expect(await count(ownServer.url, collection)).toBe(5);
   });
+
+  it('works the same in a store other than Qdrant, here pgvector', async () => {
+    const pg = await startPgvector();
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        await keyword.upsert(
+          searchDoc({ key: `p${i}`, userId: 'u2', threadId: `pt${i}`, copies: [copy(`pm${i}`)] }),
+          1,
+        );
+      }
+      await es.indices.refresh({ index: 'mail-stores-test' });
+      const connection: StoreConnection = { provider: 'PGVECTOR', settings: pg.settings };
+      const models = createSemanticModels({
+        qdrant: new QdrantClient({ url: oneboxServer.url, checkCompatibility: false }),
+        redis,
+        fetchModel: async () => model,
+        defaultModel: model,
+        fetchStore: async () => connection,
+        requestRebuild: vi.fn(async () => {}),
+      });
+      const embed = vi.fn(async ({ texts }: { texts: string[] }) => texts.map(() => [1, 0, 0]));
+      const handle = reembedHandler({ models, keyword, embed, logger });
+      await handle(createJobEnvelope({ jobId: 'p', userId: 'u2', payload: { modelId: model.id } }));
+
+      const sql = postgres(pg.settings.connectionString!, { onnotice: () => {} });
+      const [row] = await sql<{ n: number }[]>`select count(*)::int as n from mail_ollama_m_3`;
+      await sql.end();
+      expect(row?.n).toBe(3);
+
+      const { index } = await models.searchTarget('u2');
+      const hits = await index.search('u2', [1, 0, 0], parseQuery('hello'), 10);
+      expect(hits).toHaveLength(3);
+      expect(await index.search('u2', [1, 0, 0], parseQuery('label:nothing'), 10)).toEqual([]);
+    } finally {
+      await pg.stop();
+    }
+  }, 300_000);
 });
