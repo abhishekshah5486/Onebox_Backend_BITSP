@@ -60,5 +60,9 @@ describe('reembedPayloadSchema', () => {
       modelId: 'ollama/bge-m3',
     });
     expect(() => reembedPayloadSchema.parse({ modelId: '' })).toThrow();
+    expect(reembedPayloadSchema.parse({ modelId: 'm', storeId: 's1' })).toEqual({
+      modelId: 'm',
+      storeId: 's1',
+    });
   });
 });

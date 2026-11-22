@@ -49,7 +49,12 @@ export const indexPayloadSchema = z.discriminatedUnion('op', [
 ]);
 
 // The embedding model a user switched to.
-export const reembedPayloadSchema = z.object({ modelId: z.string().min(1).max(200) });
+// Without a store: embed all mail with a newly picked model, in every store that isn't paused.
+// With one: catch that store up with the model in use, e.g. once it's added or resumed.
+export const reembedPayloadSchema = z.object({
+  modelId: z.string().min(1).max(200),
+  storeId: z.string().min(1).max(200).optional(),
+});
 
 export const SEARCH_MODES = ['keyword', 'semantic'] as const;
 export const searchModeSchema = z.enum(SEARCH_MODES);

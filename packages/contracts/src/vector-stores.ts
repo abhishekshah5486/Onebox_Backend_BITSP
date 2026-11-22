@@ -196,3 +196,20 @@ export const vectorStoreConnectionSchema = z.discriminatedUnion('provider', [
   }),
 ]);
 export type VectorStoreConnection = z.infer<typeof vectorStoreConnectionSchema>;
+
+// OneBox's own store, which every user has and can pause but not remove.
+export const ONEBOX_STORE_ID = 'onebox';
+
+// Every store a user keeps vectors in, as search reads it from settings: secrets included,
+// paused ones get no new mail, and one of them answers searches.
+export const vectorStoreSetupSchema = z.object({
+  searchStoreId: z.string().min(1),
+  stores: z.array(
+    z.intersection(
+      z.object({ id: z.string().min(1), paused: z.boolean() }),
+      vectorStoreConnectionSchema,
+    ),
+  ),
+});
+export type VectorStoreSetup = z.infer<typeof vectorStoreSetupSchema>;
+export type ConfiguredVectorStore = VectorStoreSetup['stores'][number];
