@@ -3,6 +3,8 @@ import { createServer, registerHealthRoutes } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Logger } from '@onebox/logger';
+import type { IndexingStorage } from './indexing/indexing-storage';
+import { registerIndexingRoutes } from './indexing/routes';
 import type { IntegrationService } from './integrations/integration-service';
 import { registerIntegrationRoutes } from './integrations/routes';
 import { registerStorageCallbacks, registerStorageRoutes } from './storage/routes';
@@ -17,6 +19,7 @@ export interface AppDeps {
     preferences: PreferencesService;
     integrations: IntegrationService;
     storage: StorageService;
+    indexing: IndexingStorage;
     verifyToken: TokenVerifier;
     internalToken: string;
   };
@@ -35,6 +38,7 @@ export function buildApp(deps: AppDeps) {
         registerPreferenceRoutes(scope, routes.preferences);
         registerIntegrationRoutes(scope, routes.integrations);
         registerStorageRoutes(scope, routes.storage);
+        registerIndexingRoutes(scope, routes.indexing);
       },
       { prefix: '/settings' },
     );
@@ -53,6 +57,15 @@ export function buildApp(deps: AppDeps) {
       },
       async (request) =>
         routes.storage.accessToken(request.params.userId, request.params.accountId),
+    );
+    // Search reads where a user's vectors go, with the key to get there.
+    app.withTypeProvider<ZodTypeProvider>().get(
+      '/internal/indexing-storage/:userId',
+      {
+        preHandler: requireInternal(routes.internalToken),
+        schema: { params: z.object({ userId: z.uuid() }) },
+      },
+      async (request) => routes.indexing.connection(request.params.userId),
     );
     registerStorageCallbacks(app, routes.storage);
   }

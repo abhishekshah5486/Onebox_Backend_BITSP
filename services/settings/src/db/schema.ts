@@ -98,6 +98,17 @@ export const storageAccounts = settingsSchema.table(
   ],
 );
 
+// Where a user's semantic search vectors live, when it isn't OneBox's own Qdrant.
+export const indexingStores = settingsSchema.table('indexing_stores', {
+  userId: uuid('user_id').primaryKey(),
+  provider: text('provider', { enum: ['QDRANT'] }).notNull(),
+  url: text('url').notNull(),
+  apiKeyEncrypted: text('api_key_encrypted'),
+  keyHint: text('key_hint'),
+  ...timestamps,
+});
+
+export type IndexingStoreRow = typeof indexingStores.$inferSelect;
 export type IntegrationRow = typeof integrations.$inferSelect;
 export type PreferencesRow = typeof userPreferences.$inferSelect;
 export type StorageAccountRow = typeof storageAccounts.$inferSelect;

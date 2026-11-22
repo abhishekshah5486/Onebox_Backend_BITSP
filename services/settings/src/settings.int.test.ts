@@ -78,6 +78,7 @@ beforeAll(async () => {
               ? slackSend(url, init)
               : import('@onebox/net-guard').then((m) => m.safeFetch(url, init)),
         }),
+        indexing: {} as never,
         storage: createStorageService({
           db: client.db,
           encryptionKey: randomBytes(32),

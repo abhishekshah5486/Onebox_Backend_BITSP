@@ -1,4 +1,8 @@
-import { createRemoteTokenVerifier, deriveInternalToken } from '@onebox/auth-kit';
+import {
+  createRemoteTokenVerifier,
+  deriveInternalToken,
+  INTERNAL_TOKEN_HEADER,
+} from '@onebox/auth-kit';
 import { createPgClient } from '@onebox/db-pg';
 import { startServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
@@ -9,6 +13,7 @@ import { dropbox } from './storage/dropbox';
 import { googleDrive } from './storage/google-drive';
 import { oneDrive } from './storage/onedrive';
 import { createStorageService } from './storage/storage-service';
+import { createIndexingStorage } from './indexing/indexing-storage';
 import { createIntegrationService } from './integrations/integration-service';
 import { createPreferencesService } from './preferences/preferences-service';
 
@@ -19,6 +24,8 @@ const pg = createPgClient(config.DATABASE_URL, { max: config.DATABASE_POOL_MAX }
 await pg.ping();
 logger.info('database connected');
 await migrateSettings(pg, logger);
+
+const internalToken = deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY);
 
 const app = buildApp({
   logger,
@@ -71,8 +78,23 @@ const app = buildApp({
           }),
       },
     }),
+    indexing: createIndexingStorage({
+      db: pg.db,
+      encryptionKey: config.CREDENTIALS_ENCRYPTION_KEY,
+      logger,
+      allowPrivateHosts: config.ALLOW_PRIVATE_INDEXING_HOSTS,
+      notifySearch: async (userId) => {
+        const response = await fetch(`${config.SEARCH_SERVICE_URL}/internal/semantic/rebuild`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', [INTERNAL_TOKEN_HEADER]: internalToken },
+          body: JSON.stringify({ userId }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) throw new Error(`search answered ${response.status}`);
+      },
+    }),
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
-    internalToken: deriveInternalToken(config.CREDENTIALS_ENCRYPTION_KEY),
+    internalToken,
   },
 });
 await startServer(app, { port: config.PORT, cleanups: [pg.close] });
