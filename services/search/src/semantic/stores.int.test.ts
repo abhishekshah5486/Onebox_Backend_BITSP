@@ -18,7 +18,8 @@ import { createKeywordIndex, type KeywordIndex } from '../keyword/keyword-index'
 import { parseQuery } from '../query/parse';
 import { copy, searchDoc } from '../test-doc';
 import { reembedHandler } from '../workers';
-import { createSemanticModels, type StoreConnection } from './models';
+import type { VectorStoreSetup } from '@onebox/contracts';
+import { createSemanticModels } from './models';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
 const model: EmbedModel = { id: 'ollama/m', name: 'm', dimensions: 3, local: true };
@@ -61,61 +62,117 @@ const count = async (url: string, collection: string) => {
   return (await client.count(collection, { exact: true })).count;
 };
 
-describe("a user's own vector store", () => {
-  it('gets their vectors after a move, which then leave OneBox, and searches go there', async () => {
+const OWN = 'f0000000-0000-4000-8000-000000000001';
+type RequestRebuild = (
+  userId: string,
+  modelId: string,
+  reason: string,
+  storeId?: string,
+) => Promise<void>;
+const qdrantModels = (
+  setup: () => VectorStoreSetup,
+  requestRebuild: RequestRebuild = async () => {},
+) =>
+  createSemanticModels({
+    qdrant: new QdrantClient({ url: oneboxServer.url, checkCompatibility: false }),
+    redis,
+    fetchModel: async () => model,
+    defaultModel: model,
+    fetchSetup: async () => setup(),
+    requestRebuild,
+  });
+
+describe("a user's vector stores", () => {
+  it('backs up to every store not paused, catches up a resumed one, and searches the chosen one', async () => {
     for (let i = 0; i < 5; i += 1) {
       await keyword.upsert(searchDoc({ key: `s${i}`, copies: [copy(`sm${i}`)] }), 1);
     }
     await es.indices.refresh({ index: 'mail-stores-test' });
 
-    let connection: StoreConnection = { provider: 'ONEBOX' };
-    const requestRebuild = vi.fn(async () => {});
-    const models = createSemanticModels({
-      qdrant: new QdrantClient({ url: oneboxServer.url, checkCompatibility: false }),
-      redis,
-      fetchModel: async () => model,
-      defaultModel: model,
-      fetchStore: async () => connection,
-      requestRebuild,
-    });
+    let setup: VectorStoreSetup = {
+      searchStoreId: 'onebox',
+      stores: [{ id: 'onebox', provider: 'ONEBOX', paused: false }],
+    };
+    const requestRebuild = vi.fn(async (_u: string, _m: string, _r: string, _s?: string) => {});
+    const models = qdrantModels(() => setup, requestRebuild);
     const embed = vi.fn(async ({ texts }: { texts: string[] }) => texts.map(() => [1, 0, 0]));
     const handle = reembedHandler({ models, keyword, embed, logger });
-    const job = createJobEnvelope({ jobId: 'j', userId: 'u1', payload: { modelId: model.id } });
     const collection = 'mail_ollama_m_3';
+    const job = (storeId?: string) =>
+      createJobEnvelope({
+        jobId: 'j',
+        userId: 'u1',
+        payload: { modelId: model.id, ...(storeId && { storeId }) },
+      });
 
     // Built on OneBox first.
-    await handle(job);
+    await handle(job());
     expect(await count(oneboxServer.url, collection)).toBe(5);
 
-    // The user moves to their own Qdrant: new mail notices and asks for a rebuild.
-    connection = { provider: 'QDRANT', settings: { url: ownServer.url } };
-    models.forgetStore('u1');
-    const targets = await models.targets('u1');
+    // The user adds their own Qdrant: it's caught up, and OneBox keeps its copy.
+    setup = {
+      searchStoreId: 'onebox',
+      stores: [
+        { id: 'onebox', provider: 'ONEBOX', paused: false },
+        { id: OWN, provider: 'QDRANT', paused: false, settings: { url: ownServer.url } },
+      ],
+    };
+    await models.refresh('u1');
     expect(requestRebuild).toHaveBeenCalledWith(
       'u1',
       model.id,
-      expect.stringMatching(/^store:own:/),
+      expect.stringMatching(/^catchup:/),
+      OWN,
     );
-    expect(targets).toHaveLength(1);
-
-    await handle(job);
+    await handle(job(OWN));
     expect(await count(ownServer.url, collection)).toBe(5);
-    expect(await count(oneboxServer.url, collection)).toBe(0);
+    expect(await count(oneboxServer.url, collection)).toBe(5);
+    expect(await models.targets('u1')).toHaveLength(2);
+
+    // Paused: new mail skips it, and it's marked behind.
+    setup.stores[1]!.paused = true;
+    await models.refresh('u1');
+    expect(await models.targets('u1')).toHaveLength(1);
+    const status = await models.storesOf('u1');
+    expect(status.map((store) => [store.id, store.upToDate])).toEqual([
+      ['onebox', true],
+      [OWN, false],
+    ]);
+    await keyword.upsert(searchDoc({ key: 's5', copies: [copy('sm5')] }), 1);
+    await es.indices.refresh({ index: 'mail-stores-test' });
+    for (const { index } of await models.targets('u1')) {
+      await index.upsert(searchDoc({ key: 's5', copies: [copy('sm5')] }), 1, async (texts) =>
+        texts.map(() => [1, 0, 0]),
+      );
+    }
+    expect(await count(oneboxServer.url, collection)).toBe(6);
+    expect(await count(ownServer.url, collection)).toBe(5);
+
+    // Resumed: it catches up on what it missed, embedding only that, not every email again.
+    requestRebuild.mockClear();
+    embed.mockClear();
+    setup.stores[1]!.paused = false;
+    await models.refresh('u1');
+    expect(requestRebuild).toHaveBeenCalledWith('u1', model.id, expect.any(String), OWN);
+    await handle(job(OWN));
+    expect(await count(ownServer.url, collection)).toBe(6);
+    const embeddedTexts = embed.mock.calls.flatMap(([call]) => call.texts);
+    expect(embeddedTexts).toHaveLength(1);
+    expect(embeddedTexts[0]).toContain('Subject: Hello');
+    expect((await models.storesOf('u1')).every((store) => store.upToDate)).toBe(true);
+
+    // Searches go to the store chosen for them, even with OneBox's paused.
+    setup = {
+      ...setup,
+      searchStoreId: OWN,
+      stores: [{ ...setup.stores[0]!, paused: true }, setup.stores[1]!],
+    };
+    await models.refresh('u1');
     const { index } = await models.searchTarget('u1');
+    expect(index.collection).toBe(collection);
+    expect(await models.targets('u1')).toHaveLength(1);
     const hits = await index.search('u1', [1, 0, 0], parseQuery('hello'), 10);
     expect(hits.length).toBeGreaterThan(0);
-
-    // Settled: no more rebuilds asked for.
-    requestRebuild.mockClear();
-    await models.targets('u1');
-    expect(requestRebuild).not.toHaveBeenCalled();
-
-    // Back to OneBox: rebuilt there; what's in their own store is theirs to keep.
-    connection = { provider: 'ONEBOX' };
-    models.forgetStore('u1');
-    await handle(job);
-    expect(await count(oneboxServer.url, collection)).toBe(5);
-    expect(await count(ownServer.url, collection)).toBe(5);
   });
 
   it('works the same in a store other than Qdrant, here pgvector', async () => {
@@ -128,18 +185,23 @@ describe("a user's own vector store", () => {
         );
       }
       await es.indices.refresh({ index: 'mail-stores-test' });
-      const connection: StoreConnection = { provider: 'PGVECTOR', settings: pg.settings };
-      const models = createSemanticModels({
-        qdrant: new QdrantClient({ url: oneboxServer.url, checkCompatibility: false }),
-        redis,
-        fetchModel: async () => model,
-        defaultModel: model,
-        fetchStore: async () => connection,
-        requestRebuild: vi.fn(async () => {}),
-      });
+      const setup: VectorStoreSetup = {
+        searchStoreId: OWN,
+        stores: [
+          { id: 'onebox', provider: 'ONEBOX', paused: true },
+          { id: OWN, provider: 'PGVECTOR', paused: false, settings: pg.settings },
+        ],
+      };
+      const models = qdrantModels(() => setup);
       const embed = vi.fn(async ({ texts }: { texts: string[] }) => texts.map(() => [1, 0, 0]));
       const handle = reembedHandler({ models, keyword, embed, logger });
-      await handle(createJobEnvelope({ jobId: 'p', userId: 'u2', payload: { modelId: model.id } }));
+      await handle(
+        createJobEnvelope({
+          jobId: 'p',
+          userId: 'u2',
+          payload: { modelId: model.id, storeId: OWN },
+        }),
+      );
 
       const sql = postgres(pg.settings.connectionString!, { onnotice: () => {} });
       const [row] = await sql<{ n: number }[]>`select count(*)::int as n from mail_ollama_m_3`;
@@ -147,8 +209,7 @@ describe("a user's own vector store", () => {
       expect(row?.n).toBe(3);
 
       const { index } = await models.searchTarget('u2');
-      const hits = await index.search('u2', [1, 0, 0], parseQuery('hello'), 10);
-      expect(hits).toHaveLength(3);
+      expect(await index.search('u2', [1, 0, 0], parseQuery('hello'), 10)).toHaveLength(3);
       expect(await index.search('u2', [1, 0, 0], parseQuery('label:nothing'), 10)).toEqual([]);
     } finally {
       await pg.stop();

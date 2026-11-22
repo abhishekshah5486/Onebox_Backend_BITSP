@@ -124,7 +124,7 @@ export function buildApp(deps: AppDeps) {
   );
 
   // Which model semantic search uses for the user, and how far a switch to another has got.
-  // Settings calls this when a user moves their vectors to another store.
+  // Settings calls this when a user's stores change, so new or resumed ones are caught up.
   routes.post(
     '/internal/semantic/rebuild',
     {
@@ -132,7 +132,6 @@ export function buildApp(deps: AppDeps) {
       schema: { body: z.object({ userId: z.uuid() }) },
     },
     async (request, reply) => {
-      deps.models.forgetStore(request.body.userId);
       await deps.rebuild(request.body.userId);
       return reply.code(202).send();
     },
@@ -140,11 +139,12 @@ export function buildApp(deps: AppDeps) {
 
   routes.get('/search/semantic', { preHandler: requireUser(deps.verifyToken) }, async (request) => {
     const { userId } = currentUser(request);
-    const [active, rebuild] = await Promise.all([
+    const [active, rebuild, stores] = await Promise.all([
       deps.models.active(userId),
       deps.models.rebuildOf(userId),
+      deps.models.storesOf(userId),
     ]);
-    return { active, rebuild };
+    return { active, rebuild, stores };
   });
 
   return app;

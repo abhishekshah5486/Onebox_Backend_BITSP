@@ -9,7 +9,7 @@ import { Redis } from 'ioredis';
 import { buildApp } from './app';
 import { createEmbedClient, fetchEmbedModel } from './clients/embed-client';
 import { createThreadLookup } from './clients/mail-client';
-import { fetchStore } from './clients/settings-client';
+import { fetchSetup } from './clients/settings-client';
 import { loadSearchConfig } from './config';
 import { createIndexState } from './index-state';
 import { createKeywordIndex } from './keyword/keyword-index';
@@ -39,17 +39,22 @@ const reembedJobs = createProducer<ReembedPayload>(QUEUES.reembed, {
   redisUrl: config.REDIS_URL,
   logger,
 });
-const requestRebuild = async (userId: string, modelId: string, reason: string) => {
+const requestRebuild = async (
+  userId: string,
+  modelId: string,
+  reason: string,
+  storeId?: string,
+) => {
   // The same reason within a minute is one job, however many emails notice it.
   const slot = Math.floor(Date.now() / 60_000);
   await reembedJobs.enqueue(
     createJobEnvelope({
       jobId: `reembed-${userId}-${reason}-${slot}`,
       userId,
-      payload: { modelId },
+      payload: { modelId, ...(storeId && { storeId }) },
     }),
   );
-  logger.info({ userId, modelId, reason }, 'mail queued to embed again');
+  logger.info({ userId, modelId, reason, storeId }, 'mail queued to embed again');
 };
 
 const models = createSemanticModels({
@@ -58,7 +63,7 @@ const models = createSemanticModels({
   fetchModel: (userId) =>
     fetchEmbedModel(config.LLM_PROXY_SERVICE_URL, internalToken, { userId, retries: 2 }),
   defaultModel,
-  fetchStore: (userId) => fetchStore(config.SETTINGS_SERVICE_URL, internalToken, userId),
+  fetchSetup: (userId) => fetchSetup(config.SETTINGS_SERVICE_URL, internalToken, userId),
   requestRebuild,
 });
 await models.indexFor(defaultModel);
@@ -88,8 +93,7 @@ const app = buildApp({
   lookupThreads: createThreadLookup(config.MAIL_SERVICE_URL),
   verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
   internalToken,
-  rebuild: async (userId) =>
-    requestRebuild(userId, (await models.chosen(userId, { fresh: true })).id, 'moved'),
+  rebuild: (userId) => models.refresh(userId),
 });
 await startServer(app, {
   port: config.PORT,

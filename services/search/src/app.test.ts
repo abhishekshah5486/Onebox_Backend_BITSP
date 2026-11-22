@@ -36,7 +36,9 @@ function setup() {
   const models = {
     active: vi.fn(async () => active),
     searchTarget: vi.fn(async () => ({ model: active, index: vector })),
-    forgetStore: vi.fn(),
+    storesOf: vi.fn(async () => [
+      { id: 'onebox', paused: false, search: true, upToDate: true, catchup: null },
+    ]),
     rebuildOf: vi.fn(async (): Promise<RebuildState | null> => null),
   };
   const embed = vi.fn(async () => [[0.1, 0.2]]);
@@ -145,7 +147,7 @@ describe('GET /search', () => {
 });
 
 describe('GET /search/semantic', () => {
-  it("reports the user's model and how far a switch has got", async () => {
+  it("reports the user's model, how far a switch has got, and each store's state", async () => {
     const { app, models } = setup();
     const rebuild = {
       modelId: 'ollama/nomic-embed-text',
@@ -158,6 +160,7 @@ describe('GET /search/semantic', () => {
     expect(response.json()).toEqual({
       active: { id: 'ollama/bge-m3', name: 'bge-m3', dimensions: 1024, local: true },
       rebuild,
+      stores: [{ id: 'onebox', paused: false, search: true, upToDate: true, catchup: null }],
     });
     expect((await app.inject({ url: '/search/semantic' })).statusCode).toBe(401);
   });
@@ -205,8 +208,8 @@ describe('GET /search/semantic/estimate', () => {
 });
 
 describe('POST /internal/semantic/rebuild', () => {
-  it("re-reads the user's store and queues their mail to embed again, for other services only", async () => {
-    const { app, models, rebuild } = setup();
+  it("re-reads the user's stores so new or resumed ones catch up, for other services only", async () => {
+    const { app, rebuild } = setup();
     const userId = '6f1c2b8e-1a4d-4c7e-9b1a-2f3e4d5c6b7a';
     const call = (headers = {}) =>
       app.inject({
@@ -217,7 +220,6 @@ describe('POST /internal/semantic/rebuild', () => {
       });
     expect((await call()).statusCode).toBe(401);
     expect((await call({ 'x-onebox-internal-token': 'internal' })).statusCode).toBe(202);
-    expect(models.forgetStore).toHaveBeenCalledWith(userId);
     expect(rebuild).toHaveBeenCalledWith(userId);
   });
 });
