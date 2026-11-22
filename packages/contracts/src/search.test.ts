@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { indexPayloadSchema, MAX_INDEXED_BODY_CHARS } from './search';
+import { indexPayloadSchema, MAX_INDEXED_BODY_CHARS, reembedPayloadSchema } from './search';
 
 const doc = {
   key: 'k1',
@@ -51,5 +51,14 @@ describe('index payload', () => {
         doc: { ...doc, copies: [{ messageId: 'm1', folder: 'X', role: 'nowhere' }] },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('reembedPayloadSchema', () => {
+  it('names the model to embed with', () => {
+    expect(reembedPayloadSchema.parse({ modelId: 'ollama/bge-m3' })).toEqual({
+      modelId: 'ollama/bge-m3',
+    });
+    expect(() => reembedPayloadSchema.parse({ modelId: '' })).toThrow();
   });
 });

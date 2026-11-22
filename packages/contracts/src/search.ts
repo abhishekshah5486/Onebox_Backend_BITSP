@@ -48,6 +48,9 @@ export const indexPayloadSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('delete'), version: versionSchema, messageId: z.string().min(1) }),
 ]);
 
+// The embedding model a user switched to.
+export const reembedPayloadSchema = z.object({ modelId: z.string().min(1).max(200) });
+
 export const SEARCH_MODES = ['keyword', 'semantic'] as const;
 export const searchModeSchema = z.enum(SEARCH_MODES);
 
@@ -55,3 +58,4 @@ export type SearchDocument = z.infer<typeof searchDocumentSchema>;
 export type SearchCopy = z.infer<typeof searchCopySchema>;
 export type IndexPayload = z.infer<typeof indexPayloadSchema>;
 export type SearchMode = z.infer<typeof searchModeSchema>;
+export type ReembedPayload = z.infer<typeof reembedPayloadSchema>;
