@@ -175,6 +175,53 @@ describe("a user's vector stores", () => {
     expect(hits.length).toBeGreaterThan(0);
   });
 
+  it('starts a fresh backup when a store paused mid-backup is resumed', async () => {
+    for (let i = 0; i < 40; i += 1) {
+      await keyword.upsert(
+        searchDoc({ key: `r${i}`, userId: 'u3', threadId: `rt${i}`, copies: [copy(`rm${i}`)] }),
+        1,
+      );
+    }
+    await es.indices.refresh({ index: 'mail-stores-test' });
+    const setup: VectorStoreSetup = {
+      searchStoreId: 'onebox',
+      stores: [
+        { id: 'onebox', provider: 'ONEBOX', paused: false },
+        { id: OWN, provider: 'QDRANT', paused: false, settings: { url: ownServer.url } },
+      ],
+    };
+    const requestRebuild = vi.fn(async (_u: string, _m: string, _r: string, _s?: string) => {});
+    const models = qdrantModels(() => setup, requestRebuild);
+    // The user pauses it while its first page is being embedded.
+    const embed = vi.fn(async ({ texts }: { texts: string[] }) => {
+      setup.stores[1]!.paused = true;
+      return texts.map(() => [1, 0, 0]);
+    });
+    const handle = reembedHandler({ models, keyword, embed, logger });
+    const job = createJobEnvelope({
+      jobId: 'r',
+      userId: 'u3',
+      payload: { modelId: model.id, storeId: OWN },
+    });
+
+    await models.refresh('u3');
+    // More emails noticing it's behind don't queue it again.
+    await models.targets('u3');
+    expect(requestRebuild).toHaveBeenCalledOnce();
+    await handle(job);
+    expect((await models.storesOf('u3'))[1]).toMatchObject({ upToDate: false, catchup: null });
+
+    // Resumed, at once: a new backup is queued, under a new job id, and finishes the store.
+    setup.stores[1]!.paused = false;
+    embed.mockImplementation(async ({ texts }) => texts.map(() => [1, 0, 0]));
+    await models.refresh('u3');
+    expect(requestRebuild).toHaveBeenCalledTimes(2);
+    const [first, second] = requestRebuild.mock.calls.map((call) => call[2]);
+    expect(first).not.toBe(second);
+    await handle(job);
+    expect((await models.storesOf('u3'))[1]).toMatchObject({ upToDate: true, catchup: null });
+  });
+
   it('works the same in a store other than Qdrant, here pgvector', async () => {
     const pg = await startPgvector();
     try {

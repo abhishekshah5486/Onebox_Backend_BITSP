@@ -215,12 +215,21 @@ export function createSemanticModels({
     for (const entry of setup.stores) {
       if (entry.paused) {
         await redis.set(builtKey(userId, entry.store.id), '');
+        // A backup it was running stops, so resuming must start another.
+        await redis.del(catchupKey(userId, entry.store.id));
         continue;
       }
       if ((await builtWith(userId, entry)) === model.id) continue;
-      const catching = await redis.hgetall(catchupKey(userId, entry.store.id));
-      if (catching.modelId === model.id) continue;
-      await requestRebuild(userId, model.id, `catchup:${entry.store.id}`, entry.id);
+      const key = catchupKey(userId, entry.store.id);
+      if ((await redis.hgetall(key)).modelId === model.id) continue;
+      // Marked as it's queued, so other emails noticing meanwhile don't queue it again.
+      await redis.hset(key, { modelId: model.id, done: 0, total: 0 });
+      try {
+        await requestRebuild(userId, model.id, `catchup:${entry.store.id}:${Date.now()}`, entry.id);
+      } catch (err) {
+        await redis.del(key);
+        throw err;
+      }
     }
   }
 
@@ -334,6 +343,13 @@ export function createSemanticModels({
 
     // A store is caught up: it's complete with the model in use, and keeps no other model's
     // vectors, except a model a rebuild is filling.
+    // A backup stopped short (paused, removed, failed): the next look starts a fresh one. One
+    // for another model meanwhile is left alone.
+    async abandonCatchup(userId: string, entry: UserStore, modelId: string) {
+      const key = catchupKey(userId, entry.store.id);
+      if ((await redis.hgetall(key)).modelId === modelId) await redis.del(key);
+    },
+
     async finishCatchup(userId: string, entry: UserStore, model: EmbedModel) {
       await redis.set(builtKey(userId, entry.store.id), model.id);
       await redis.del(catchupKey(userId, entry.store.id));

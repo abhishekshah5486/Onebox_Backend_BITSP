@@ -154,11 +154,19 @@ export function reembedHandler({
     const index = await models.indexFor(model, entry.store);
     await models.startCatchup(userId, entry, model.id, await keyword.countOf(userId));
     let embedded = 0;
-    for await (const page of keyword.documentsOf(userId, REBUILD_BATCH)) {
-      // Paused, removed, given new settings or a new model meanwhile: this job is moot.
-      if ((await current())?.entry.store.id !== entry.store.id) return;
-      embedded += await index.upsertMany(page, embedWith(userId, model.id));
-      await models.catchupProgress(userId, entry, page.length);
+    try {
+      for await (const page of keyword.documentsOf(userId, REBUILD_BATCH)) {
+        // Paused, removed, given new settings or a new model meanwhile: this job is moot.
+        if ((await current())?.entry.store.id !== entry.store.id) {
+          await models.abandonCatchup(userId, entry, model.id);
+          return;
+        }
+        embedded += await index.upsertMany(page, embedWith(userId, model.id));
+        await models.catchupProgress(userId, entry, page.length);
+      }
+    } catch (err) {
+      await models.abandonCatchup(userId, entry, model.id);
+      throw err;
     }
     await models.finishCatchup(userId, entry, model);
     logger.info({ userId, model: model.id, store: storeId, embedded }, 'store caught up');
