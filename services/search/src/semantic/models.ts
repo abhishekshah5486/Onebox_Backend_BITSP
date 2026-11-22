@@ -133,6 +133,8 @@ export function createSemanticModels({
   const activeKey = (userId: string) => `search:semantic:active:${userId}`;
   const rebuildKey = (userId: string) => `search:semantic:rebuild:${userId}`;
   // The model a store holds every one of the user's emails with; "" while it's behind.
+  const lastBackupKey = (userId: string, storeKey: string) =>
+    `search:semantic:backed-up:${userId}:${storeKey}`;
   const builtKey = (userId: string, storeKey: string) =>
     `search:semantic:built:${userId}:${storeKey}`;
   const catchupKey = (userId: string, storeKey: string) =>
@@ -260,7 +262,11 @@ export function createSemanticModels({
       const models = now.id === next.id && now.dimensions === next.dimensions ? [now] : [now, next];
       return Promise.all(
         live(setup).flatMap((entry) =>
-          models.map(async (model) => ({ model, index: await indexFor(model, entry.store) })),
+          models.map(async (model) => ({
+            model,
+            index: await indexFor(model, entry.store),
+            entry,
+          })),
         ),
       );
     },
@@ -291,6 +297,7 @@ export function createSemanticModels({
             paused: entry.paused,
             search: entry === setup.search,
             upToDate: (await builtWith(userId, entry)) === model.id,
+            lastBackedUpAt: await redis.get(lastBackupKey(userId, entry.store.id)),
             catchup: catching.modelId
               ? { done: Number(catching.done), total: Number(catching.total) }
               : null,
@@ -328,6 +335,7 @@ export function createSemanticModels({
       await redis.del(rebuildKey(userId));
       for (const entry of stores) {
         await redis.set(builtKey(userId, entry.store.id), model.id);
+        await redis.set(lastBackupKey(userId, entry.store.id), new Date().toISOString());
         if (collectionFor(before) !== collectionFor(model)) {
           await (await indexFor(before, entry.store)).removeUser(userId);
         }
@@ -343,6 +351,12 @@ export function createSemanticModels({
 
     // A store is caught up: it's complete with the model in use, and keeps no other model's
     // vectors, except a model a rebuild is filling.
+    // New mail reached a store: it was last backed up now, if it had everything before it.
+    async noteBackup(userId: string, entry: UserStore) {
+      if ((await builtWith(userId, entry)) !== (await active(userId)).id) return;
+      await redis.set(lastBackupKey(userId, entry.store.id), new Date().toISOString());
+    },
+
     // A backup stopped short (paused, removed, failed): the next look starts a fresh one. One
     // for another model meanwhile is left alone.
     async abandonCatchup(userId: string, entry: UserStore, modelId: string) {
@@ -352,6 +366,7 @@ export function createSemanticModels({
 
     async finishCatchup(userId: string, entry: UserStore, model: EmbedModel) {
       await redis.set(builtKey(userId, entry.store.id), model.id);
+      await redis.set(lastBackupKey(userId, entry.store.id), new Date().toISOString());
       await redis.del(catchupKey(userId, entry.store.id));
       // Compared as the store names them, e.g. Pinecone's "mail-…".
       const named = (kept: EmbedModel) => entry.store.open(collectionFor(kept), 0).collection;

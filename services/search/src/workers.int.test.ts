@@ -126,10 +126,11 @@ describe('index workers', () => {
     const models = {
       // Mid-switch: searching with a, moving to b.
       targets: vi.fn(async () => [
-        { model: { id: 'a' }, index: indexes.a },
-        { model: { id: 'b' }, index: indexes.b },
+        { model: { id: 'a' }, index: indexes.a, entry: { id: 'onebox' } },
+        { model: { id: 'b' }, index: indexes.b, entry: { id: 'onebox' } },
       ]),
       allIndexes: vi.fn(async () => [indexes.a, indexes.b]),
+      noteBackup: vi.fn(async () => {}),
     };
     const handle = vectorHandler(models as unknown as SemanticModels, embed, state);
     await handle(upsert(both, 1));
@@ -137,6 +138,7 @@ describe('index workers', () => {
       [{ userId: 'u1', texts: ['text'], charge: false, model: 'a' }],
       [{ userId: 'u1', texts: ['text'], charge: false, model: 'b' }],
     ]);
+    expect(models.noteBackup).toHaveBeenCalledWith('u1', { id: 'onebox' });
 
     await handle(remove('m1', 2));
     expect(indexes.a.removeCopy).toHaveBeenCalledWith('k1', 'm1', 2, 'u1');

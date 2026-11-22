@@ -128,6 +128,10 @@ describe("a user's vector stores", () => {
     expect(await count(ownServer.url, collection)).toBe(5);
     expect(await count(oneboxServer.url, collection)).toBe(5);
     expect(await models.targets('u1')).toHaveLength(2);
+    const lastOf = async (id: string) =>
+      (await models.storesOf('u1')).find((store) => store.id === id)?.lastBackedUpAt;
+    const caughtUpAt = await lastOf(OWN);
+    expect(Date.parse(caughtUpAt!)).toBeGreaterThan(Date.now() - 60_000);
 
     // Paused: new mail skips it, and it's marked behind.
     setup.stores[1]!.paused = true;
@@ -147,6 +151,13 @@ describe("a user's vector stores", () => {
     }
     expect(await count(oneboxServer.url, collection)).toBe(6);
     expect(await count(ownServer.url, collection)).toBe(5);
+    // Behind, it keeps the time it last had everything; a complete store's moves on.
+    const [onebox, own] = (await models.setupOf('u1')).stores;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await models.noteBackup('u1', own!);
+    await models.noteBackup('u1', onebox!);
+    expect(await lastOf(OWN)).toBe(caughtUpAt);
+    expect(Date.parse((await lastOf('onebox'))!)).toBeGreaterThan(Date.parse(caughtUpAt!));
 
     // Resumed: it catches up on what it missed, embedding only that, not every email again.
     requestRebuild.mockClear();

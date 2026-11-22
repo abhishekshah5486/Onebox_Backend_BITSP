@@ -64,10 +64,11 @@ export const vectorHandler = (models: SemanticModels, embed: EmbedClient, state:
     {
       name: 'vector',
       async upsert(doc, version) {
-        for (const { model, index } of await models.targets(doc.userId)) {
+        for (const { model, index, entry } of await models.targets(doc.userId)) {
           await index.upsert(doc, version, (texts) =>
             embed({ userId: doc.userId, texts, charge: false, model: model.id }),
           );
+          await models.noteBackup(doc.userId, entry);
         }
       },
       // A removal doesn't say which model the email was in, so every model's copy goes.
