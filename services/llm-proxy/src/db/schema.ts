@@ -140,3 +140,10 @@ export const userEmbeddingChoices = llmSchema.table('user_embedding_choices', {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+// The last good copy of the public provider catalogue, so it still loads when the source is down.
+export const providerCatalog = llmSchema.table('provider_catalog', {
+  source: text('source').primaryKey(),
+  body: jsonb('body').notNull(),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull(),
+});

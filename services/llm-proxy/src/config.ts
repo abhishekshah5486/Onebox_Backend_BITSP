@@ -26,6 +26,13 @@ const schema = z.object({
     .regex(/^[a-z]+\/.+$/, 'must be provider/model')
     .default('ollama/bge-m3'),
   OLLAMA_URL: z.url().default('http://localhost:11434'),
+  // The public catalogue of providers and models users can bring their own keys for.
+  PROVIDER_CATALOG_URL: z.url().default('https://models.dev/api.json'),
+  PROVIDER_CATALOG_TTL_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .default(6 * 60 * 60_000),
   CACHE_TTL_SECONDS: z.coerce
     .number()
     .int()
