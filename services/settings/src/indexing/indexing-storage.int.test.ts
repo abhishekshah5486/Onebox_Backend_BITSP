@@ -69,24 +69,30 @@ afterAll(async () => {
 
 describe('indexing storage', () => {
   const app = () => build(true);
-  const put = (userId: string, payload: Record<string, unknown>) =>
+  const call = (
+    userId: string,
+    method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+    url: string,
+    payload?: object,
+  ) =>
     app().inject({
-      method: 'PUT',
-      url: '/settings/indexing-storage',
+      method,
+      url: `/settings/indexing-storage${url}`,
       headers: { authorization: `Bearer ${userId}` },
-      payload,
+      ...(payload && { payload }),
     });
   const internal = (userId: string) =>
     app().inject({
       url: `/internal/indexing-storage/${userId}`,
       headers: { 'x-onebox-internal-token': 'internal' },
     });
+  type Listed = {
+    searchStoreId: string;
+    stores: { id: string; name: string; provider: string; paused: boolean; search: boolean }[];
+  };
 
   it('lists the vector databases it can use, with the fields each asks for', async () => {
-    const response = await app().inject({
-      url: '/settings/indexing-storage/stores',
-      headers: { authorization: `Bearer ${randomUUID()}` },
-    });
+    const response = await call(randomUUID(), 'GET', '/stores');
     const { stores } = response.json<{ stores: { id: string; fields: { key: string }[] }[] }>();
     expect(stores.map((store) => store.id)).toEqual(
       expect.arrayContaining(['QDRANT', 'PINECONE', 'PGVECTOR', 'NEO4J', 'MONGODB_ATLAS']),
@@ -96,67 +102,111 @@ describe('indexing storage', () => {
     );
   });
 
-  it("starts on OneBox's own store, and moves to the user's Qdrant once it connects", async () => {
+  it('keeps any number of stores, several of one kind too, each paused or not', async () => {
     const userId = randomUUID();
-    const auth = { authorization: `Bearer ${userId}` };
-    expect(
-      (await app().inject({ url: '/settings/indexing-storage', headers: auth })).json(),
-    ).toEqual({ provider: 'ONEBOX' });
+    expect((await call(userId, 'GET', '')).json()).toEqual({
+      searchStoreId: 'onebox',
+      stores: [
+        { id: 'onebox', name: 'OneBox hosted', provider: 'ONEBOX', paused: false, search: true },
+      ],
+    });
 
-    const saved = await put(userId, {
+    const first = await call(userId, 'POST', '', {
       provider: 'QDRANT',
       settings: { url: `${qdrant.url}/`, apiKey: KEY },
     });
-    expect(saved.statusCode).toBe(200);
-    expect(saved.json()).toMatchObject({
-      provider: 'QDRANT',
+    expect(first.statusCode).toBe(201);
+    expect(first.json()).toMatchObject({
+      name: 'Qdrant',
       settings: { url: qdrant.url },
       keyHint: '1234',
+      paused: false,
+      search: false,
     });
-    expect(saved.body).not.toContain(KEY);
+    expect(first.body).not.toContain(KEY);
+    const second = await call(userId, 'POST', '', {
+      provider: 'QDRANT',
+      name: 'Backup',
+      settings: { url: qdrant.url },
+    });
+    const third = await call(userId, 'POST', '', {
+      provider: 'QDRANT',
+      settings: { url: qdrant.url },
+    });
+    expect(third.json<{ name: string }>().name).toBe('Qdrant 3');
+    const ids = [first, second, third].map((response) => response.json<{ id: string }>().id);
     expect(notifySearch).toHaveBeenCalledWith(userId);
 
-    // Secrets are stored encrypted, and handed only to search.
-    const [row] = await client.db.select().from(indexingStores);
-    expect(row!.secretsEncrypted).not.toContain(KEY);
+    // Secrets are stored encrypted, and handed only to search, with every store.
+    const rows = await client.db.select().from(indexingStores);
+    expect(rows.find((row) => row.id === ids[0])!.secretsEncrypted).not.toContain(KEY);
     expect((await internal(userId)).json()).toEqual({
-      provider: 'QDRANT',
-      settings: { url: qdrant.url, apiKey: KEY },
+      searchStoreId: 'onebox',
+      stores: [
+        { id: 'onebox', provider: 'ONEBOX', paused: false },
+        {
+          id: ids[0],
+          provider: 'QDRANT',
+          paused: false,
+          settings: { url: qdrant.url, apiKey: KEY },
+        },
+        { id: ids[1], provider: 'QDRANT', paused: false, settings: { url: qdrant.url } },
+        { id: ids[2], provider: 'QDRANT', paused: false, settings: { url: qdrant.url } },
+      ],
     });
     expect((await app().inject({ url: `/internal/indexing-storage/${userId}` })).statusCode).toBe(
       401,
     );
 
+    // Pausing and resuming, OneBox's own too once searches go elsewhere.
+    expect((await call(userId, 'PATCH', '/onebox', { paused: true })).statusCode).toBe(400);
+    await call(userId, 'PUT', '/search', { storeId: ids[0] });
+    await call(userId, 'PATCH', `/${ids[1]}`, { paused: true });
+    const listed = (await call(userId, 'PATCH', '/onebox', { paused: true })).json<Listed>();
+    expect(listed.stores.map((store) => [store.name, store.paused])).toEqual([
+      ['OneBox hosted', true],
+      ['Qdrant', false],
+      ['Backup', true],
+      ['Qdrant 3', false],
+    ]);
+
     // A blank key keeps the saved one at the same address.
     check.mockClear();
-    await put(userId, { provider: 'QDRANT', settings: { url: qdrant.url, apiKey: '' } });
+    await call(userId, 'PATCH', `/${ids[0]}`, { settings: { url: qdrant.url, apiKey: '' } });
     expect(check).toHaveBeenCalledWith('QDRANT', { url: qdrant.url, apiKey: KEY });
 
-    notifySearch.mockClear();
-    const reset = await app().inject({
-      method: 'DELETE',
-      url: '/settings/indexing-storage',
-      headers: auth,
+    // Searches go to one store, which is resumed and can't be paused while it serves them.
+    const chosen = (await call(userId, 'PUT', '/search', { storeId: ids[1] })).json<Listed>();
+    expect(chosen.searchStoreId).toBe(ids[1]);
+    expect(chosen.stores.find((store) => store.id === ids[1])).toMatchObject({
+      paused: false,
+      search: true,
     });
-    expect(reset.statusCode).toBe(204);
-    expect(notifySearch).toHaveBeenCalledWith(userId);
-    expect(
-      (await app().inject({ url: '/settings/indexing-storage', headers: auth })).json(),
-    ).toEqual({ provider: 'ONEBOX' });
+    const refused = await call(userId, 'PATCH', `/${ids[1]}`, { paused: true });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json<{ error: { message: string } }>().error.message).toMatch(/search/);
+
+    // Removing the search store hands searches back to OneBox, resumed.
+    expect((await call(userId, 'DELETE', `/${ids[1]}`)).statusCode).toBe(204);
+    const after = (await call(userId, 'GET', '')).json<Listed>();
+    expect(after.searchStoreId).toBe('onebox');
+    expect(after.stores.map((store) => store.id)).toEqual(['onebox', ids[0], ids[2]]);
+    expect(after.stores[0]).toMatchObject({ paused: false, search: true });
+    expect((await call(userId, 'DELETE', '/onebox')).statusCode).toBe(400);
+    expect((await call(randomUUID(), 'DELETE', `/${ids[0]}`)).statusCode).toBe(404);
   });
 
   it('connects other databases too, here Postgres with pgvector', async () => {
     const userId = randomUUID();
     const connectionString = pgvector.settings.connectionString!;
-    const saved = await put(userId, { provider: 'PGVECTOR', settings: { connectionString } });
-    expect(saved.statusCode).toBe(200);
-    expect(saved.body).not.toContain(connectionString);
-    expect((await internal(userId)).json()).toEqual({
+    const saved = await call(userId, 'POST', '', {
       provider: 'PGVECTOR',
       settings: { connectionString },
     });
+    expect(saved.statusCode).toBe(201);
+    expect(saved.body).not.toContain(connectionString);
     // Plain Postgres has no pgvector.
-    const plain = await put(userId, {
+    const plain = await call(userId, 'POST', '', {
       provider: 'PGVECTOR',
       settings: { connectionString: pg.url },
     });
@@ -168,7 +218,7 @@ describe('indexing storage', () => {
     const userId = randomUUID();
     const error = async (payload: Record<string, unknown>, allowPrivate = true) => {
       const response = await build(allowPrivate).inject({
-        method: 'PUT',
+        method: 'POST',
         url: '/settings/indexing-storage',
         headers: { authorization: `Bearer ${userId}` },
         payload,
@@ -205,7 +255,10 @@ describe('indexing storage', () => {
 
   it("doesn't fail a save when search can't be told", async () => {
     notifySearch.mockRejectedValueOnce(new Error('search down'));
-    const saved = await put(randomUUID(), { provider: 'QDRANT', settings: { url: qdrant.url } });
-    expect(saved.statusCode).toBe(200);
+    const saved = await call(randomUUID(), 'POST', '', {
+      provider: 'QDRANT',
+      settings: { url: qdrant.url },
+    });
+    expect(saved.statusCode).toBe(201);
   });
 });

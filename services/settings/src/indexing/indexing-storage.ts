@@ -1,18 +1,22 @@
 import { resolveSrv } from 'node:dns/promises';
 import {
+  ONEBOX_STORE_ID,
   VECTOR_STORES,
   vectorStoreInfo,
-  type VectorStoreConnection,
   type VectorStoreId,
+  type VectorStoreSetup,
 } from '@onebox/contracts';
 import { decrypt, encrypt } from '@onebox/crypto';
-import { ValidationError } from '@onebox/errors';
+import { NotFoundError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
 import { resolvePublicHost } from '@onebox/net-guard';
 import { checkVectorStore, StoreCheckError } from '@onebox/vector-stores';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
+import { z } from 'zod';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { indexingStores } from '../db/schema';
+import { indexingPreferences, indexingStores, type IndexingStoreRow } from '../db/schema';
+
+const isUuid = (id: string) => z.uuid().safeParse(id).success;
 
 export interface StoreInput {
   provider: VectorStoreId;
@@ -61,9 +65,9 @@ const hintOf = (secrets: Record<string, string>) => {
   return longest && longest.length >= 12 ? longest.slice(-4) : null;
 };
 
-// Where a user's semantic search vectors are kept: OneBox's own Qdrant, or a vector database
-// of theirs. Each change is checked with a real connection, and search is told so it can move
-// the vectors there.
+// The vector stores a user keeps their mail's vectors in: OneBox's own Qdrant and any number of
+// databases of theirs. Each is checked with a real connection before it's saved; each can be
+// paused, so it gets no new mail; one answers searches. Search is told of every change.
 export function createIndexingStorage({
   db,
   encryptionKey,
@@ -80,8 +84,38 @@ export function createIndexingStorage({
   notifySearch: (userId: string) => Promise<void>;
 }) {
   const aad = (userId: string) => `indexing:${userId}`;
-  const find = async (userId: string) =>
-    (await db.select().from(indexingStores).where(eq(indexingStores.userId, userId)))[0];
+  const rowsOf = (userId: string) =>
+    db
+      .select()
+      .from(indexingStores)
+      .where(eq(indexingStores.userId, userId))
+      .orderBy(asc(indexingStores.createdAt));
+  async function rowOf(userId: string, id: string) {
+    if (!isUuid(id)) return undefined;
+    const [row] = await db
+      .select()
+      .from(indexingStores)
+      .where(and(eq(indexingStores.userId, userId), eq(indexingStores.id, id)));
+    return row;
+  }
+  async function preferencesOf(userId: string) {
+    const [row] = await db
+      .select()
+      .from(indexingPreferences)
+      .where(eq(indexingPreferences.userId, userId));
+    return row ?? { searchStoreId: ONEBOX_STORE_ID, oneboxPaused: false };
+  }
+  const setPreferences = (
+    userId: string,
+    values: Partial<{ searchStoreId: string; oneboxPaused: boolean }>,
+  ) =>
+    db
+      .insert(indexingPreferences)
+      .values({ userId, ...values })
+      .onConflictDoUpdate({
+        target: indexingPreferences.userId,
+        set: { ...values, updatedAt: new Date() },
+      });
 
   function secretsOf(userId: string, row: { secretsEncrypted: string | null }) {
     if (!row.secretsEncrypted) return {};
@@ -117,86 +151,184 @@ export function createIndexingStorage({
     }
   }
 
+  // The fields the user typed, split into plain settings and secrets, checked and guarded.
+  // Secrets left blank are kept from `saved` when the store's address hasn't changed.
+  async function prepare(userId: string, input: StoreInput, saved?: IndexingStoreRow) {
+    const info = vectorStoreInfo(input.provider);
+    const plain: Record<string, string> = {};
+    const secrets: Record<string, string> = {};
+    for (const field of info.fields) {
+      // Addresses drop trailing slashes so the same address always reads the same.
+      const raw = input.settings[field.key]?.trim();
+      const typed = field.address ? raw?.replace(/\/+$/, '') : raw;
+      const value = typed || field.default || '';
+      if (value) (field.secret ? secrets : plain)[field.key] = value;
+    }
+    const sameAddress =
+      saved?.provider === input.provider &&
+      info.fields
+        .filter((field) => field.address && !field.secret)
+        .every((field) => saved.settings[field.key] === plain[field.key]);
+    if (saved && sameAddress) {
+      const kept = secretsOf(userId, saved);
+      for (const field of info.fields) {
+        const value = kept[field.key];
+        if (field.secret && !secrets[field.key] && value) secrets[field.key] = value;
+      }
+    }
+    for (const field of info.fields) {
+      const value = plain[field.key] ?? secrets[field.key];
+      if (field.required && !value) throw new ValidationError(`Enter the ${field.label}`);
+      if (field.address && value) await guard(value, field.label);
+    }
+    await check(input.provider, { ...plain, ...secrets });
+    return {
+      provider: input.provider,
+      settings: plain,
+      secretsEncrypted: Object.keys(secrets).length
+        ? encrypt(JSON.stringify(secrets), encryptionKey, aad(userId))
+        : null,
+      keyHint: hintOf(secrets),
+    };
+  }
+
+  const view = (row: IndexingStoreRow, searchStoreId: string) => ({
+    id: row.id,
+    name: row.name,
+    provider: row.provider,
+    settings: row.settings,
+    keyHint: row.keyHint,
+    paused: row.paused,
+    search: row.id === searchStoreId,
+    updatedAt: row.updatedAt.toISOString(),
+  });
+
+  async function list(userId: string) {
+    const [rows, preferences] = await Promise.all([rowsOf(userId), preferencesOf(userId)]);
+    return {
+      searchStoreId: preferences.searchStoreId,
+      stores: [
+        {
+          id: ONEBOX_STORE_ID,
+          name: 'OneBox hosted',
+          provider: 'ONEBOX' as const,
+          paused: preferences.oneboxPaused,
+          search: preferences.searchStoreId === ONEBOX_STORE_ID,
+        },
+        ...rows.map((row) => view(row, preferences.searchStoreId)),
+      ],
+    };
+  }
+
+  async function mustFind(userId: string, id: string) {
+    const row = await rowOf(userId, id);
+    if (!row) throw new NotFoundError('No such vector store');
+    return row;
+  }
+
   return {
     // The databases offered, with the fields each one asks for.
-    stores: () => VECTOR_STORES,
+    catalogue: () => VECTOR_STORES,
 
-    async get(userId: string) {
-      const row = await find(userId);
-      if (!row) return { provider: 'ONEBOX' as const };
+    list,
+
+    // For search only: every store with its secrets, and the one searches use.
+    async setup(userId: string): Promise<VectorStoreSetup> {
+      const [rows, preferences] = await Promise.all([rowsOf(userId), preferencesOf(userId)]);
       return {
-        provider: row.provider,
-        settings: row.settings,
-        keyHint: row.keyHint,
-        updatedAt: row.updatedAt.toISOString(),
+        searchStoreId: preferences.searchStoreId,
+        stores: [
+          { id: ONEBOX_STORE_ID, provider: 'ONEBOX', paused: preferences.oneboxPaused },
+          ...rows.map((row) => ({
+            id: row.id,
+            provider: row.provider,
+            paused: row.paused,
+            settings: { ...row.settings, ...secretsOf(userId, row) },
+          })),
+        ],
       };
     },
 
-    // For search only: the store with its secrets.
-    async connection(userId: string): Promise<VectorStoreConnection> {
-      const row = await find(userId);
-      if (!row) return { provider: 'ONEBOX' };
-      return { provider: row.provider, settings: { ...row.settings, ...secretsOf(userId, row) } };
-    },
-
-    async set(userId: string, input: StoreInput) {
-      const info = vectorStoreInfo(input.provider);
-      const existing = await find(userId);
-      const plain: Record<string, string> = {};
-      const secrets: Record<string, string> = {};
-      for (const field of info.fields) {
-        // Addresses drop trailing slashes so the same address always reads the same.
-        const raw = input.settings[field.key]?.trim();
-        const typed = field.address ? raw?.replace(/\/+$/, '') : raw;
-        const value = typed || field.default || '';
-        if (value) (field.secret ? secrets : plain)[field.key] = value;
-      }
-      // Blank secrets carry over only to the same store at the same address.
-      const sameStore =
-        existing?.provider === input.provider &&
-        info.fields
-          .filter((field) => field.address && !field.secret)
-          .every((field) => existing.settings[field.key] === plain[field.key]);
-      if (sameStore) {
-        const saved = secretsOf(userId, existing);
-        for (const field of info.fields) {
-          const kept = saved[field.key];
-          if (field.secret && !secrets[field.key] && kept) secrets[field.key] = kept;
-        }
-      }
-      for (const field of info.fields) {
-        const value = plain[field.key] ?? secrets[field.key];
-        if (field.required && !value) throw new ValidationError(`Enter the ${field.label}`);
-        if (field.address && value) await guard(value, field.label);
-      }
-      await check(input.provider, { ...plain, ...secrets });
-      const values = {
-        provider: input.provider,
-        settings: plain,
-        secretsEncrypted: Object.keys(secrets).length
-          ? encrypt(JSON.stringify(secrets), encryptionKey, aad(userId))
-          : null,
-        keyHint: hintOf(secrets),
-        updatedAt: new Date(),
-      };
-      await db
+    // Another store, any kind, as many as the user likes. It starts filling straight away.
+    async add(userId: string, input: StoreInput & { name?: string | undefined }) {
+      const values = await prepare(userId, input);
+      const existing = await rowsOf(userId);
+      const kind = vectorStoreInfo(input.provider).name;
+      const sameKind = existing.filter((row) => row.provider === input.provider).length;
+      const name = input.name?.trim() || (sameKind ? `${kind} ${sameKind + 1}` : kind);
+      const [row] = await db
         .insert(indexingStores)
-        .values({ userId, ...values })
-        .onConflictDoUpdate({ target: indexingStores.userId, set: values });
-      logger.info({ userId, provider: input.provider }, 'indexing storage set');
+        .values({ userId, name, ...values })
+        .returning();
+      logger.info({ userId, storeId: row!.id, provider: input.provider }, 'vector store added');
       await tellSearch(userId);
-      return this.get(userId);
+      return view(row!, (await preferencesOf(userId)).searchStoreId);
     },
 
-    async clear(userId: string) {
-      const removed = await db
-        .delete(indexingStores)
-        .where(eq(indexingStores.userId, userId))
-        .returning();
-      if (removed.length > 0) {
-        logger.info({ userId }, 'indexing storage back on onebox');
-        await tellSearch(userId);
+    // A new name, new settings (checked again) or a pause; OneBox's own can only be paused.
+    async update(
+      userId: string,
+      id: string,
+      input: { name?: string | undefined; settings?: StoreInput['settings']; paused?: boolean },
+    ) {
+      const preferences = await preferencesOf(userId);
+      if (input.paused && preferences.searchStoreId === id) {
+        throw new ValidationError('Searches use this store; pick another for search first', {
+          code: 'SEARCH_STORE_PAUSED',
+        });
       }
+      if (id === ONEBOX_STORE_ID) {
+        if (input.paused !== undefined)
+          await setPreferences(userId, { oneboxPaused: input.paused });
+      } else {
+        const row = await mustFind(userId, id);
+        const values = input.settings
+          ? await prepare(userId, { provider: row.provider, settings: input.settings }, row)
+          : {};
+        await db
+          .update(indexingStores)
+          .set({
+            ...values,
+            ...(input.name?.trim() && { name: input.name.trim() }),
+            ...(input.paused !== undefined && { paused: input.paused }),
+            updatedAt: new Date(),
+          })
+          .where(eq(indexingStores.id, id));
+      }
+      logger.info({ userId, storeId: id, paused: input.paused }, 'vector store updated');
+      await tellSearch(userId);
+      return list(userId);
+    },
+
+    // Searches go to this store from now on; it's resumed if it was paused.
+    async useForSearch(userId: string, id: string) {
+      if (id === ONEBOX_STORE_ID) {
+        await setPreferences(userId, { searchStoreId: id, oneboxPaused: false });
+      } else {
+        await mustFind(userId, id);
+        await db
+          .update(indexingStores)
+          .set({ paused: false, updatedAt: new Date() })
+          .where(eq(indexingStores.id, id));
+        await setPreferences(userId, { searchStoreId: id });
+      }
+      logger.info({ userId, storeId: id }, 'search store chosen');
+      await tellSearch(userId);
+      return list(userId);
+    },
+
+    // OneBox forgets the store; its vectors stay there. Searches fall back to OneBox's own.
+    async remove(userId: string, id: string) {
+      if (id === ONEBOX_STORE_ID) {
+        throw new ValidationError('OneBox’s own store can be paused but not removed');
+      }
+      await mustFind(userId, id);
+      await db.delete(indexingStores).where(eq(indexingStores.id, id));
+      if ((await preferencesOf(userId)).searchStoreId === id) {
+        await setPreferences(userId, { searchStoreId: ONEBOX_STORE_ID, oneboxPaused: false });
+      }
+      logger.info({ userId, storeId: id }, 'vector store removed');
+      await tellSearch(userId);
     },
   };
 }

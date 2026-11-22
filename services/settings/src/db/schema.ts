@@ -109,14 +109,31 @@ export const storageAccounts = settingsSchema.table(
   ],
 );
 
-// Where a user's semantic search vectors live, when it isn't OneBox's own Qdrant.
-export const indexingStores = settingsSchema.table('indexing_stores', {
+// Vector databases of a user's own that search keeps their vectors in, besides OneBox's Qdrant;
+// any number, several of one kind too.
+export const indexingStores = settingsSchema.table(
+  'indexing_stores',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    name: text('name').notNull(),
+    // A paused store gets no new mail until it's resumed.
+    paused: boolean('paused').notNull().default(false),
+    provider: text('provider', { enum: VECTOR_STORE_IDS }).notNull(),
+    // The fields that aren't secret, e.g. the address; secrets are kept encrypted as JSON.
+    settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
+    secretsEncrypted: text('secrets_encrypted'),
+    keyHint: text('key_hint'),
+    ...timestamps,
+  },
+  (table) => [index('indexing_stores_user_idx').on(table.userId)],
+);
+
+// Per user: the store searches go to (OneBox's or one of theirs), and whether OneBox's is paused.
+export const indexingPreferences = settingsSchema.table('indexing_preferences', {
   userId: uuid('user_id').primaryKey(),
-  provider: text('provider', { enum: VECTOR_STORE_IDS }).notNull(),
-  // The fields that aren't secret, e.g. the address; secrets are kept encrypted as JSON.
-  settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
-  secretsEncrypted: text('secrets_encrypted'),
-  keyHint: text('key_hint'),
+  searchStoreId: text('search_store_id').notNull().default('onebox'),
+  oneboxPaused: boolean('onebox_paused').notNull().default(false),
   ...timestamps,
 });
 

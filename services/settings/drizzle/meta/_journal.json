@@ -78,6 +78,13 @@
       "when": 1795375301475,
       "tag": "0010_any_vector_store",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795378892532,
+      "tag": "0011_many_vector_stores",
+      "breakpoints": true
     }
   ]
 }

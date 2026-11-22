@@ -65,7 +65,7 @@ export function buildApp(deps: AppDeps) {
         preHandler: requireInternal(routes.internalToken),
         schema: { params: z.object({ userId: z.uuid() }) },
       },
-      async (request) => routes.indexing.connection(request.params.userId),
+      async (request) => routes.indexing.setup(request.params.userId),
     );
     registerStorageCallbacks(app, routes.storage);
   }
