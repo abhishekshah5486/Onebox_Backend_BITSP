@@ -122,6 +122,13 @@ describe('storage connected with keys', () => {
     const body = list.json<{ providers: string[]; accounts: unknown[] }>();
     expect(body.accounts).toHaveLength(1);
     expect(body.providers).toEqual(expect.arrayContaining(['S3', 'AZURE_BLOB']));
+    expect(list.json<{ s3Presets: unknown[] }>().s3Presets).toContainEqual({
+      id: 'r2',
+      name: 'Cloudflare R2',
+      region: 'auto',
+      needsAccount: true,
+      needsEndpoint: false,
+    });
   });
 
   it('connects an Azure container', async () => {

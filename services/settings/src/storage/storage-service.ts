@@ -1,6 +1,7 @@
 import {
   isKeyStorage,
   KEY_STORAGE_PROVIDERS,
+  S3_PRESETS,
   type KeyStorageConnect,
   type OAuthStorageProviderId,
 } from '@onebox/contracts';
@@ -190,6 +191,14 @@ export function createStorageService({
           ...(Object.keys(providers) as OAuthStorageProviderId[]).filter((id) => providers[id]),
           ...KEY_STORAGE_PROVIDERS,
         ],
+        // The S3-compatible services the key form offers, and what each needs typed in.
+        s3Presets: Object.entries(S3_PRESETS).map(([id, preset]) => ({
+          id,
+          name: preset.name,
+          region: preset.region,
+          needsAccount: preset.endpoint?.includes('{account}') ?? false,
+          needsEndpoint: id === 'custom',
+        })),
         accounts: rows.map(view),
         failures: recentFailures(userId),
       };

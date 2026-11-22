@@ -37,6 +37,15 @@ export function registerStorageRoutes(scope: FastifyInstance, storage: StorageSe
           200: z.object({
             providers: z.array(provider),
             accounts: z.array(account),
+            s3Presets: z.array(
+              z.object({
+                id: z.string(),
+                name: z.string(),
+                region: z.string(),
+                needsAccount: z.boolean(),
+                needsEndpoint: z.boolean(),
+              }),
+            ),
             failures: z.array(
               z.object({
                 provider,
