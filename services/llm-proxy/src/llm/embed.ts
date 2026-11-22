@@ -7,6 +7,7 @@ import {
 import type { Logger } from '@onebox/logger';
 import { postJson, ProviderError } from '../providers/types';
 import type { Billing } from './billing';
+import type { EmbeddingCatalog } from './embedding-catalog';
 
 export interface EmbeddingModel {
   id: string;
@@ -24,52 +25,13 @@ export interface EmbeddingModel {
   local: boolean;
 }
 
-export interface EmbeddingSettings {
-  provider: 'ollama' | 'openai';
-  model: string | undefined;
-  dimensions: number;
-  ollamaUrl: string;
-  openAiKey: string | undefined;
-}
-
-// Local by default (Ollama, free); OpenAI's text-embedding-3-large when chosen.
-export function embeddingModel(settings: EmbeddingSettings): EmbeddingModel {
-  if (settings.provider === 'openai') {
-    const apiName = settings.model ?? 'text-embedding-3-large';
-    return {
-      id: `openai/${apiName}`,
-      apiName,
-      name: `OpenAI ${apiName}`,
-      // Shortened from 3072 dimensions: nearly the same quality at a third of Qdrant's memory.
-      dimensions: settings.dimensions,
-      usdPerMillionTokens: apiName === 'text-embedding-3-large' ? 0.13 : 0.02,
-      baseUrl: 'https://api.openai.com/v1',
-      apiKey: settings.openAiKey,
-      needsKey: true,
-      sendDimensions: true,
-      local: false,
-    };
-  }
-  const apiName = settings.model ?? 'bge-m3';
-  return {
-    id: `ollama/${apiName}`,
-    apiName,
-    name: `${apiName} (local)`,
-    dimensions: settings.dimensions,
-    usdPerMillionTokens: 0,
-    baseUrl: `${settings.ollamaUrl.replace(/\/$/, '')}/v1`,
-    apiKey: undefined,
-    needsKey: false,
-    sendDimensions: false,
-    local: true,
-  };
-}
-
 export interface EmbedInput {
   userId: string;
   texts: string[];
   // Searches someone runs are charged; indexing their own mail is not.
   charge: boolean;
+  // Rebuilding with a new model names it; otherwise the user's own pick is used.
+  model?: string;
 }
 
 export interface EmbedResult {
@@ -78,9 +40,16 @@ export interface EmbedResult {
   vectors: number[][];
 }
 
+export interface EmbedModelSummary {
+  id: string;
+  name: string;
+  dimensions: number;
+  local: boolean;
+}
+
 // Which model it uses goes with it, so search can keep one vector index per model.
 export type Embedder = ((input: EmbedInput) => Promise<EmbedResult>) & {
-  model: { id: string; name: string; dimensions: number; local: boolean };
+  model: EmbedModelSummary;
 };
 
 interface EmbeddingsResponse {
@@ -101,7 +70,7 @@ export function createEmbedder({
 }): Embedder {
   const embed = async ({ userId, texts, charge }: EmbedInput): Promise<EmbedResult> => {
     if (model.needsKey && !model.apiKey) {
-      throw new ServiceUnavailableError('Semantic search needs an OpenAI key', {
+      throw new ServiceUnavailableError(`${model.name} needs an API key on the server`, {
         code: 'EMBEDDINGS_UNAVAILABLE',
       });
     }
@@ -128,7 +97,7 @@ export function createEmbedder({
       logger.warn({ code: err.code, err: err.message }, 'embedding call failed');
       // A rejected key is a setup problem, like no key at all: retrying won't help.
       if (err.code === 'AUTH') {
-        throw new ServiceUnavailableError('Semantic search needs a working OpenAI key', {
+        throw new ServiceUnavailableError(`${model.name} needs a working API key`, {
           code: 'EMBEDDINGS_UNAVAILABLE',
         });
       }
@@ -170,3 +139,34 @@ export function createEmbedder({
     model: { id: model.id, name: model.name, dimensions: model.dimensions, local: model.local },
   });
 }
+
+// Embeds with the model a request names, else the user's pick, else the server default.
+export function createEmbeddings({
+  catalog,
+  billing,
+  logger,
+}: {
+  catalog: Pick<EmbeddingCatalog, 'resolve'>;
+  billing?: Billing;
+  logger: Logger;
+}) {
+  const embedders = new Map<string, Embedder>();
+  const embedderFor = (model: EmbeddingModel) => {
+    // A re-pulled local model can change size, so the size is part of the key.
+    const key = `${model.id}@${model.dimensions}`;
+    let embedder = embedders.get(key);
+    if (!embedder) {
+      embedder = createEmbedder({ model, billing, logger });
+      embedders.set(key, embedder);
+    }
+    return embedder;
+  };
+  const embed = async (input: EmbedInput) =>
+    embedderFor(await catalog.resolve(input.userId, input.model))(input);
+  return Object.assign(embed, {
+    modelFor: async (userId?: string): Promise<EmbedModelSummary> =>
+      embedderFor(await catalog.resolve(userId)).model,
+  });
+}
+
+export type Embeddings = ReturnType<typeof createEmbeddings>;

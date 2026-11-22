@@ -1,10 +1,16 @@
 import { createRemoteTokenVerifier, deriveInternalToken } from '@onebox/auth-kit';
-import { QUEUES, type UsageEventPayload } from '@onebox/contracts';
+import {
+  createJobEnvelope,
+  QUEUES,
+  type ReembedPayload,
+  type UsageEventPayload,
+} from '@onebox/contracts';
 import { createPgClient } from '@onebox/db-pg';
 import { startServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
 import { createProducer } from '@onebox/queue';
 import { Redis } from 'ioredis';
+import { Ollama } from 'ollama';
 import { buildApp } from './app';
 import { loadLlmProxyConfig } from './config';
 import { migrateLlm } from './db/migrate';
@@ -13,7 +19,8 @@ import { createBillingClient } from './llm/billing';
 import { createBreaker } from './llm/breaker';
 import { createCatalog } from './llm/catalog';
 import { createCompleter } from './llm/complete';
-import { createEmbedder, embeddingModel } from './llm/embed';
+import { createEmbeddings } from './llm/embed';
+import { createEmbeddingCatalog } from './llm/embedding-catalog';
 import { createUsage } from './llm/usage';
 import { anthropicAdapter } from './providers/anthropic';
 import { geminiAdapter } from './providers/gemini';
@@ -66,6 +73,23 @@ const billing = createBillingClient({
   logger,
 });
 
+const embeddingCatalog = createEmbeddingCatalog({
+  db: pg.db,
+  ollama: new Ollama({ host: config.OLLAMA_URL }),
+  ollamaUrl: config.OLLAMA_URL,
+  // Only providers whose key was accepted above.
+  keys: {
+    ...(adapters.OPENAI && { OPENAI: config.OPENAI_API_KEY }),
+    ...(adapters.GEMINI && { GEMINI: config.GEMINI_API_KEY }),
+  },
+  defaultModel: config.EMBEDDING_DEFAULT_MODEL,
+  logger,
+});
+const reembedJobs = createProducer<ReembedPayload>(QUEUES.reembed, {
+  redisUrl: config.REDIS_URL,
+  logger,
+});
+
 const app = buildApp({
   logger,
   checks: { postgres: pg.ping, redis: () => redis.ping() },
@@ -82,17 +106,17 @@ const app = buildApp({
       timeoutMs: config.CALL_TIMEOUT_MS,
       billing,
     }),
-    embed: createEmbedder({
-      model: embeddingModel({
-        provider: config.EMBEDDING_PROVIDER,
-        model: config.EMBEDDING_MODEL,
-        dimensions: config.EMBEDDING_DIMENSIONS,
-        ollamaUrl: config.OLLAMA_URL,
-        openAiKey: config.OPENAI_API_KEY,
-      }),
-      billing,
-      logger,
-    }),
+    embed: createEmbeddings({ catalog: embeddingCatalog, billing, logger }),
+    embeddingCatalog,
+    reembed: async (userId, modelId) => {
+      await reembedJobs.enqueue(
+        createJobEnvelope({
+          jobId: `reembed-${userId}-${Date.now()}`,
+          userId,
+          payload: { modelId },
+        }),
+      );
+    },
     usage: createUsage(pg.db),
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     internalToken,
@@ -100,5 +124,5 @@ const app = buildApp({
 });
 await startServer(app, {
   port: config.PORT,
-  cleanups: [pg.close, () => redis.quit(), usageEvents.close],
+  cleanups: [pg.close, () => redis.quit(), usageEvents.close, reembedJobs.close],
 });

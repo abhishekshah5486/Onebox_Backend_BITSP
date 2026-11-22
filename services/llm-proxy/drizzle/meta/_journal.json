@@ -43,6 +43,13 @@
       "when": 1791499149205,
       "tag": "0005_claude_models",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795363449323,
+      "tag": "0006_embedding_models",
+      "breakpoints": true
     }
   ]
 }

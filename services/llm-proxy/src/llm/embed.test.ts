@@ -2,7 +2,7 @@ import { INTERNAL_TOKEN_HEADER } from '@onebox/auth-kit';
 import { createLogger } from '@onebox/logger';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app';
-import { createEmbedder, embeddingModel, type Embedder, type EmbeddingSettings } from './embed';
+import { createEmbedder, createEmbeddings, type EmbeddingModel } from './embed';
 
 const logger = createLogger({ service: 'test', level: 'silent' });
 const userId = '6f1c2b8e-1a4d-4c7e-9b1a-2f3e4d5c6b7a';
@@ -29,15 +29,33 @@ const billing = (allowed = true) => ({
 afterEach(() => vi.unstubAllGlobals());
 
 // The stub answers two numbers per text.
-const settings = (overrides: Partial<EmbeddingSettings> = {}): EmbeddingSettings => ({
-  provider: 'openai',
-  model: undefined,
+const openAiModel = (overrides: Partial<EmbeddingModel> = {}): EmbeddingModel => ({
+  id: 'openai/text-embedding-3-large',
+  apiName: 'text-embedding-3-large',
+  name: 'OpenAI text-embedding-3-large',
   dimensions: 2,
-  ollamaUrl: 'http://ollama:11434/',
-  openAiKey: 'k',
+  usdPerMillionTokens: 0.13,
+  baseUrl: 'https://api.openai.com/v1',
+  apiKey: 'k',
+  needsKey: true,
+  sendDimensions: true,
+  local: false,
   ...overrides,
 });
-const openAi = (openAiKey: string | undefined = 'k') => embeddingModel(settings({ openAiKey }));
+const ollamaModel = (overrides: Partial<EmbeddingModel> = {}): EmbeddingModel => ({
+  id: 'ollama/bge-m3',
+  apiName: 'bge-m3',
+  name: 'bge-m3',
+  dimensions: 2,
+  usdPerMillionTokens: 0,
+  baseUrl: 'http://ollama:11434/v1',
+  apiKey: undefined,
+  needsKey: false,
+  sendDimensions: false,
+  local: true,
+  ...overrides,
+});
+const openAi = (apiKey: string | undefined = 'k') => openAiModel({ apiKey });
 
 describe('createEmbedder', () => {
   it('returns one vector per text, in order, at the shortened size', async () => {
@@ -78,10 +96,7 @@ describe('createEmbedder', () => {
     await expect(broke({ userId, texts: ['a'], charge: true })).rejects.toMatchObject({
       statusCode: 402,
     });
-    const keyless = createEmbedder({
-      model: embeddingModel(settings({ openAiKey: undefined })),
-      logger,
-    });
+    const keyless = createEmbedder({ model: openAiModel({ apiKey: undefined }), logger });
     await expect(keyless({ userId, texts: ['a'], charge: false })).rejects.toMatchObject({
       statusCode: 503,
     });
@@ -104,14 +119,13 @@ describe('createEmbedder', () => {
     });
   });
 
-  it('uses a local Ollama model by default, free and without a key', async () => {
+  it('embeds with a local Ollama model for free and without a key', async () => {
     const fetchMock = stubOpenAi();
     const paid = billing();
-    const model = embeddingModel(settings({ provider: 'ollama', openAiKey: undefined }));
-    const embed = createEmbedder({ model, billing: paid, logger });
+    const embed = createEmbedder({ model: ollamaModel(), billing: paid, logger });
     expect(embed.model).toEqual({
       id: 'ollama/bge-m3',
-      name: 'bge-m3 (local)',
+      name: 'bge-m3',
       dimensions: 2,
       local: true,
     });
@@ -127,36 +141,89 @@ describe('createEmbedder', () => {
 
   it('refuses vectors of another size than the index expects', async () => {
     stubOpenAi();
-    const model = embeddingModel(settings({ provider: 'ollama', dimensions: 1024 }));
     await expect(
-      createEmbedder({ model, logger })({ userId, texts: ['a'], charge: false }),
+      createEmbedder({ model: ollamaModel({ dimensions: 1024 }), logger })({
+        userId,
+        texts: ['a'],
+        charge: false,
+      }),
     ).rejects.toMatchObject({ statusCode: 503 });
   });
 });
 
+describe('createEmbeddings', () => {
+  it("embeds with the model asked for, else the user's pick", async () => {
+    const fetchMock = stubOpenAi();
+    const resolve = vi.fn(async (_userId: string | undefined, id?: string) =>
+      id === 'openai/text-embedding-3-large' ? openAi() : ollamaModel(),
+    );
+    const embed = createEmbeddings({ catalog: { resolve }, logger });
+
+    await embed({ userId, texts: ['a'], charge: false });
+    await embed({ userId, texts: ['a'], charge: false, model: 'openai/text-embedding-3-large' });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://ollama:11434/v1/embeddings',
+      'https://api.openai.com/v1/embeddings',
+    ]);
+    expect(resolve).toHaveBeenNthCalledWith(1, userId, undefined);
+    await expect(embed.modelFor(userId)).resolves.toMatchObject({ id: 'ollama/bge-m3' });
+  });
+});
+
 describe('embedding routes', () => {
-  const localModel = { id: 'ollama/bge-m3', name: 'bge-m3 (local)', dimensions: 1024, local: true };
-  const embed: Embedder = Object.assign(
+  const localModel = { id: 'ollama/bge-m3', name: 'bge-m3', dimensions: 1024, local: true };
+  const embed = Object.assign(
     vi.fn(async () => ({ model: 'm', dimensions: 2, vectors: [[1, 2]] })),
-    { model: localModel },
+    { modelFor: vi.fn(async () => localModel) },
   );
+  let chosen = 'ollama/bge-m3';
+  const embeddingCatalog = {
+    defaultModel: 'ollama/bge-m3',
+    list: vi.fn(async () => [{ id: 'ollama/nomic-embed-text' }]),
+    choiceOf: vi.fn(async () => chosen),
+    choose: vi.fn(async (_userId: string, modelId: string) => {
+      chosen = modelId;
+      return { id: modelId };
+    }),
+  };
+  const reembed = vi.fn(async () => {});
   const app = buildApp({
     logger,
     checks: {},
     routes: {
-      catalog: { list: async () => [], choices: async () => ({}) } as never,
+      catalog: {} as never,
       complete: vi.fn(),
       embed,
+      embeddingCatalog: embeddingCatalog as never,
+      reembed,
       usage: {} as never,
       verifyToken: vi.fn(async () => ({ userId, email: 'a@b.c' })),
       internalToken: 'secret',
     },
   });
+  const auth = { authorization: 'Bearer t' };
 
-  it('shows signed-in users which model search embeds with', async () => {
-    const res = await app.inject({ url: '/llm/models', headers: { authorization: 'Bearer t' } });
-    expect(res.statusCode).toBe(200);
-    expect(res.json<{ embedding: unknown }>().embedding).toEqual(localModel);
+  it("lists the models with the user's pick, and rebuilds only when the pick changes", async () => {
+    const list = await app.inject({ url: '/llm/embeddings', headers: auth });
+    expect(list.json()).toEqual({
+      items: [{ id: 'ollama/nomic-embed-text' }],
+      chosen: 'ollama/bge-m3',
+      default: 'ollama/bge-m3',
+    });
+
+    const pick = (modelId: string) =>
+      app.inject({
+        method: 'PUT',
+        url: '/llm/embeddings/choice',
+        headers: auth,
+        payload: { modelId },
+      });
+    expect((await pick('ollama/nomic-embed-text')).json()).toEqual({
+      chosen: 'ollama/nomic-embed-text',
+    });
+    expect(reembed).toHaveBeenCalledWith(userId, 'ollama/nomic-embed-text');
+    await pick('ollama/nomic-embed-text');
+    expect(reembed).toHaveBeenCalledOnce();
   });
 
   it('only answers other OneBox services on internal routes', async () => {
@@ -169,17 +236,18 @@ describe('embedding routes', () => {
       method: 'POST',
       url: '/internal/embed',
       headers: { [INTERNAL_TOKEN_HEADER]: 'secret' },
-      payload: body,
+      payload: { ...body, model: 'ollama/bge-m3' },
     });
     expect(inside.statusCode).toBe(200);
     expect(inside.json()).toEqual({ model: 'm', dimensions: 2, vectors: [[1, 2]] });
-    expect(embed).toHaveBeenCalledWith(body);
+    expect(embed).toHaveBeenCalledWith({ ...body, model: 'ollama/bge-m3' });
 
     const model = await app.inject({
-      url: '/internal/embed/model',
+      url: `/internal/embed/model?userId=${userId}`,
       headers: { [INTERNAL_TOKEN_HEADER]: 'secret' },
     });
     expect(model.json()).toEqual(localModel);
+    expect(embed.modelFor).toHaveBeenCalledWith(userId);
     expect((await app.inject({ url: '/internal/embed/model' })).statusCode).toBe(401);
   });
 });

@@ -14,6 +14,8 @@ export const RETRY_POLICIES: Record<QueueName, RetryPolicy> = {
   ai: { attempts: 3, backoffMs: 5_000 },
   index: { attempts: 5, backoffMs: 1_000 },
   embed: { attempts: 3, backoffMs: 5_000 },
+  // Re-embedding a whole mailbox resumes where it stopped, so a few patient retries suffice.
+  reembed: { attempts: 5, backoffMs: 30_000 },
   rules: { attempts: 3, backoffMs: 2_000 },
   action: { attempts: 4, backoffMs: 10_000 },
   // Granting credits for a payment must not be lost: retry patiently.

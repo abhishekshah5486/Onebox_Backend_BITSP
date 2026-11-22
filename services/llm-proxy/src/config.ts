@@ -20,10 +20,11 @@ const schema = z.object({
   GEMINI_API_KEY: optionalKey,
   ANTHROPIC_API_KEY: optionalKey,
   PERPLEXITY_API_KEY: optionalKey,
-  // Search embeddings: a local Ollama model by default, or OpenAI's.
-  EMBEDDING_PROVIDER: z.enum(['ollama', 'openai']).default('ollama'),
-  EMBEDDING_MODEL: optionalKey,
-  EMBEDDING_DIMENSIONS: z.coerce.number().int().min(64).max(4096).default(1024),
+  // Semantic search embeds with this until a user picks another (provider/model).
+  EMBEDDING_DEFAULT_MODEL: z
+    .string()
+    .regex(/^[a-z]+\/.+$/, 'must be provider/model')
+    .default('ollama/bge-m3'),
   OLLAMA_URL: z.url().default('http://localhost:11434'),
   CACHE_TTL_SECONDS: z.coerce
     .number()

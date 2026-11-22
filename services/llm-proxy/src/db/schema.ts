@@ -109,3 +109,32 @@ export const llmCalls = llmSchema.table(
 );
 
 export type ModelRow = typeof models.$inferSelect;
+
+// Hosted embedding models for semantic search. Local ones are found in Ollama instead.
+export const embeddingModels = llmSchema.table('embedding_models', {
+  id: text('id').primaryKey(),
+  provider: providerEnum('provider').notNull(),
+  apiName: text('api_name').notNull(),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  dimensions: integer('dimensions').notNull(),
+  // Shortened on request (Matryoshka models); others always return their own size.
+  sendDimensions: boolean('send_dimensions').notNull().default(false),
+  // USD per million tokens.
+  price: numeric('price', { mode: 'number' }).notNull().default(0),
+  rank: integer('rank').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+});
+
+export type EmbeddingModelRow = typeof embeddingModels.$inferSelect;
+
+// A user's embedding model; no row means the server's default. Local models aren't in
+// embedding_models, so this isn't a foreign key.
+export const userEmbeddingChoices = llmSchema.table('user_embedding_choices', {
+  userId: uuid('user_id').primaryKey(),
+  modelId: text('model_id').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});

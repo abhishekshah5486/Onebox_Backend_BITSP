@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { PROVIDERS, PURPOSES } from '../db/schema';
 import { AUTO, type Catalog } from './catalog';
 import type { Completer } from './complete';
-import type { Embedder } from './embed';
+import type { Embeddings } from './embed';
+import type { EmbeddingCatalog } from './embedding-catalog';
 import type { Usage } from './usage';
 
 const message = z.object({
@@ -35,6 +36,7 @@ const embedBody = z.object({
   userId: z.uuid(),
   texts: z.array(z.string().min(1).max(32_000)).min(1).max(64),
   charge: z.boolean(),
+  model: z.string().min(1).max(200).optional(),
 });
 
 export function registerLlmRoutes(
@@ -42,7 +44,10 @@ export function registerLlmRoutes(
   deps: {
     catalog: Catalog;
     complete: Completer;
-    embed: Embedder;
+    embed: Embeddings;
+    embeddingCatalog: EmbeddingCatalog;
+    // Tells search to embed the user's mail again with their new model.
+    reembed: (userId: string, modelId: string) => Promise<void>;
     usage: Usage;
     verifyToken: TokenVerifier;
     internalToken: string;
@@ -66,8 +71,11 @@ export function registerLlmRoutes(
     )
     .get(
       '/internal/embed/model',
-      { preHandler: requireInternal(deps.internalToken) },
-      async () => deps.embed.model,
+      {
+        preHandler: requireInternal(deps.internalToken),
+        schema: { querystring: z.object({ userId: z.uuid().optional() }) },
+      },
+      async (request) => deps.embed.modelFor(request.query.userId),
     );
 
   void app.register(
@@ -99,13 +107,6 @@ export function registerLlmRoutes(
                 ),
                 purposes: z.array(z.enum(PURPOSES)),
                 choices: z.record(z.string(), z.string()),
-                // What semantic search embeds mail with; set by the server, not chosen per user.
-                embedding: z.object({
-                  id: z.string(),
-                  name: z.string(),
-                  dimensions: z.number(),
-                  local: z.boolean(),
-                }),
               }),
             },
           },
@@ -115,7 +116,7 @@ export function registerLlmRoutes(
             catalog.list(),
             catalog.choices(userId(request)),
           ]);
-          return { items, purposes: [...PURPOSES], choices, embedding: deps.embed.model };
+          return { items, purposes: [...PURPOSES], choices };
         },
       );
 
@@ -130,6 +131,27 @@ export function registerLlmRoutes(
         async (request, reply) => {
           await catalog.choose(userId(request), request.params.purpose, request.body.modelId);
           return reply.status(204).send();
+        },
+      );
+
+      // The models semantic search can embed with, and the user's pick.
+      routes.get('/embeddings', async (request) => {
+        const [items, chosen] = await Promise.all([
+          deps.embeddingCatalog.list(),
+          deps.embeddingCatalog.choiceOf(userId(request)),
+        ]);
+        return { items, chosen, default: deps.embeddingCatalog.defaultModel };
+      });
+
+      routes.put(
+        '/embeddings/choice',
+        { schema: { body: z.object({ modelId: z.string().min(1).max(200) }) } },
+        async (request) => {
+          const user = userId(request);
+          const before = await deps.embeddingCatalog.choiceOf(user);
+          const model = await deps.embeddingCatalog.choose(user, request.body.modelId);
+          if (model.id !== before) await deps.reembed(user, model.id);
+          return { chosen: model.id };
         },
       );
 
