@@ -63,6 +63,7 @@ const directory = createProviderDirectory({
   db: pg.db,
   url: config.PROVIDER_CATALOG_URL,
   ttlMs: config.PROVIDER_CATALOG_TTL_MS,
+  featured: config.PROVIDER_FEATURED,
   logger,
 });
 

@@ -32,6 +32,19 @@ const schema = z.object({
   PROVIDER_CHECK_TIMEOUT_MS: z.coerce.number().int().min(1000).default(20_000),
   // Lets users point at servers on this machine or its network (e.g. LM Studio); off in production.
   PROVIDER_ALLOW_PRIVATE_URLS: envBoolean.default(false),
+  // The providers offered for own keys, in the order shown; any other catalogue provider still
+  // works for models already added. Empty offers the whole catalogue.
+  PROVIDER_FEATURED: z
+    .string()
+    .default(
+      'openai,anthropic,google,deepseek,openai-compatible,openrouter,azure,amazon-bedrock,lmstudio,google-vertex,cohere,togetherai,xai,groq,fireworks-ai,mistral,minimax',
+    )
+    .transform((list) =>
+      list
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
   PROVIDER_CATALOG_TTL_MS: z.coerce
     .number()
     .int()

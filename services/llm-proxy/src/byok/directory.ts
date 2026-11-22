@@ -180,12 +180,15 @@ export function createProviderDirectory({
   url,
   ttlMs,
   logger,
+  featured = [],
   fetchFn = fetch,
 }: {
   db: PostgresJsDatabase;
   url: string;
   ttlMs: number;
   logger: Logger;
+  // Provider ids to offer, in order; empty offers all.
+  featured?: string[];
   fetchFn?: typeof fetch;
 }) {
   const logoBase = new URL('/logos', url).toString();
@@ -226,7 +229,7 @@ export function createProviderDirectory({
     }
   }
 
-  async function providers() {
+  async function all() {
     if (!cached || Date.now() - cached.at > ttlMs) {
       cached = { at: Date.now(), providers: load() };
     }
@@ -234,9 +237,16 @@ export function createProviderDirectory({
   }
 
   return {
-    providers,
+    // The providers to offer: the featured ones in their order, else everything.
+    async providers() {
+      const everything = await all();
+      if (!featured.length) return everything;
+      return featured
+        .map((id) => everything.find((provider) => provider.id === id))
+        .filter((provider) => provider !== undefined);
+    },
     async provider(id: string) {
-      return (await providers()).find((provider) => provider.id === id) ?? null;
+      return (await all()).find((provider) => provider.id === id) ?? null;
     },
   };
 }

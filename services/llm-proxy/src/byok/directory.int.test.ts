@@ -56,4 +56,21 @@ describe('provider directory', () => {
     expect(down).toHaveBeenCalledTimes(1);
     expect(await offline.provider('nope')).toBeNull();
   });
+
+  it('offers only the featured providers, in their order, yet still finds the others', async () => {
+    const featured = createProviderDirectory({
+      db: client.db,
+      url: 'https://models.dev/api.json',
+      ttlMs: 60_000,
+      logger,
+      featured: ['openai', 'openai-compatible', 'missing', 'amazon-bedrock'],
+      fetchFn: async () => Response.json(catalogFixture),
+    });
+    expect((await featured.providers()).map((provider) => provider.id)).toEqual([
+      'openai',
+      'openai-compatible',
+      'amazon-bedrock',
+    ]);
+    expect(await featured.provider('lmstudio')).not.toBeNull();
+  });
 });
