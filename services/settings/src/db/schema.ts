@@ -1,5 +1,14 @@
-import { boolean, index, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
-import { STORAGE_PROVIDERS } from '@onebox/contracts';
+import {
+  boolean,
+  index,
+  jsonb,
+  pgSchema,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
+import { STORAGE_PROVIDERS, VECTOR_STORE_IDS } from '@onebox/contracts';
 import { sql } from 'drizzle-orm';
 
 export const settingsSchema = pgSchema('settings');
@@ -103,9 +112,10 @@ export const storageAccounts = settingsSchema.table(
 // Where a user's semantic search vectors live, when it isn't OneBox's own Qdrant.
 export const indexingStores = settingsSchema.table('indexing_stores', {
   userId: uuid('user_id').primaryKey(),
-  provider: text('provider', { enum: ['QDRANT'] }).notNull(),
-  url: text('url').notNull(),
-  apiKeyEncrypted: text('api_key_encrypted'),
+  provider: text('provider', { enum: VECTOR_STORE_IDS }).notNull(),
+  // The fields that aren't secret, e.g. the address; secrets are kept encrypted as JSON.
+  settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
+  secretsEncrypted: text('secrets_encrypted'),
   keyHint: text('key_hint'),
   ...timestamps,
 });

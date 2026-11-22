@@ -71,6 +71,13 @@
       "when": 1795371726799,
       "tag": "0009_setup_done",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795375301475,
+      "tag": "0010_any_vector_store",
+      "breakpoints": true
     }
   ]
 }
