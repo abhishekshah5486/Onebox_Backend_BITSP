@@ -20,3 +20,7 @@ class ParseResult:
 
 class UnreadableFileError(Exception):
     """The file is damaged or not what it claims; retrying will not help."""
+
+
+class ProtectedFileError(UnreadableFileError):
+    """Locked by a password or DRM; reported as password-protected."""

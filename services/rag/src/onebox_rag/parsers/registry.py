@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from onebox_rag.parsers.base import ParseResult
 from onebox_rag.parsers.csv_parser import parse_csv, parse_tsv
 from onebox_rag.parsers.email import parse_email
+from onebox_rag.parsers.epub import EPUB as EPUB_TYPE
+from onebox_rag.parsers.epub import parse_epub
 from onebox_rag.parsers.excel import EXCEL_TYPES, parse_excel
 from onebox_rag.parsers.html import parse_html
 from onebox_rag.parsers.markdown import parse_markdown
@@ -28,6 +30,7 @@ CSV = Parser("csv", parse_csv)
 TSV = Parser("tsv", parse_tsv)
 PLAIN_TEXT = Parser("plain-text", parse_plain_text)
 EXCEL = Parser("openpyxl", parse_excel)
+EPUB = Parser("epub", parse_epub)
 
 _BY_MIME = {
     "text/markdown": MARKDOWN,
@@ -47,6 +50,7 @@ _BY_MIME = {
     "text/csv": CSV,
     "text/tab-separated-values": TSV,
     **dict.fromkeys(EXCEL_TYPES, EXCEL),
+    EPUB_TYPE: EPUB,
 }
 
 

@@ -12,7 +12,7 @@ from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import TERMINAL, Attachment, Content, Stage, Status
 from onebox_rag.models.blocks import BlocksContainer
-from onebox_rag.parsers.base import ParseResult, UnreadableFileError
+from onebox_rag.parsers.base import ParseResult, ProtectedFileError, UnreadableFileError
 from onebox_rag.parsers.docling_blocks import parse_docling_document
 from onebox_rag.parsers.excel import legacy_sheet, parse_excel
 from onebox_rag.parsers.office import office_format
@@ -107,6 +107,9 @@ class ParseStage:
             problems = result.container.problems()
             if problems:
                 raise ValueError(f"{route.engine} built a broken container: {problems[:3]}")
+        except ProtectedFileError as err:
+            await self._settle(content, Status.PASSWORD_PROTECTED, reason=str(err))
+            return
         except UnreadableFileError as err:
             await self._settle(content, Status.FAILED, reason=str(err) or "unreadable")
             return
