@@ -17,6 +17,7 @@ dependencies = [
   "msoffcrypto-tool==6.1.0",
   "numpy==2.5.4",
   "onnxruntime==1.31.1",
+  "openpyxl==3.1.5",
   "opencv-python-headless==5.0.0.93",
   "pydantic==2.14.3",
   "pydantic-settings==2.16.2",
@@ -91,7 +92,7 @@ files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*", "docling.*", "docling_core.*", "docx.*", "pptx.*", "cv2.*", "rapidocr.*", "onnxruntime.*"]
+module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*", "docling.*", "docling_core.*", "docx.*", "pptx.*", "cv2.*", "rapidocr.*", "onnxruntime.*", "openpyxl.*"]
 ignore_missing_imports = true
 
 # CPU-only PyTorch on Linux (the cluster has no GPU); macOS wheels are CPU/MPS already.

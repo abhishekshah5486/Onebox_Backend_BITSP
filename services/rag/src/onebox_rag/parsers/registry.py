@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from onebox_rag.parsers.base import ParseResult
 from onebox_rag.parsers.csv_parser import parse_csv, parse_tsv
 from onebox_rag.parsers.email import parse_email
+from onebox_rag.parsers.excel import EXCEL_TYPES, parse_excel
 from onebox_rag.parsers.html import parse_html
 from onebox_rag.parsers.markdown import parse_markdown
 from onebox_rag.parsers.plain_text import parse_plain_text
@@ -26,6 +27,7 @@ YAML = Parser("yaml", parse_yaml)
 CSV = Parser("csv", parse_csv)
 TSV = Parser("tsv", parse_tsv)
 PLAIN_TEXT = Parser("plain-text", parse_plain_text)
+EXCEL = Parser("openpyxl", parse_excel)
 
 _BY_MIME = {
     "text/markdown": MARKDOWN,
@@ -44,6 +46,7 @@ _BY_MIME = {
     "text/x-yaml": YAML,
     "text/csv": CSV,
     "text/tab-separated-values": TSV,
+    **dict.fromkeys(EXCEL_TYPES, EXCEL),
 }
 
 

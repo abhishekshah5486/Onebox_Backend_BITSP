@@ -21,7 +21,7 @@ from onebox_rag.parsers.tables import looks_like_header, row_text
 
 # Rows indexed per table; the rest of a huge table is left out.
 MAX_TABLE_ROWS = 20_000
-# A lone filled cell above a table this wide is its title.
+# A lone value above a table this wide is its title.
 MIN_TITLED_WIDTH = 3
 
 
@@ -80,13 +80,13 @@ def guess_header_rows(rows: list[list[str]]) -> int:
 
 
 def leading_lines(table: GridTable) -> int:
-    """Rows at the top that are titles or notes, not table rows: one cell filled over a table at
-    least MIN_TITLED_WIDTH wide, or the only row there is."""
+    """Rows at the top that are titles or notes, not table rows: one value (a merged title
+    repeats it) over a table at least MIN_TITLED_WIDTH wide, or the only row there is."""
     width = len(table.rows[0])
     count = 0
     for cells in table.rows:
         lone = len(table.rows) - count == 1
-        if not (lone or (width >= MIN_TITLED_WIDTH and sum(1 for c in cells if c) == 1)):
+        if not (lone or (width >= MIN_TITLED_WIDTH and len({c for c in cells if c}) == 1)):
             break
         count += 1
     return count
@@ -107,7 +107,7 @@ def add_sheet_table(
     width = len(table.rows[0])
     start = leading_lines(table)
     for i in range(start):
-        line = " ".join(cell for cell in table.rows[i] if cell)
+        line = " ".join(dict.fromkeys(cell for cell in table.rows[i] if cell))
         out.text(line, parent=parent, citation_metadata=out.citation(**where(i, width)))
     rows = table.rows[start:]
     if not rows:
