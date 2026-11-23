@@ -11,8 +11,22 @@ from onebox_rag.models.blocks import (
 from onebox_rag.parsers.builder import BlocksBuilder
 
 
+def looks_like_header(row: list[str]) -> bool:
+    """Distinct, non-empty labels with no numbers: what csv.Sniffer misses when columns are text."""
+    cells = [cell.strip() for cell in row]
+    if not all(cells) or len(set(cells)) != len(cells):
+        return False
+    for cell in cells:
+        try:
+            float(cell.replace(",", ""))
+            return False
+        except ValueError:
+            continue
+    return True
+
+
 def row_text(columns: list[str], cells: list[str]) -> str:
-    """A row as "column: value" pairs, the plain form PipesHub uses before any LLM rewrite."""
+    """A row as "column: value" pairs, the plain form used before any LLM rewrite."""
     pairs = []
     for i, cell in enumerate(cells):
         value = cell.strip()

@@ -4,7 +4,7 @@ import io
 from onebox_rag.models.blocks import DataFormat
 from onebox_rag.parsers.base import ParseResult
 from onebox_rag.parsers.builder import BlocksBuilder
-from onebox_rag.parsers.tables import add_table
+from onebox_rag.parsers.tables import add_table, looks_like_header
 from onebox_rag.parsers.text_decoding import decode_text
 
 _SAMPLE = 64 * 1024
@@ -12,7 +12,7 @@ _SAMPLE = 64 * 1024
 
 def parse_csv(data: bytes, mime_type: str = "", *, delimiter: str | None = None) -> ParseResult:
     """One table, a row block per line. Headers come from csv.Sniffer for now; the LLM header
-    detection and row sentences PipesHub uses arrive with spreadsheets (milestone 8)."""
+    detection and row sentences arrive with spreadsheets (milestone 8)."""
     text = decode_text(data)
     sample = text[:_SAMPLE]
     sniffer = csv.Sniffer()
@@ -32,26 +32,12 @@ def parse_csv(data: bytes, mime_type: str = "", *, delimiter: str | None = None)
         if any(cell.strip() for cell in row):
             rows.append(row)
             lines.append(reader.line_num)
-    header = rows.pop(0) if rows and (has_header or _looks_like_header(rows[0])) else []
+    header = rows.pop(0) if rows and (has_header or looks_like_header(rows[0])) else []
     if header:
         lines.pop(0)
     out = BlocksBuilder()
     add_table(out, header, rows, row_lines=lines, format=DataFormat.CSV)
     return ParseResult(out.build())
-
-
-def _looks_like_header(row: list[str]) -> bool:
-    """Distinct, non-empty labels with no numbers: what csv.Sniffer misses when columns are text."""
-    cells = [cell.strip() for cell in row]
-    if not all(cells) or len(set(cells)) != len(cells):
-        return False
-    for cell in cells:
-        try:
-            float(cell.replace(",", ""))
-            return False
-        except ValueError:
-            continue
-    return True
 
 
 def parse_tsv(data: bytes, mime_type: str = "") -> ParseResult:
