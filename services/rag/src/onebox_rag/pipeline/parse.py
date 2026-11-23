@@ -13,10 +13,11 @@ from onebox_rag.models import TERMINAL, Attachment, Content, Stage, Status
 from onebox_rag.models.blocks import BlocksContainer
 from onebox_rag.parsers.base import ParseResult, UnreadableFileError
 from onebox_rag.parsers.docling_blocks import parse_docling_document
+from onebox_rag.parsers.excel import legacy_sheet, parse_excel
 from onebox_rag.parsers.office import office_format
 from onebox_rag.parsers.pdf.inspection import PdfFacts, inspect_pdf
 from onebox_rag.parsers.pdf.pdfplumber_engine import parse_pdf_layout
-from onebox_rag.parsers.registry import parser_for
+from onebox_rag.parsers.registry import EXCEL, parser_for
 from onebox_rag.pipeline.describe import ImageDescriber
 from onebox_rag.pipeline.docling_client import DoclingClient, DoclingUnavailableError
 from onebox_rag.pipeline.ocr import OcrRunner
@@ -134,6 +135,19 @@ class ParseStage:
                 return await ocr.parse(content, data)
 
             return with_ocr
+        sheet_ext = legacy_sheet(content.mime_type)
+        if engine == EXCEL.engine and sheet_ext is not None:
+            docling = self._docling
+            if docling is None:
+                return None
+
+            async def converted() -> ParseResult:
+                assert docling is not None and sheet_ext is not None
+                xlsx = await docling.to_xlsx(data, sheet_ext, name=content.id)
+                result: ParseResult = await self._pool.run(parse_excel, xlsx, label=label)
+                return result
+
+            return converted
         office = office_format(content.mime_type)
         if engine == PdfEngine.DOCLING and office is not None:
             docling = self._docling
@@ -214,6 +228,9 @@ class ParseStage:
             route = Route(PdfEngine.DOCLING, "format")
         elif content.mime_type in IMAGE_TYPES:
             route = Route(PdfEngine.OCR, "image")
+        elif legacy_sheet(content.mime_type) is not None:
+            # Converted to XLSX by the Docling service's LibreOffice, then read like one.
+            route = Route(EXCEL.engine, "converted")
         else:
             parser = parser_for(content.mime_type)
             if parser is None:

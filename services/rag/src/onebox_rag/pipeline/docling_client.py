@@ -23,9 +23,15 @@ class DoclingClient:
         form = {"target": office.docling}
         if office.legacy_ext:
             form["legacyExt"] = office.legacy_ext
+        document: dict[str, Any] = (await self._post("/convert", data, form, name)).json()
+        return document
+
+    async def _post(
+        self, path: str, data: bytes, form: dict[str, str], name: str
+    ) -> httpx.Response:
         try:
             response = await self._http.post(
-                "/convert",
+                path,
                 files={"file": (name, data)},
                 data=form,
                 headers={INTERNAL_TOKEN_HEADER: self._token},
@@ -33,8 +39,7 @@ class DoclingClient:
         except httpx.TransportError as err:
             raise DoclingUnavailableError(f"Docling unreachable ({type(err).__name__})") from err
         if response.status_code == 200:
-            document: dict[str, Any] = response.json()
-            return document
+            return response
         code, reason = _problem(response)
         # Its workers fail the way ours do, so the parse stage treats them the same.
         if code == "TIMED_OUT":
@@ -44,6 +49,11 @@ class DoclingClient:
         if response.status_code == 422:
             raise UnreadableFileError(reason)
         raise DoclingUnavailableError(f"Docling answered {response.status_code}: {reason}")
+
+    async def to_xlsx(self, data: bytes, legacy_ext: str, name: str) -> bytes:
+        """An older or OpenDocument spreadsheet converted to XLSX by the service's LibreOffice."""
+        response = await self._post("/to-xlsx", data, {"legacyExt": legacy_ext}, name)
+        return response.content
 
     async def ping(self) -> None:
         (await self._http.get("/health/ready")).raise_for_status()

@@ -18,6 +18,7 @@ from onebox_rag.docling.config import load_docling_settings
 from onebox_rag.docling.service import create_docling_app
 from onebox_rag.parsers.libreoffice import convert_with_libreoffice
 from tests.pdf_samples import text_in_picture
+from tests.test_excel import workbook
 from tests.test_ingest_int import Json, parsed, settled, upload, wait_for
 from tests.test_pdf_routing import make_pdf
 from tests.tokens import bearer, fake_verifier
@@ -108,17 +109,27 @@ def test_reads_word_powerpoint_pdf_and_legacy_files(client: TestClient) -> None:
     if soffice is None:
         pytest.skip("LibreOffice is not installed")
     doc = convert_with_libreoffice(docx_bytes(), "docx", "doc", soffice=soffice, timeout_s=120)
+    xls, ods = (
+        convert_with_libreoffice(workbook(), "xlsx", ext, soffice=soffice, timeout_s=120)
+        for ext in ("xls", "ods")
+    )
     files = [
         ("policy.docx", docx_bytes()),
         ("review.pptx", pptx_bytes()),
         ("terms.pdf", make_pdf(["text", "text"])),
         ("old.doc", doc),
+        ("q3.xls", xls),
+        ("q3.ods", ods),
     ]
     records = upload(client, *files, kb="office")
     done = [wait_for(client, r["id"], settled, timeout_s=DOCLING_WAIT_S) for r in records]
     assert all(parsed(r) for r in done), [(r["name"], r["status"], r["reason"]) for r in done]
 
-    docx, pptx, pdf, legacy = (blocks(client, r) for r in done)
+    docx, pptx, pdf, legacy, *sheets = (blocks(client, r) for r in done)
+    for sheet in sheets:
+        rows = [b for b in sheet if b["type"] == "table_row"]
+        assert rows[1]["data"]["text"].startswith("Region: North, Month: 2024-07-01")
+        assert rows[1]["citationMetadata"]["sheetName"] == "Q3 sales"
     row = next(b for b in docx if b["type"] == "table_row")
     assert row["data"]["text"] == "Plan: Pro, Price: $10"
     assert row["citationMetadata"]["headingPath"] == ["Refund policy"]

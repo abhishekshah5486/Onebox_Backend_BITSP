@@ -72,6 +72,13 @@ def warm_up(options: ConvertOptions) -> bool:
     return True
 
 
+def to_xlsx(data: bytes, legacy_ext: str, options: ConvertOptions) -> bytes:
+    """An older or OpenDocument spreadsheet as XLSX, for the RAG service's own sheet parser."""
+    return convert_with_libreoffice(
+        data, legacy_ext, "xlsx", soffice=options.soffice, timeout_s=options.timeout_s
+    )
+
+
 def convert_document(
     data: bytes, target: str, legacy_ext: str | None, options: ConvertOptions
 ) -> dict[str, Any]:

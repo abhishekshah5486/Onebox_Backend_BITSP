@@ -5,12 +5,12 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
 
 from onebox_rag.auth import derive_internal_token, require_internal
 from onebox_rag.docling.config import DoclingSettings
-from onebox_rag.docling.convert import ConvertOptions, convert_document, warm_up
+from onebox_rag.docling.convert import ConvertOptions, convert_document, to_xlsx, warm_up
 from onebox_rag.errors import register_error_handlers
 from onebox_rag.health import health_router
 from onebox_rag.logs import log_requests
@@ -20,6 +20,8 @@ from onebox_rag.pipeline.pool import ParsePool, ParseWorkerError
 logger = logging.getLogger("onebox_rag.docling")
 TARGETS = {"pdf", "docx", "pptx"}
 LEGACY = {"doc", "rtf", "odt", "ppt", "odp"}
+SHEETS = {"xls", "ods", "xlsb"}
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def options_from(settings: DoclingSettings) -> ConvertOptions:
@@ -84,25 +86,15 @@ def create_docling_app(settings: DoclingSettings) -> FastAPI:
     register_error_handlers(app)
     app.include_router(health_router())
 
-    @app.post("/convert", dependencies=[Depends(require_internal)], response_model=None)
-    async def convert(
-        request: Request,
-        file: Annotated[UploadFile, File()],
-        target: Annotated[str, Form()],
-        legacy_ext: Annotated[str | None, Form(alias="legacyExt")] = None,
-    ) -> dict[str, Any] | JSONResponse:
-        if target not in TARGETS or (legacy_ext is not None and legacy_ext not in LEGACY):
-            return _error(400, "BAD_FORMAT", f"can't convert {legacy_ext or target}")
+    async def run(request: Request, file: UploadFile, job: Any, *args: Any) -> Any:
+        """One file through a worker; refusals and failures as the RAG client expects them."""
         if request.app.state.in_flight >= capacity:
             return _error(429, "BUSY", "every Docling worker is busy")
         request.app.state.in_flight += 1
         try:
             data = await file.read()
             pool: ParsePool = request.app.state.pool
-            document: dict[str, Any] = await pool.run(
-                convert_document, data, target, legacy_ext, options, label=file.filename or "file"
-            )
-            return document
+            return await pool.run(job, data, *args, label=file.filename or "file")
         except UnreadableFileError as err:
             return _error(422, "UNREADABLE", str(err) or "unreadable")
         except ParseWorkerError as err:
@@ -113,5 +105,32 @@ def create_docling_app(settings: DoclingSettings) -> FastAPI:
             )
         finally:
             request.app.state.in_flight -= 1
+
+    @app.post("/convert", dependencies=[Depends(require_internal)], response_model=None)
+    async def convert(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        target: Annotated[str, Form()],
+        legacy_ext: Annotated[str | None, Form(alias="legacyExt")] = None,
+    ) -> dict[str, Any] | JSONResponse:
+        if target not in TARGETS or (legacy_ext is not None and legacy_ext not in LEGACY):
+            return _error(400, "BAD_FORMAT", f"can't convert {legacy_ext or target}")
+        result: dict[str, Any] | JSONResponse = await run(
+            request, file, convert_document, target, legacy_ext, options
+        )
+        return result
+
+    @app.post("/to-xlsx", dependencies=[Depends(require_internal)], response_model=None)
+    async def convert_sheet(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        legacy_ext: Annotated[str, Form(alias="legacyExt")],
+    ) -> Response:
+        if legacy_ext not in SHEETS:
+            return _error(400, "BAD_FORMAT", f"can't convert {legacy_ext}")
+        result = await run(request, file, to_xlsx, legacy_ext, options)
+        if isinstance(result, JSONResponse):
+            return result
+        return Response(result, media_type=XLSX)
 
     return app

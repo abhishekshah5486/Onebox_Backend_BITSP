@@ -25,6 +25,21 @@ EXCEL_TYPES = frozenset(
     }
 )
 
+# Older and other spreadsheets: the Docling service's LibreOffice turns them into XLSX first.
+LEGACY_SHEETS = {
+    "application/vnd.ms-excel": "xls",
+    "application/excel": "xls",
+    "application/x-excel": "xls",
+    "application/x-msexcel": "xls",
+    "application/vnd.oasis.opendocument.spreadsheet": "ods",
+    "application/vnd.ms-excel.sheet.binary.macroEnabled": "xlsb",
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.12": "xlsb",
+}
+
+
+def legacy_sheet(mime_type: str) -> str | None:
+    return LEGACY_SHEETS.get(mime_type.split(";")[0].strip().lower())
+
 
 def parse_excel(data: bytes, mime_type: str = "") -> ParseResult:
     try:

@@ -9,10 +9,10 @@ COPY src ./src
 RUN uv sync --frozen --no-dev --extra docling --no-editable
 
 FROM python:3.13.18-slim-bookworm
-# LibreOffice converts DOC, RTF, ODT, PPT and ODP; the GL and GLib libraries are for OpenCV.
+# LibreOffice converts DOC, RTF, ODT, PPT, ODP, XLS, ODS and XLSB; the GL and GLib libraries are for OpenCV.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      libreoffice-writer-nogui libreoffice-impress-nogui fonts-dejavu-core libgl1 libglib2.0-0 \
+      libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui fonts-dejavu-core libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 1000 --no-create-home app
 WORKDIR /app
