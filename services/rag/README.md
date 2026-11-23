@@ -150,8 +150,12 @@ maxChunksPerRecord}`) and `/internal/rag/retrieve` (with `userId`, for the agent
   leave RAG. Passages from mail carry the sender, recipients and date, and an attachment's
   carry its email's.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
-  JSON and JSON Lines, YAML, CSV and TSV, spreadsheets, PDF, Word, PowerPoint, images, and
-  other text.
+  JSON and JSON Lines, YAML, CSV and TSV, spreadsheets, PDF, Word, PowerPoint, EPUB books,
+  images (PNG, JPEG, WebP, TIFF, BMP, GIF, HEIC/HEIF, AVIF, and SVG drawn with cairo after its
+  size, depth and references are checked), and other text. Pictures inline in HTML are kept
+  and described. A DRM-protected book is reported as password-protected.
+- **SVG on macOS:** cairosvg needs cairo (`brew install cairo`); it is found through
+  `HOMEBREW_PREFIX`, which Homebrew's shell setup sets. The image installs `libcairo2`.
 
 ## Check
 

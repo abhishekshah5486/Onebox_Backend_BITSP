@@ -1,5 +1,8 @@
 """HTML to blocks by walking the DOM with selectolax."""
 
+import base64
+from urllib.request import urlopen
+
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
 from onebox_rag.models.blocks import (
@@ -13,13 +16,15 @@ from onebox_rag.models.blocks import (
     ImageMetadata,
     ListMetadata,
 )
-from onebox_rag.parsers.base import ParseResult
+from onebox_rag.parsers.base import ParseResult, UnreadableFileError
 from onebox_rag.parsers.builder import BlocksBuilder
+from onebox_rag.parsers.svg import svg_to_png
 from onebox_rag.parsers.tables import add_table
 from onebox_rag.parsers.text_decoding import decode_text
 
 # Never content: dropped before the walk.
 _NOISE = "script, style, noscript, template, head, svg, iframe, object, canvas, button, form"
+MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024
 _HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 # Elements that start their own block; everything else is inline text.
 _BLOCK_TAGS = {
@@ -162,15 +167,20 @@ class _Walker:
 
     def image(self, node: LexborNode, parent: BlockGroup | None) -> None:
         alt = _squash(node.attributes.get("alt") or "")
-        src = node.attributes.get("src") or ""
-        if not alt and not src.startswith(("http://", "https://", "cid:")):
+        src = (node.attributes.get("src") or "").strip()
+        if not src and node.attributes.get("srcset"):
+            src = (node.attributes.get("srcset") or "").split(",")[0].strip().split(" ")[0]
+        # An inline picture is the image itself (described later); a link is kept as a link.
+        inline = inline_image(src)
+        linked = src.startswith(("http://", "https://", "cid:"))
+        if not alt and not linked and inline is None:
             return
         self.out.block(
             BlockType.IMAGE,
-            None,
+            inline,
             parent=parent,
-            # Inline data: URIs are never kept; they are the image, not a link to it.
-            links=[src] if src.startswith(("http://", "https://", "cid:")) else None,
+            format=DataFormat.BASE64 if inline else DataFormat.TXT,
+            links=[src] if linked else None,
             image_metadata=ImageMetadata(alt_text=alt or None),
         )
 
@@ -181,6 +191,22 @@ class _Walker:
             if cls.startswith("language-"):
                 return cls.removeprefix("language-")
         return None
+
+
+def inline_image(src: str) -> str | None:
+    """A data: picture as a raster data URI (an SVG drawn as PNG), or None when it is not one,
+    is too big or can't be drawn."""
+    head = src[:32].lower()
+    if not head.startswith("data:image/") or len(src) * 3 // 4 > MAX_INLINE_IMAGE_BYTES:
+        return None
+    if not head.startswith("data:image/svg"):
+        return src
+    try:
+        with urlopen(src) as response:  # noqa: S310 - a data: URI, checked above
+            png = svg_to_png(response.read())
+    except (UnreadableFileError, ValueError, OSError):
+        return None
+    return "data:image/png;base64," + base64.b64encode(png).decode()
 
 
 def html_to_blocks(html: str) -> BlocksContainer:

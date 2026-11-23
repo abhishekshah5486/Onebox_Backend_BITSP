@@ -10,12 +10,17 @@ from typing import Any
 
 import cv2
 import numpy as np
+import pillow_heif
 import pypdfium2 as pdfium
 from PIL import Image, ImageSequence, UnidentifiedImageError
 
 from onebox_rag.parsers.base import ParseResult, UnreadableFileError
 from onebox_rag.parsers.pdf.layout import Kind, PageRaster, Region, Word, ocr_regions
 from onebox_rag.parsers.pdf.pdfplumber_engine import Page, build_blocks
+from onebox_rag.parsers.svg import SVG, svg_to_png
+
+# HEIC/HEIF (iPhone photos) through Pillow; AVIF Pillow reads itself.
+pillow_heif.register_heif_opener()
 
 # Words read with less confidence are noise more often than text.
 MIN_WORD_SCORE = 0.5
@@ -136,9 +141,12 @@ def parse_scanned_pdf(data: bytes, mime_type: str, limits: OcrLimits) -> ParseRe
     return ParseResult(build_blocks(pages, OCR_HEADING_RATIO, OCR_SIZE_CHANGE).build())
 
 
-def _frames(data: bytes) -> Iterator[np.ndarray]:
-    """Every frame (a TIFF's pages, a GIF's frames) as RGB, scaled to MAX_IMAGE_EDGE_PX."""
+def _frames(data: bytes, mime_type: str = "") -> Iterator[np.ndarray]:
+    """Every frame (a TIFF's pages, a GIF's frames) as RGB, scaled to MAX_IMAGE_EDGE_PX; an
+    SVG is drawn first."""
     Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+    if mime_type.split(";")[0].strip().lower() == SVG:
+        data = svg_to_png(data)
     try:
         with Image.open(io.BytesIO(data)) as image:
             for frame in ImageSequence.Iterator(image):
@@ -163,7 +171,7 @@ def parse_image(data: bytes, mime_type: str, limits: OcrLimits) -> ParseResult:
     """An image file: the picture as an image block (for its description), then any text in it,
     each frame as a page."""
     pages = []
-    for index, frame in enumerate(_frames(data)):
+    for index, frame in enumerate(_frames(data, mime_type)):
         if index >= limits.max_pages:
             raise UnreadableFileError(f"more than {limits.max_pages} frames to OCR")
         page = _page(index + 1, frame, IMAGE_DPI)

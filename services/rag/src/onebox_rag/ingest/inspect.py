@@ -81,7 +81,7 @@ def detect_type(stream: BinaryIO, name: str, declared: str | None) -> str:
     except puremagic.PureError:
         found = []
     if found and found[0].mime_type and found[0].confidence >= 0.5:
-        return str(found[0].mime_type)
+        return _best(found, name, declared)
     if _is_text(head):
         return _guess(name, declared, "text/plain")
     if found and found[0].mime_type:
@@ -125,6 +125,22 @@ def _is_text(head: bytes) -> bool:
     except UnicodeDecodeError as err:
         return err.start >= len(head) - 3
     return True
+
+
+def _best(found: list[puremagic.PureMagicWithConfidence], name: str, declared: str | None) -> str:
+    """The most confident match; on a tie, the one of the kind the name or the sender gives
+    (HEIC and MP4 share a container and score alike)."""
+    tied = [m for m in found if m.mime_type and m.confidence == found[0].confidence]
+    hints = [h for h in (mimetypes.guess_type(name, strict=False)[0], declared) if h]
+    for hint in hints:
+        for match in tied:
+            if match.mime_type == hint:
+                return str(match.mime_type)
+    for hint in hints:
+        for match in tied:
+            if match.mime_type.split("/")[0] == hint.split("/")[0]:
+                return str(match.mime_type)
+    return str(found[0].mime_type)
 
 
 def _guess(name: str, declared: str | None, fallback: str) -> str:

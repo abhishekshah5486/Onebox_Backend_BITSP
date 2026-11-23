@@ -37,7 +37,7 @@ def _png_uri(image: np.ndarray) -> str:
 def render_pages(data: bytes, mime_type: str, limits: OcrLimits) -> list[RenderedPage]:
     """Runs in a parse worker: each PDF page (or image frame) as a PNG data URI."""
     if mime_type != "application/pdf":
-        frames = list(_frames(data))
+        frames = list(_frames(data, mime_type))
         if len(frames) > limits.max_pages:
             raise UnreadableFileError(f"more than {limits.max_pages} frames to OCR")
         return [RenderedPage(i + 1, _png_uri(frame)) for i, frame in enumerate(frames)]

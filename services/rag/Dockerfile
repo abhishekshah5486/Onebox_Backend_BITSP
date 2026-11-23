@@ -14,6 +14,9 @@ RUN .venv/bin/python -c "from onebox_rag.parsers.ocr.rapid import _engine; _engi
  && .venv/bin/python -c "from onebox_rag.index.embed import warm_sparse; warm_sparse()"
 
 FROM python:3.13.18-slim-bookworm
+# cairo draws SVG (cairosvg).
+RUN apt-get update && apt-get install -y --no-install-recommends libcairo2=1.16.0-7 \
+ && rm -rf /var/lib/apt/lists/*
 RUN useradd --uid 1000 --no-create-home app
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv

@@ -18,6 +18,10 @@ IMAGE_TYPES = frozenset(
         "image/bmp",
         "image/x-ms-bmp",
         "image/gif",
+        "image/heic",
+        "image/heif",
+        "image/avif",
+        "image/svg+xml",
     }
 )
 
