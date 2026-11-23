@@ -19,11 +19,11 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 HOME=/tmp
 # The layout and table models are baked in, so pods start without downloading them.
-RUN docling-tools models download layout tableformer -o /models && chmod -R a+rX /models
+RUN docling-tools models download layout tableformer rapidocr -o /models && chmod -R a+rX /models
 ENV DOCLING_ARTIFACTS_PATH=/models HF_HUB_OFFLINE=1
 # Fails the build if the pipeline can't load from the baked-in models alone.
 RUN python -c "from onebox_rag.docling.convert import ConvertOptions, warm_up; \
-warm_up(ConvertOptions('accurate', 1.0, 600, 'soffice'))"
+warm_up(ConvertOptions('accurate', 1.0, 600, 'soffice', ocr=True))"
 USER 1000
 EXPOSE 4013
 CMD ["python", "-m", "onebox_rag.docling"]

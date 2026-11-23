@@ -143,3 +143,41 @@ def grid_in_image() -> bytes:
     pdf.showPage()
     pdf.save()
     return out.getvalue()
+
+
+def scanned(pdf: bytes, dpi: int = 150) -> bytes:
+    """`pdf` printed and scanned: every page only a picture, with no text layer."""
+    import pypdfium2 as pdfium
+
+    out = io.BytesIO()
+    scan = canvas.Canvas(out, pagesize=A4)
+    document = pdfium.PdfDocument(pdf)
+    try:
+        for page in document:
+            image = page.render(scale=dpi / 72).to_pil().convert("L")
+            scan.drawImage(ImageReader(image), 0, 0, WIDTH, HEIGHT)
+            scan.showPage()
+            page.close()
+    finally:
+        document.close()
+    scan.save()
+    return out.getvalue()
+
+
+def text_in_picture() -> bytes:
+    """A digital page with a screenshot-like picture whose words exist only as pixels."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("RGB", (900, 260), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=40)
+    draw.text((30, 40), "Order 4471 refunded", fill="black", font=font)
+    draw.text((30, 140), "Amount 129.99 GBP", fill="black", font=font)
+    out = io.BytesIO()
+    pdf = canvas.Canvas(out, pagesize=A4)
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(50, HEIGHT - 80, "Support ticket summary with the payment screenshot below.")
+    pdf.drawImage(ImageReader(image), 50, HEIGHT - 300, 450, 130)
+    pdf.showPage()
+    pdf.save()
+    return out.getvalue()

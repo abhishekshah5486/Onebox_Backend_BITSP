@@ -17,6 +17,7 @@ from onebox_rag.config import Settings
 from onebox_rag.docling.config import load_docling_settings
 from onebox_rag.docling.service import create_docling_app
 from onebox_rag.parsers.libreoffice import convert_with_libreoffice
+from tests.pdf_samples import text_in_picture
 from tests.test_ingest_int import Json, parsed, settled, upload, wait_for
 from tests.test_pdf_routing import make_pdf
 from tests.tokens import bearer, fake_verifier
@@ -132,3 +133,16 @@ def test_only_the_rag_service_may_call_it(docling_url: str) -> None:
         f"{docling_url}/convert", files={"file": ("a.pdf", b"%PDF")}, data={"target": "pdf"}
     )
     assert response.status_code == 401
+
+
+def test_reads_text_inside_pictures_only_with_ocr_on() -> None:
+    from onebox_rag.docling.convert import ConvertOptions, convert_document
+
+    def texts(ocr: bool) -> list[str]:
+        options = ConvertOptions("accurate", 1.0, 600, "soffice", ocr=ocr)
+        return [
+            t["text"] for t in convert_document(text_in_picture(), "pdf", None, options)["texts"]
+        ]
+
+    assert not any("4471" in t for t in texts(False))
+    assert any("Order 4471 refunded" in t for t in texts(True))

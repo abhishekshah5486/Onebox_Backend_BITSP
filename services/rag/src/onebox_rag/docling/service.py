@@ -28,6 +28,7 @@ def options_from(settings: DoclingSettings) -> ConvertOptions:
         images_scale=settings.DOCLING_IMAGES_SCALE,
         timeout_s=settings.DOCLING_TIMEOUT_S,
         soffice=settings.SOFFICE_PATH,
+        ocr=settings.DOCLING_OCR == "rapidocr",
     )
 
 

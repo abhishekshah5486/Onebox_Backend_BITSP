@@ -15,6 +15,8 @@ class ConvertOptions:
     images_scale: float
     timeout_s: float
     soffice: str
+    # RapidOCR over picture regions (scanned pages go to the RAG service's own OCR instead).
+    ocr: bool = False
 
 
 @lru_cache(maxsize=2)
@@ -22,6 +24,7 @@ def _converter(options: ConvertOptions) -> Any:
     from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import (
+        RapidOcrOptions,
         TableFormerMode,
         TableStructureOptions,
         ThreadedPdfPipelineOptions,
@@ -33,10 +36,11 @@ def _converter(options: ConvertOptions) -> Any:
         WordFormatOption,
     )
 
-    # No Docling OCR (scanned pages go to our OCR engine), accurate
+    # OCR off unless asked for (scanned pages go to our OCR engine), accurate
     # tables, picture images kept for descriptions, small batches to bound memory.
     pdf_options = ThreadedPdfPipelineOptions(
-        do_ocr=False,
+        do_ocr=options.ocr,
+        ocr_options=RapidOcrOptions(),
         do_table_structure=True,
         table_structure_options=TableStructureOptions(mode=TableFormerMode(options.table_mode)),
         generate_picture_images=True,

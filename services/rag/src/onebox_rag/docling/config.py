@@ -29,6 +29,8 @@ class DoclingSettings(BaseSettings):
     # Files waiting beyond the busy workers before callers get 429 and retry later.
     DOCLING_MAX_QUEUED: int = Field(default=4, ge=0)
     DOCLING_TABLE_MODE: Literal["accurate", "fast"] = "accurate"
+    # "rapidocr" reads text inside pictures in PDFs (screenshots, pasted scans); off by default.
+    DOCLING_OCR: Literal["off", "rapidocr"] = "off"
     DOCLING_IMAGES_SCALE: float = Field(default=1.0, gt=0, le=4)
     SOFFICE_PATH: str = Field(default_factory=_soffice)
 
