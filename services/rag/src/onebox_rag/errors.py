@@ -37,6 +37,11 @@ class NotFoundError(AppError):
     default_code = "NOT_FOUND"
 
 
+class UnavailableError(AppError):
+    status_code = 503
+    default_code = "UNAVAILABLE"
+
+
 def _body(code: str, message: str, details: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     error: dict[str, Any] = {"code": code, "message": message}
     if details is not None:

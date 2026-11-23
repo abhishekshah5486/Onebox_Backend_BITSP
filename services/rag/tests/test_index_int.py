@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient, models
 
 from onebox_rag.app import create_app
+from onebox_rag.auth import INTERNAL_TOKEN_HEADER
 from onebox_rag.config import Settings
 from onebox_rag.index.embed import sparse_query
 from tests.test_ingest_int import Json, upload, wait_for
@@ -137,3 +138,52 @@ def test_indexes_blocks_as_hybrid_points_and_forgets_deleted_content(
     assert client.delete(f"/rag/records/{doc['id']}", headers=bearer("u1")).status_code == 204
     left, _ = qdrant.scroll(COLLECTION, scroll_filter=models.Filter(**content), limit=50)
     assert left == []
+
+
+SALES = b"region,revenue\nnorth,120\nsouth,95\neast,80\n"
+
+
+def test_retrieves_cited_passages_and_reads_records_in_pages(client: TestClient) -> None:
+    policy, sales = upload(client, ("policy.md", POLICY), ("sales.csv", SALES), kb="handbook")
+    [other] = upload(client, ("other.md", b"# Parcels\n\nParcelforce islands note."), kb="misc")
+    for record in (policy, sales, other):
+        assert wait_for(client, record["id"], completed, timeout_s=120)["status"] == "completed"
+
+    def retrieve(**body: object) -> list[Json]:
+        response = client.post("/rag/retrieve", json=body, headers=bearer("u1"))
+        assert response.status_code == 200, response.text
+        return list(response.json()["chunks"])
+
+    [first, *_] = retrieve(query="parcelforce islands", sourceIds=["handbook"])
+    assert "Parcelforce" in first["text"] and first["record"]["recordId"] == policy["id"]
+    assert first["citation"]["headingPath"] == ["Returns", "Shipping"]
+    assert {
+        c["record"]["recordId"] for c in retrieve(query="parcelforce", recordIds=[other["id"]])
+    } == {other["id"]}
+
+    table = next(
+        c
+        for c in retrieve(query="south revenue 95", sourceIds=["handbook"])
+        if c["kind"] == "table"
+    )
+    assert "region: south, revenue: 95" in table["text"]
+    assert table["record"]["recordId"] == sales["id"]
+    assert retrieve(query="refunds", sourceIds=["nothing-here"]) == []
+    assert retrieve(query="refunds")
+    other_user = client.post("/rag/retrieve", json={"query": "refunds"}, headers=bearer("u2"))
+    assert other_user.json()["chunks"] == []
+
+    page = client.get(f"/rag/records/{sales['id']}/read?max=2", headers=bearer("u1")).json()
+    assert [b["text"] for b in page["blocks"]] == [
+        "region | revenue",
+        "region: north, revenue: 120",
+    ]
+    assert page["next"] == 2 and page["groups"][0]["type"] == "table"
+    rest = client.get(f"/rag/records/{sales['id']}/read?start=2", headers=bearer("u1")).json()
+    assert rest["next"] is None and len(rest["blocks"]) == 2
+
+    internal = {"query": "parcelforce", "userId": "u1"}
+    assert client.post("/internal/rag/retrieve", json=internal).status_code == 401
+    token = {INTERNAL_TOKEN_HEADER: client.app.state.internal_token}  # type: ignore[attr-defined]
+    response = client.post("/internal/rag/retrieve", json=internal, headers=token)
+    assert response.status_code == 200 and response.json()["chunks"]

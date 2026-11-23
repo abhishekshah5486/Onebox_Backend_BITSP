@@ -42,6 +42,10 @@ class ContentStore:
         doc = await self._contents.find_one({"_id": content_id})
         return Content.model_validate(doc) if doc else None
 
+    async def get_many(self, content_ids: list[str]) -> dict[str, Content]:
+        cursor = self._contents.find({"_id": {"$in": content_ids}})
+        return {doc["_id"]: Content.model_validate(doc) async for doc in cursor}
+
     async def update(self, content_id: str, now: datetime, **fields: Any) -> Content | None:
         doc = await self._contents.find_one_and_update(
             {"_id": content_id},
@@ -120,6 +124,21 @@ class RecordStore:
             Record.model_validate(d) async for d in self._records.find({"contentId": content_id})
         ]
 
+    async def scoped_contents(self, user_id: str, **scope: list[str] | None) -> list[str]:
+        """The contents of the user's records in the given sources, source types or records."""
+        query = _scope(user_id, scope)
+        return [str(c) for c in await self._records.distinct("contentId", query)]
+
+    async def holding(
+        self, user_id: str, content_ids: list[str], **scope: list[str] | None
+    ) -> dict[str, Record]:
+        """For each content, the user's newest record holding it (within the scope)."""
+        query = {**_scope(user_id, scope), "contentId": {"$in": content_ids}}
+        held: dict[str, Record] = {}
+        async for doc in self._records.find(query).sort("createdAt", DESCENDING):
+            held.setdefault(doc["contentId"], Record.model_validate(doc))
+        return held
+
     async def holds_content(self, content_id: str) -> bool:
         return await self._records.count_documents({"contentId": content_id}, limit=1) > 0
 
@@ -129,3 +148,14 @@ class RecordStore:
 
     async def delete(self, record_ids: list[str]) -> None:
         await self._records.delete_many({"_id": {"$in": record_ids}})
+
+
+SCOPE_FIELDS = {"source_ids": "sourceId", "source_types": "sourceType", "record_ids": "_id"}
+
+
+def _scope(user_id: str, scope: dict[str, list[str] | None]) -> Doc:
+    query: Doc = {"userId": user_id}
+    for name, values in scope.items():
+        if values is not None:
+            query[SCOPE_FIELDS[name]] = {"$in": values}
+    return query

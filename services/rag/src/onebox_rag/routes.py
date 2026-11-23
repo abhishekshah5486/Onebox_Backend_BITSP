@@ -1,17 +1,83 @@
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, Form, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
 
-from onebox_rag.auth import CurrentUser
-from onebox_rag.errors import NotFoundError
+from onebox_rag.auth import CurrentUser, require_internal
+from onebox_rag.errors import NotFoundError, UnavailableError
+from onebox_rag.index.embed import EmbeddingUnavailableError
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor, Source
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Record, SourceType, Status
 from onebox_rag.pipeline.parse import decode_blocks
+from onebox_rag.retrieval.read import read_page
+from onebox_rag.retrieval.service import Retriever, Scope
 
 SOURCE_ID = r"^[A-Za-z0-9_-]{1,64}$"
+DEFAULT_RETRIEVE_LIMIT, MAX_RETRIEVE_LIMIT = 8, 50
+
+
+class RetrieveQuery(BaseModel):
+    """A question over the user's records, optionally within some sources or records."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=DEFAULT_RETRIEVE_LIMIT, ge=1, le=MAX_RETRIEVE_LIMIT)
+    source_ids: list[str] | None = Field(default=None, alias="sourceIds", max_length=100)
+    source_types: list[SourceType] | None = Field(default=None, alias="sourceTypes")
+    record_ids: list[str] | None = Field(default=None, alias="recordIds", max_length=1000)
+    max_chunks_per_record: int | None = Field(
+        default=None, alias="maxChunksPerRecord", ge=1, le=MAX_RETRIEVE_LIMIT
+    )
+
+
+class InternalRetrieveQuery(RetrieveQuery):
+    user_id: str = Field(alias="userId", min_length=1)
+
+
+async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict[str, Any]:
+    retriever: Retriever | None = getattr(request.app.state, "retriever", None)
+    if retriever is None:
+        raise UnavailableError("Retrieval needs Qdrant and llm-proxy")
+    scope = Scope(
+        body.source_ids,
+        [str(t) for t in body.source_types] if body.source_types is not None else None,
+        body.record_ids,
+    )
+    try:
+        chunks = await retriever.retrieve(
+            user_id,
+            body.query,
+            limit=body.limit,
+            scope=scope,
+            max_per_record=body.max_chunks_per_record,
+        )
+    except EmbeddingUnavailableError as err:
+        raise UnavailableError("The embedding model is unavailable") from err
+    return {"chunks": chunks}
+
+
+async def _read(
+    request: Request, user_id: str, record_id: str, start: int, max_blocks: int | None
+) -> dict[str, Any]:
+    records: RecordStore = request.app.state.records
+    contents: ContentStore = request.app.state.contents
+    blobs: BlobStore = request.app.state.blobs
+    record = await records.get(user_id, record_id)
+    content = await contents.get(record.content_id) if record else None
+    if record is None or content is None or content.blocks_key is None:
+        raise NotFoundError("No parsed blocks for this record")
+    container = decode_blocks(await blobs.get(content.blocks_key))
+    size = max_blocks or request.app.state.settings.RAG_READ_MAX_BLOCKS
+    return {
+        "recordId": record.id,
+        "name": record.name,
+        "mimeType": record.mime_type,
+        **read_page(container, start, size),
+    }
 
 
 def record_json(record: Record, **extra: Any) -> dict[str, Any]:
@@ -88,11 +154,47 @@ def rag_router() -> APIRouter:
             **container.model_dump(by_alias=True, mode="json", exclude_none=True),
         }
 
+    @router.post("/retrieve")
+    async def retrieve(request: Request, user: CurrentUser, body: RetrieveQuery) -> dict[str, Any]:
+        return await _retrieve(request, user.user_id, body)
+
+    @router.get("/records/{record_id}/read")
+    async def read(
+        request: Request,
+        user: CurrentUser,
+        record_id: str,
+        start: Annotated[int, Query(ge=0)] = 0,
+        max_blocks: Annotated[int | None, Query(alias="max", ge=1, le=5000)] = None,
+    ) -> dict[str, Any]:
+        """The record's blocks in order, a page at a time; `next` is where to continue."""
+        return await _read(request, user.user_id, record_id, start, max_blocks)
+
     @router.delete("/records/{record_id}", status_code=204)
     async def delete_record(request: Request, user: CurrentUser, record_id: str) -> Response:
         ingestor: Ingestor = request.app.state.ingestor
         if not await ingestor.delete(user.user_id, record_id):
             raise NotFoundError("Record not found")
         return Response(status_code=204)
+
+    return router
+
+
+def internal_router() -> APIRouter:
+    """The same reads for other OneBox services (the agent service), for a named user."""
+    router = APIRouter(prefix="/internal/rag", dependencies=[Depends(require_internal)])
+
+    @router.post("/retrieve")
+    async def retrieve(request: Request, body: InternalRetrieveQuery) -> dict[str, Any]:
+        return await _retrieve(request, body.user_id, body)
+
+    @router.get("/records/{record_id}/read")
+    async def read(
+        request: Request,
+        record_id: str,
+        user_id: Annotated[str, Query(alias="userId", min_length=1)],
+        start: Annotated[int, Query(ge=0)] = 0,
+        max_blocks: Annotated[int | None, Query(alias="max", ge=1, le=5000)] = None,
+    ) -> dict[str, Any]:
+        return await _read(request, user_id, record_id, start, max_blocks)
 
     return router

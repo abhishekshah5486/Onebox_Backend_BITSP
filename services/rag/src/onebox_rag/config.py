@@ -120,6 +120,15 @@ class Settings(BaseSettings):
     RAG_INDEX_WINDOW_OVERLAP: int = Field(default=200, ge=0)
     RAG_INDEX_SENTENCE_MIN_WORDS: int = Field(default=100, ge=1)
 
+    # Retrieval: the dense leg's search beam and int8 rescore oversampling; the record cut
+    # (spread a page across records, off by default); tables shown whole up to this many
+    # cells; and blocks per page when a record is read whole.
+    RAG_SEARCH_HNSW_EF: int = Field(default=256, ge=0, le=4096)
+    RAG_SEARCH_OVERSAMPLING: float = Field(default=1.5, ge=1, le=4)
+    RAG_SEARCH_RECORD_CUT: bool = False
+    RAG_SMALL_TABLE_CELLS: int = Field(default=250, ge=0)
+    RAG_READ_MAX_BLOCKS: int = Field(default=200, ge=1, le=5000)
+
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked
     # size, compression ratio and entry count that mark a zip bomb.
     RAG_MAX_FILE_MB: int = Field(default=200, ge=1)

@@ -131,6 +131,15 @@ Following PipesHub's design:
   content, revision, block and text, so retries overwrite; a new revision is written before
   the old one's points are deleted, and deleting content deletes its points. The content is
   then `completed`.
+- **Retrieval.** `POST /rag/retrieve` (`{query, limit, sourceIds, sourceTypes, recordIds,
+maxChunksPerRecord}`) and `/internal/rag/retrieve` (with `userId`, for the agent service).
+  The query is embedded with the user's model and BM25; Qdrant searches both and fuses them
+  by rank. Hits become passages: a list item brings its list, table rows gather under their
+  table's summary, a hit on a small table (up to 250 cells) brings all of it, and the
+  paragraphs either side fill any room left. Each passage names its record and where it is
+  (page, sheet, row, heading path, blocks). `GET /rag/records/{id}/read?start=&max=` returns
+  a record's blocks in order, 200 at a time, with `next` to continue, for reading a whole
+  document or table.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
   JSON and JSON Lines, YAML, CSV and TSV, spreadsheets, PDF, Word, PowerPoint, images, and
   other text.

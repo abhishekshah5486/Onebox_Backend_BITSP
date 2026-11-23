@@ -13,7 +13,7 @@ from onebox_rag.errors import register_error_handlers
 from onebox_rag.health import HealthCheck, health_router
 from onebox_rag.index.embed import DenseEmbedder
 from onebox_rag.index.points import SplitSettings
-from onebox_rag.index.qdrant_store import QdrantStore
+from onebox_rag.index.qdrant_store import QdrantStore, SearchTuning
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
@@ -34,7 +34,9 @@ from onebox_rag.pipeline.routing import PdfLimits
 from onebox_rag.pipeline.tables import TableEnricher, TableSettings
 from onebox_rag.pipeline.vision import VisionClient, VisionSettings
 from onebox_rag.pipeline.worker import parse_worker, stage_worker
-from onebox_rag.routes import rag_router
+from onebox_rag.retrieval.service import RecordCut, Retriever, RetrieveSettings
+from onebox_rag.retrieval.units import UnitSettings
+from onebox_rag.routes import internal_router, rag_router
 
 logger = logging.getLogger("onebox_rag.app")
 PREPARE_RETRY_S = 5.0
@@ -82,6 +84,14 @@ def ocr_config_from(settings: Settings) -> OcrConfig:
         limits=OcrLimits(dpi=settings.RAG_OCR_DPI, max_pages=settings.RAG_OCR_MAX_PAGES),
         base_timeout_s=settings.RAG_PARSE_TIMEOUT_S,
         seconds_per_page=settings.RAG_OCR_SECONDS_PER_PAGE,
+    )
+
+
+def retrieve_settings_from(settings: Settings) -> RetrieveSettings:
+    return RetrieveSettings(
+        tuning=SearchTuning(settings.RAG_SEARCH_HNSW_EF, settings.RAG_SEARCH_OVERSAMPLING),
+        record_cut=RecordCut(enabled=settings.RAG_SEARCH_RECORD_CUT),
+        units=UnitSettings(small_table_cells=settings.RAG_SMALL_TABLE_CELLS),
     )
 
 
@@ -243,9 +253,13 @@ def create_app(
                 settings.RAG_EMBED_TIMEOUT_S,
                 settings.RAG_EMBED_CONCURRENCY,
             )
-            if store is not None and settings.RAG_RUN_WORKER
+            if store is not None
             else None
         )
+        if dense is not None and store is not None:
+            app.state.retriever = Retriever(
+                records, contents, blobs, dense, store, retrieve_settings_from(settings)
+            )
         indexer = (
             stage_worker(
                 settings,
@@ -253,7 +267,7 @@ def create_app(
                 IndexStage(contents, records, blobs, dense, store, split_settings_from(settings)),
                 settings.RAG_INDEX_CONCURRENCY,
             )
-            if dense is not None and store is not None
+            if dense is not None and store is not None and settings.RAG_RUN_WORKER
             else None
         )
         try:
@@ -290,4 +304,5 @@ def create_app(
     register_error_handlers(app)
     app.include_router(health_router())
     app.include_router(rag_router())
+    app.include_router(internal_router())
     return app
