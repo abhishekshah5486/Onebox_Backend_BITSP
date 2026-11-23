@@ -10,3 +10,9 @@ coverage/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+# Python (services/rag)
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

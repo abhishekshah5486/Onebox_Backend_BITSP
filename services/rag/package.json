@@ -1,0 +1,14 @@
+{
+  "name": "@onebox/rag-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Python service; these scripts let turbo run it alongside the TypeScript services.",
+  "scripts": {
+    "dev": "uv run --frozen python -m onebox_rag --reload",
+    "start": "uv run --frozen --no-dev python -m onebox_rag",
+    "typecheck": "uv run --frozen mypy",
+    "lint:py": "uv run --frozen ruff check . && uv run --frozen ruff format --check .",
+    "test:py": "uv run --frozen pytest",
+    "test:py:int": "uv run --frozen pytest -m integration"
+  }
+}
