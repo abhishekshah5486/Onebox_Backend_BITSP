@@ -7,6 +7,7 @@ dependencies = [
   "boto3==1.43.126",
   "bullmq==3.5.0",
   "certifi==2026.10.23",
+  "chardet==5.2.0",
   "charset-normalizer==3.5.2",
   "cryptography==50.0.2",
   "defusedxml==0.7.1",
@@ -35,6 +36,7 @@ dependencies = [
   "rapidocr==3.10.0",
   "redis==8.1.0",
   "selectolax==1.0.2",
+  "talon==1.4.4",
   "uvicorn==0.54.0",
 ]
 
@@ -65,6 +67,8 @@ packages = ["src/onebox_rag"]
 [tool.uv]
 # Every package, transitive ones too, must be at least two weeks old when resolved.
 exclude-newer = "2026-11-09T00:00:00Z"
+# talon asks for cchardet, which has no build for current Python; chardet stands in for it.
+override-dependencies = ["cchardet; python_version < '3'"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -96,7 +100,7 @@ files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*", "docling.*", "docling_core.*", "docx.*", "pptx.*", "cv2.*", "rapidocr.*", "onnxruntime.*", "openpyxl.*", "fastembed.*", "pysbd.*", "lingua.*"]
+module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*", "docling.*", "docling_core.*", "docx.*", "pptx.*", "cv2.*", "rapidocr.*", "onnxruntime.*", "openpyxl.*", "fastembed.*", "pysbd.*", "talon.*", "lingua.*"]
 ignore_missing_imports = true
 
 # CPU-only PyTorch on Linux (the cluster has no GPU); macOS wheels are CPU/MPS already.
