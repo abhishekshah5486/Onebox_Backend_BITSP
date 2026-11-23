@@ -225,6 +225,11 @@ choices; we offer those and a few more:
     mail's `/internal/messages` routes; latest reply only (talon, forwards kept whole); spam,
     trash and drafts left out; attachments as child records; sender, recipients and date on
     every passage.
+    11a. Email header points and date filters. **Done**: a header point per email (subject,
+    people, date, attachment names), returning the email whole when short and its opening when
+    long; created/modified date bounds on retrieval, as dates on every point (one Qdrant range
+    filter, the dates kept in step with the records by an upkeep step and a sweep), with the
+    reference's rules for reading a bound. Upload dates stated in the content come later.
 12. Evaluation corpus (every format, questions with expected passages, recall@k and MRR in CI)
     and hardening (retries, dead letters, metrics).
 

@@ -132,7 +132,8 @@ Following PipesHub's design:
   the old one's points are deleted, and deleting content deletes its points. The content is
   then `completed`.
 - **Retrieval.** `POST /rag/retrieve` (`{query, limit, sourceIds, sourceTypes, recordIds,
-maxChunksPerRecord}`) and `/internal/rag/retrieve` (with `userId`, for the agent service).
+maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`) and
+  `/internal/rag/retrieve` (with `userId`, for the agent service).
   The query is embedded with the user's model and BM25; Qdrant searches both and fuses them
   by rank. Hits become passages: a list item brings its list, table rows gather under their
   table's summary, a hit on a small table (up to 250 cells) brings all of it, and the
@@ -140,6 +141,16 @@ maxChunksPerRecord}`) and `/internal/rag/retrieve` (with `userId`, for the agent
   (page, sheet, row, heading path, blocks). `GET /rag/records/{id}/read?start=&max=` returns
   a record's blocks in order, 200 at a time, with `next` to continue, for reading a whole
   document or table.
+- **Dates.** Every record has a created and a modified date (an email's: when it was received;
+  an attachment's: its email's; an upload's: when it was uploaded), and every point carries
+  the dates of the records holding its content, so date bounds filter inside Qdrant's search.
+  A bound is `YYYY-MM-DD` (the whole day, UTC) or a datetime with its zone; a reversed range
+  or an "after" in the future is a 400. Records' changes reach their points at once, and a
+  sweep (`RAG_UPKEEP_SWEEP_S`) catches up any that failed.
+- **Email headers.** Each email also gets a header point (subject, sender, recipients, date,
+  attachment names), so "the email from Ana" finds it when its body never names her. A hit on
+  it returns the email whole up to `RAG_EMAIL_WORDS` (700) words, else its opening and a note
+  to read the record for the rest; body hits inside what it shows fold into it.
 - **Mail.** The mail service follows its stored mail (a MongoDB change stream: every email
   once, then each change) and puts a job per email on `rag-mail`; RAG reads the email and its
   attachments back from mail's `/internal` routes. An email is one record whichever folders
