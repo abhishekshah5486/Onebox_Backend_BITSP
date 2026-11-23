@@ -11,24 +11,28 @@ dependencies = [
   "cryptography==50.0.2",
   "defusedxml==0.7.1",
   "fastapi==0.162.1",
+  "fastembed==0.9.1",
   "httpx==0.28.1",
+  "lingua-language-detector==2.2.0",
   "markdown-it-py==4.2.0",
-  "pdfplumber==0.11.10",
   "msoffcrypto-tool==6.1.0",
   "numpy==2.5.4",
   "onnxruntime==1.31.1",
-  "openpyxl==3.1.5",
   "opencv-python-headless==5.0.0.93",
-  "pydantic==2.14.3",
+  "openpyxl==3.1.5",
+  "pdfplumber==0.11.10",
+  "puremagic==2.2.0",
   "pydantic-settings==2.16.2",
+  "pydantic==2.14.3",
   "pyjwt[crypto]==2.15.1",
   "pymongo==4.19.0",
-  "puremagic==2.2.0",
   "pypdf==7.0.0",
   "pypdfium2==5.15.0",
+  "pysbd==0.3.4",
   "python-multipart==0.0.33",
-  "rapidocr==3.10.0",
   "pyyaml==6.0.3",
+  "qdrant-client==1.20.0",
+  "rapidocr==3.10.0",
   "redis==8.1.0",
   "selectolax==1.0.2",
   "uvicorn==0.54.0",
@@ -92,7 +96,7 @@ files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*", "docling.*", "docling_core.*", "docx.*", "pptx.*", "cv2.*", "rapidocr.*", "onnxruntime.*", "openpyxl.*"]
+module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*", "docling.*", "docling_core.*", "docx.*", "pptx.*", "cv2.*", "rapidocr.*", "onnxruntime.*", "openpyxl.*", "fastembed.*", "pysbd.*", "lingua.*"]
 ignore_missing_imports = true
 
 # CPU-only PyTorch on Linux (the cluster has no GPU); macOS wheels are CPU/MPS already.
