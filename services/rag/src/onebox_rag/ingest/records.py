@@ -6,6 +6,7 @@ from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
+from onebox_rag.dates import DateBounds
 from onebox_rag.models import Content, Record
 
 Doc = dict[str, Any]
@@ -54,6 +55,13 @@ class ContentStore:
         )
         return Content.model_validate(doc) if doc else None
 
+    async def undated(self, limit: int = 1000) -> list[str]:
+        cursor = self._contents.find(
+            {"status": "completed", "indexCollection": {"$ne": None}, "pointsDated": {"$ne": True}},
+            {"_id": 1},
+        ).limit(limit)
+        return [str(doc["_id"]) async for doc in cursor]
+
     async def delete(self, content_id: str) -> None:
         await self._contents.delete_one({"_id": content_id})
 
@@ -77,6 +85,11 @@ class RecordStore:
         await self._records.create_index([("contentId", ASCENDING)])
         await self._records.create_index([("parentId", ASCENDING)], sparse=True)
         await self._records.create_index([("mail.copyIds", ASCENDING)], sparse=True)
+        # Records made before they had source dates take their own.
+        await self._records.update_many(
+            {"sourceCreatedAt": None},
+            [{"$set": {"sourceCreatedAt": "$createdAt", "sourceModifiedAt": "$createdAt"}}],
+        )
 
     async def insert(self, record: Record) -> tuple[Record, bool]:
         """Saves the record, or returns the one already there for the same item (and False)."""
@@ -131,13 +144,18 @@ class RecordStore:
         return [str(c) for c in await self._records.distinct("contentId", query)]
 
     async def holding(
-        self, user_id: str, content_ids: list[str], **scope: list[str] | None
-    ) -> dict[str, Record]:
-        """For each content, the user's newest record holding it (within the scope)."""
-        query = {**_scope(user_id, scope), "contentId": {"$in": content_ids}}
-        held: dict[str, Record] = {}
+        self,
+        user_id: str,
+        content_ids: list[str],
+        dates: DateBounds | None = None,
+        **scope: list[str] | None,
+    ) -> dict[str, list[Record]]:
+        """For each content, the user's records holding it (within the scope and dates), newest
+        first."""
+        query = {**_scope(user_id, scope), **_dated(dates), "contentId": {"$in": content_ids}}
+        held: dict[str, list[Record]] = {}
         async for doc in self._records.find(query).sort("createdAt", DESCENDING):
-            held.setdefault(doc["contentId"], Record.model_validate(doc))
+            held.setdefault(doc["contentId"], []).append(Record.model_validate(doc))
         return held
 
     async def by_external_id(
@@ -176,4 +194,18 @@ def _scope(user_id: str, scope: dict[str, list[str] | None]) -> Doc:
     for name, values in scope.items():
         if values is not None:
             query[SCOPE_FIELDS[name]] = {"$in": values}
+    return query
+
+
+def _dated(dates: DateBounds | None) -> Doc:
+    query: Doc = {}
+    if dates is None:
+        return query
+    for field, after, before in (
+        ("sourceCreatedAt", dates.created_after, dates.created_before),
+        ("sourceModifiedAt", dates.modified_after, dates.modified_before),
+    ):
+        bound = {k: v for k, v in (("$gte", after), ("$lte", before)) if v is not None}
+        if bound:
+            query[field] = bound
     return query

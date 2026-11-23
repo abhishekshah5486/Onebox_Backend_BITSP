@@ -14,6 +14,7 @@ from onebox_rag.health import HealthCheck, health_router
 from onebox_rag.index.embed import DenseEmbedder
 from onebox_rag.index.points import SplitSettings
 from onebox_rag.index.qdrant_store import QdrantStore, SearchTuning
+from onebox_rag.index.upkeep import PointUpkeep
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
@@ -93,7 +94,9 @@ def retrieve_settings_from(settings: Settings) -> RetrieveSettings:
     return RetrieveSettings(
         tuning=SearchTuning(settings.RAG_SEARCH_HNSW_EF, settings.RAG_SEARCH_OVERSAMPLING),
         record_cut=RecordCut(enabled=settings.RAG_SEARCH_RECORD_CUT),
-        units=UnitSettings(small_table_cells=settings.RAG_SMALL_TABLE_CELLS),
+        units=UnitSettings(
+            small_table_cells=settings.RAG_SMALL_TABLE_CELLS, email_words=settings.RAG_EMAIL_WORDS
+        ),
     )
 
 
@@ -125,6 +128,17 @@ async def _prepare_until_done(steps: list[Callable[[], Awaitable[None]]]) -> Non
         except Exception:
             logger.warning("startup step failed; retrying", exc_info=True)
             await asyncio.sleep(PREPARE_RETRY_S)
+
+
+async def _sweep_undated(upkeep: PointUpkeep, every_s: float) -> None:
+    while True:
+        try:
+            done = await upkeep.sync_undated()
+            if done:
+                logger.info("point dates synced", extra={"contents": done})
+        except Exception:
+            logger.warning("point upkeep sweep failed", exc_info=True)
+        await asyncio.sleep(every_s)
 
 
 def create_app(
@@ -160,6 +174,12 @@ def create_app(
             if store is not None and content.index_collection:
                 await store.delete_content(content.index_collection, content.id)
 
+        upkeep: PointUpkeep | None = None
+
+        async def changed(content_id: str, removed: list[str]) -> None:
+            if upkeep is not None:
+                await upkeep.sync(content_id, removed)
+
         ingestor = Ingestor(
             records,
             contents,
@@ -168,6 +188,7 @@ def create_app(
             limits_from(settings),
             index_queue=index_queue,
             forget=forget,
+            changed=changed,
         )
         app.state.records, app.state.contents, app.state.blobs = records, contents, blobs
         app.state.ingestor = ingestor
@@ -259,6 +280,7 @@ def create_app(
             else None
         )
         if dense is not None and store is not None:
+            upkeep = PointUpkeep(contents, records, store, dense)
             app.state.retriever = Retriever(
                 records, contents, blobs, dense, store, retrieve_settings_from(settings)
             )
@@ -279,16 +301,26 @@ def create_app(
             stage_worker(
                 settings,
                 settings.RAG_INDEX_QUEUE,
-                IndexStage(contents, records, blobs, dense, store, split_settings_from(settings)),
+                IndexStage(
+                    contents, records, blobs, dense, store, split_settings_from(settings), upkeep
+                ),
                 settings.RAG_INDEX_CONCURRENCY,
             )
             if dense is not None and store is not None and settings.RAG_RUN_WORKER
+            else None
+        )
+        # Points indexed before they carried dates, or whose upkeep failed, catch up.
+        sweep = (
+            asyncio.create_task(_sweep_undated(upkeep, settings.RAG_UPKEEP_SWEEP_S))
+            if upkeep is not None and settings.RAG_RUN_WORKER
             else None
         )
         try:
             yield
         finally:
             prepare.cancel()
+            if sweep is not None:
+                sweep.cancel()
             if worker is not None:
                 await worker.close()
             if indexer is not None:

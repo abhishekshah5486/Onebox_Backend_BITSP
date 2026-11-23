@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from onebox_rag.ingest.ingestor import Ingestor, Source
+from onebox_rag.ingest.ingestor import Ingestor, ItemInfo, Source
 from onebox_rag.ingest.records import RecordStore
 from onebox_rag.mail.client import MailClient
 from onebox_rag.mail.reply import latest_reply
@@ -69,6 +69,7 @@ class MailSource:
         if message is None:
             return  # every copy went meanwhile; their deletes follow
         source = Source(SourceType.MAIL, payload["accountId"])
+        info = _mail_info(payload["key"], copies, version, message)
         if record is None:
             body = latest_reply(message.get("htmlBody"), message.get("textBody") or "")
             if body is None:
@@ -82,10 +83,12 @@ class MailSource:
                 declared_mime_type=mime,
                 stream=io.BytesIO(body_bytes),
                 external_id=payload["key"],
+                # Its details from the start, so its header point is written with its points.
+                info=ItemInfo(info.received_at, info.received_at, info),
             )
             record = done.record
-        info = _mail_info(payload["key"], copies, version, message)
-        await self._set_mail(record, info)
+        else:
+            await self._set_mail(record, info)
         complete = await self._attachments(user_id, source, record, message)
         await self._set_mail(record, info.model_copy(update={"attachments_done": complete}))
         logger.info(
@@ -115,6 +118,7 @@ class MailSource:
                 stream=io.BytesIO(data),
                 external_id=external_id,
                 parent_id=parent.id,
+                info=ItemInfo(*parent.dates()),
             )
         return complete
 
@@ -153,4 +157,9 @@ def _mail_info(key: str, copies: list[str], version: int, message: dict[str, Any
         to=[a for a in map(address, message.get("to") or []) if a],
         cc=[a for a in map(address, message.get("cc") or []) if a],
         received_at=datetime.fromisoformat(received) if received else None,
+        attachment_names=[
+            a["filename"]
+            for a in message.get("attachments") or []
+            if a.get("filename") and not a.get("inline")
+        ],
     )

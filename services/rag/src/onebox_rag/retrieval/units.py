@@ -1,6 +1,8 @@
 """Search hits become units, the things a model reads and cites: a block; a list item brings
 its whole list; table rows gather under their table (its summary and the matched rows, in
-table order); a hit on a table's own point brings the whole table when it is small."""
+table order); a hit on a table's own point brings the whole table when it is small; a hit on an
+email's header brings the email (whole when short, else its opening), and hits inside what it
+shows fold into it."""
 
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -15,7 +17,7 @@ LIST_GROUPS = {GroupType.LIST, GroupType.ORDERED_LIST}
 @dataclass
 class Unit:
     content_id: str
-    kind: str  # "block", "list", "table" or "neighbour"
+    kind: str  # "block", "list", "table", "email" or "neighbour"
     block_index: int  # the first block it renders
     score: float
     text: str = ""
@@ -23,12 +25,16 @@ class Unit:
     # Block indices it renders, and for a neighbour those of the unit it was added for.
     blocks: list[int] = field(default_factory=list)
     neighbour_of: int | None = None
+    # The record a unit is about, when not any record holding the content (an email's header).
+    record_id: str | None = None
 
 
 @dataclass(frozen=True)
 class UnitSettings:
     # A table hit as a whole is shown whole up to this many cells (about 700 words).
     small_table_cells: int = 250
+    # An email hit by its header is shown whole up to this many words, else this much of it.
+    email_words: int = 700
 
 
 def build_units(
@@ -44,6 +50,17 @@ def build_units(
         if container is None:
             continue
         block_index, group_index = hit.payload.get("blockIndex"), hit.payload.get("groupIndex")
+        if hit.payload.get("kind") == "header":
+            key: Hashable = (content_id, "email")
+            if key in units:
+                _raise(units[key], hit.score)
+            else:
+                header = str(hit.payload.get("text") or "")
+                record_id = str(hit.payload.get("recordId") or "") or None
+                units[key] = _email_unit(
+                    container, content_id, header, record_id, hit.score, settings
+                )
+            continue
         if block_index is None and isinstance(group_index, int):
             _table_hit(units, rows, container, content_id, group_index, hit.score, settings)
             continue
@@ -85,7 +102,7 @@ def build_units(
         new = _table_unit(container, content_id, container.block_groups[table], sorted(found))
         new.score = max([*found.values(), unit.score if unit else 0.0])
         units[key] = new
-    return list(units.values())
+    return _fold_into_emails(list(units.values()))
 
 
 def rank(units: Iterable[Unit], limit: int, max_per_record: int | None = None) -> list[Unit]:
@@ -113,7 +130,7 @@ def add_neighbours(
     for unit in units:
         out.append(unit)
         container = containers.get(unit.content_id)
-        if container is None or unit.kind == "list" or not unit.blocks:
+        if container is None or unit.kind in {"list", "email"} or not unit.blocks:
             continue
         first, last = _span(container, unit)
         for index in (first - 1, last + 1):
@@ -178,6 +195,60 @@ def cut_by_record(
         if i not in chosen:
             take(i)
     return [hits[i] for i in sorted(chosen)]
+
+
+def _email_unit(
+    container: BlocksContainer,
+    content_id: str,
+    header: str,
+    record_id: str | None,
+    score: float,
+    settings: UnitSettings,
+) -> Unit:
+    lines: list[str] = []
+    shown: list[int] = []
+    words = 0
+    for block in container.blocks:
+        text = image_text(block) if block.type == BlockType.IMAGE else block.text()
+        if not text.strip():
+            continue
+        parent = _group(container, block.parent_index)
+        if parent is not None and parent.type in LIST_GROUPS:
+            text = f"- {text}"
+        count = len(text.split())
+        if words + count > settings.email_words:
+            if not shown:  # one long paragraph: its opening words
+                lines.append(" ".join(text.split()[: settings.email_words]))
+                shown.append(block.index)
+            lines.append("[The email continues; read the record for the rest.]")
+            break
+        lines.append(text)
+        shown.append(block.index)
+        words += count
+    body = "\n".join(lines)
+    return Unit(
+        content_id,
+        "email",
+        shown[0] if shown else 0,
+        score,
+        f"{header}\n\n{body}".strip(),
+        None,
+        shown,
+        record_id=record_id,
+    )
+
+
+def _fold_into_emails(units: list[Unit]) -> list[Unit]:
+    """A hit inside the part of an email its unit shows is that unit's, not one of its own."""
+    shown = {u.content_id: (u, set(u.blocks)) for u in units if u.kind == "email"}
+    kept = []
+    for unit in units:
+        email = shown.get(unit.content_id)
+        if unit.kind != "email" and email and unit.blocks and set(unit.blocks) <= email[1]:
+            _raise(email[0], unit.score)
+            continue
+        kept.append(unit)
+    return kept
 
 
 def _table_hit(

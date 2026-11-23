@@ -132,6 +132,10 @@ class Settings(BaseSettings):
     RAG_SEARCH_HNSW_EF: int = Field(default=256, ge=0, le=4096)
     RAG_SEARCH_OVERSAMPLING: float = Field(default=1.5, ge=1, le=4)
     RAG_SEARCH_RECORD_CUT: bool = False
+    # An email found by its subject, people or date is shown whole up to this many words.
+    # How often contents whose points lack their records' dates are looked for.
+    RAG_UPKEEP_SWEEP_S: float = Field(default=300, gt=0)
+    RAG_EMAIL_WORDS: int = Field(default=700, ge=50)
     RAG_SMALL_TABLE_CELLS: int = Field(default=250, ge=0)
     RAG_READ_MAX_BLOCKS: int = Field(default=200, ge=1, le=5000)
 

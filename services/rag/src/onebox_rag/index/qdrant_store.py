@@ -8,9 +8,13 @@ from typing import Any
 
 from qdrant_client import AsyncQdrantClient, models
 
+from onebox_rag.dates import DateBounds
 from onebox_rag.index.embed import EmbeddingModel, SparseVector
 
 DENSE, SPARSE = "dense", "sparse"
+# Payload fields date filters read, and the kind of an email's header point.
+CREATED, MODIFIED = "createdAt", "modifiedAt"
+HEADER = "header"
 UPSERT_BATCH = 256
 # RRF ties hits of equal rank, which Qdrant returns in any order; a few more are fetched and
 # ties broken by id, so the same query always ranks the same.
@@ -81,16 +85,21 @@ class QdrantStore:
                 # Another worker may have made it first.
                 if not await self._client.collection_exists(name):
                     raise
-            # Every search filters by user (Qdrant keeps each tenant's points together) and
-            # by content.
+            # Every search filters by user (Qdrant keeps each tenant's points together).
             await self._client.create_payload_index(
                 name,
                 "userId",
                 models.KeywordIndexParams(type=models.KeywordIndexType.KEYWORD, is_tenant=True),
             )
-            await self._client.create_payload_index(
-                name, "contentId", models.PayloadSchemaType.KEYWORD
-            )
+        # Also made for collections created before them; making one that exists is a no-op.
+        for field, schema in (
+            ("contentId", models.PayloadSchemaType.KEYWORD),
+            ("recordId", models.PayloadSchemaType.KEYWORD),
+            ("kind", models.PayloadSchemaType.KEYWORD),
+            (CREATED, models.PayloadSchemaType.DATETIME),
+            (MODIFIED, models.PayloadSchemaType.DATETIME),
+        ):
+            await self._client.create_payload_index(name, field, schema)
         self._ready.add(name)
         return name
 
@@ -140,6 +149,42 @@ class QdrantStore:
             wait=True,
         )
 
+    async def set_dates(
+        self, collection: str, content_id: str, created: list[str], modified: list[str]
+    ) -> None:
+        """The dates of the records holding a content, on its points (header points carry
+        their own email's)."""
+        await self._client.set_payload(
+            collection,
+            {CREATED: created, MODIFIED: modified},
+            points=models.Filter(
+                must=[_match("contentId", content_id)], must_not=[_match("kind", HEADER)]
+            ),
+            wait=True,
+        )
+
+    async def replace_headers(
+        self, collection: str, content_id: str, record_ids: list[str], points: list[StoredPoint]
+    ) -> None:
+        """Drops these records' header points, then writes the given ones."""
+        if record_ids:
+            await self._client.delete(
+                collection,
+                models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            _match("contentId", content_id),
+                            _match("kind", HEADER),
+                            models.FieldCondition(
+                                key="recordId", match=models.MatchAny(any=record_ids)
+                            ),
+                        ]
+                    )
+                ),
+                wait=True,
+            )
+        await self.upsert(collection, points)
+
     async def count(self, collection: str, content_id: str) -> int:
         result = await self._client.count(
             collection,
@@ -164,6 +209,7 @@ class QdrantStore:
         content_ids: list[str] | None,
         limit: int,
         tuning: SearchTuning,
+        dates: DateBounds | None = None,
     ) -> list[Hit]:
         """Dense and BM25 legs, each twice the limit deep and filtered where it searches, fused by
         reciprocal rank."""
@@ -174,6 +220,8 @@ class QdrantStore:
             must.append(
                 models.FieldCondition(key="contentId", match=models.MatchAny(any=content_ids))
             )
+        if dates is not None:
+            must += _date_conditions(dates)
         where = models.Filter(must=must)
         response = await self._client.query_points(
             collection,
@@ -213,3 +261,22 @@ class QdrantStore:
 
     async def close(self) -> None:
         await self._client.close()
+
+
+def _match(key: str, value: str) -> models.FieldCondition:
+    return models.FieldCondition(key=key, match=models.MatchValue(value=value))
+
+
+def _date_conditions(dates: DateBounds) -> list[models.Condition]:
+    """A point passes when one of its dates is in range (a content shared by several records
+    carries all their dates)."""
+    conditions: list[models.Condition] = []
+    for key, after, before in (
+        (CREATED, dates.created_after, dates.created_before),
+        (MODIFIED, dates.modified_after, dates.modified_before),
+    ):
+        if after is not None or before is not None:
+            conditions.append(
+                models.FieldCondition(key=key, range=models.DatetimeRange(gte=after, lte=before))
+            )
+    return conditions

@@ -7,6 +7,7 @@ from typing import Any
 from onebox_rag.index.embed import DenseEmbedder, EmbeddingUnavailableError, sparse_documents
 from onebox_rag.index.points import PointText, SplitSettings, point_texts
 from onebox_rag.index.qdrant_store import QdrantStore, StoredPoint
+from onebox_rag.index.upkeep import PointUpkeep
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import TERMINAL, Content, Stage, Status
@@ -28,9 +29,11 @@ class IndexStage:
         dense: DenseEmbedder,
         store: QdrantStore,
         split: SplitSettings,
+        upkeep: PointUpkeep | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._contents, self._records, self._blobs = contents, records, blobs
+        self._upkeep = upkeep
         self._dense, self._store, self._split, self._now = dense, store, split, now
 
     async def run(self, content_id: str, revision: int, *, final_attempt: bool) -> None:
@@ -71,7 +74,16 @@ class IndexStage:
             index_collection=collection,
             embedding_model=model.id,
             point_count=len(points),
+            points_dated=False,
         )
+        if self._upkeep is not None:
+            try:
+                await self._upkeep.sync(content_id)
+            except Exception:
+                # Searchable already; its dates and header points follow on the next sweep.
+                logger.warning(
+                    "point upkeep failed", extra={"contentId": content_id}, exc_info=True
+                )
         logger.info(
             "indexed",
             extra={"contentId": content_id, "points": len(points), "collection": collection},

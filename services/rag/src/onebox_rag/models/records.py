@@ -77,6 +77,8 @@ class Content(CamelModel):
     index_collection: str | None = None
     embedding_model: str | None = None
     point_count: int | None = None
+    # Its points carry its records' dates (and emails' header points are written).
+    points_dated: bool = False
     revision: int = 1
     status: Status
     stage: Stage | None = Stage.PARSE
@@ -105,6 +107,8 @@ class MailInfo(CamelModel):
     to: list[Address] = Field(default_factory=list)
     cc: list[Address] = Field(default_factory=list)
     received_at: datetime | None = None
+    # Files sent with it (not pictures inline in the body), named in its header point.
+    attachment_names: list[str] = Field(default_factory=list)
     # Every attachment has its record (one that failed to download is tried again).
     attachments_done: bool = False
 
@@ -133,3 +137,11 @@ class Record(CamelModel):
     created_at: datetime
     updated_at: datetime
     mail: MailInfo | None = None
+    # What date filters read: when the item was written (an email received, a file uploaded)
+    # and last changed in its source. Set on every new record.
+    source_created_at: datetime | None = None
+    source_modified_at: datetime | None = None
+
+    def dates(self) -> tuple[datetime, datetime]:
+        created = self.source_created_at or self.created_at
+        return created, self.source_modified_at or created

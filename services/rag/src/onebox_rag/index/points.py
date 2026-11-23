@@ -20,6 +20,7 @@ class PointKind(StrEnum):
     SENTENCE = "sentence"  # one sentence of a long block, for precise matches
     WINDOW = "window"  # part of a block too long to embed whole
     TABLE = "table"  # a table's summary and columns
+    HEADER = "header"  # an email's subject, people and date
 
 
 @dataclass(frozen=True)

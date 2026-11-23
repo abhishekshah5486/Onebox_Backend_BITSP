@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, Up
 from pydantic import BaseModel, ConfigDict, Field
 
 from onebox_rag.auth import CurrentUser, require_internal
+from onebox_rag.dates import parse_bounds
 from onebox_rag.errors import NotFoundError, UnavailableError
 from onebox_rag.index.embed import EmbeddingUnavailableError
 from onebox_rag.ingest.blobs import BlobStore
@@ -32,6 +33,12 @@ class RetrieveQuery(BaseModel):
     max_chunks_per_record: int | None = Field(
         default=None, alias="maxChunksPerRecord", ge=1, le=MAX_RETRIEVE_LIMIT
     )
+    # YYYY-MM-DD (the whole day) or a datetime with its zone; an email's dates are when it
+    # was received, an upload's when it was uploaded.
+    created_after: str | None = Field(default=None, alias="createdAfter", max_length=64)
+    created_before: str | None = Field(default=None, alias="createdBefore", max_length=64)
+    modified_after: str | None = Field(default=None, alias="modifiedAfter", max_length=64)
+    modified_before: str | None = Field(default=None, alias="modifiedBefore", max_length=64)
 
 
 class InternalRetrieveQuery(RetrieveQuery):
@@ -47,6 +54,12 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
         [str(t) for t in body.source_types] if body.source_types is not None else None,
         body.record_ids,
     )
+    dates = parse_bounds(
+        created_after=body.created_after,
+        created_before=body.created_before,
+        modified_after=body.modified_after,
+        modified_before=body.modified_before,
+    )
     try:
         chunks = await retriever.retrieve(
             user_id,
@@ -54,6 +67,7 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
             limit=body.limit,
             scope=scope,
             max_per_record=body.max_chunks_per_record,
+            dates=dates,
         )
     except EmbeddingUnavailableError as err:
         raise UnavailableError("The embedding model is unavailable") from err

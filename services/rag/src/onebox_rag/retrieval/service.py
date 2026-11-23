@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from onebox_rag.dates import DateBounds
 from onebox_rag.index.embed import DenseEmbedder, sparse_query
 from onebox_rag.index.points import citation_of
 from onebox_rag.index.qdrant_store import Hit, QdrantStore, SearchTuning, collection_name
@@ -88,7 +89,9 @@ class Retriever:
         limit: int,
         scope: Scope,
         max_per_record: int | None = None,
+        dates: DateBounds | None = None,
     ) -> list[dict[str, Any]]:
+        dates = dates if dates is not None and dates.given() else None
         content_ids = None
         if scope.given():
             content_ids = await self._records.scoped_contents(user_id, **scope.fields())
@@ -115,6 +118,7 @@ class Retriever:
             content_ids=content_ids,
             limit=fetch,
             tuning=self._settings.tuning,
+            dates=dates,
         )
         contents, containers = await self._load(hits)
         # Points of a revision being replaced are skipped: their block indices are its own.
@@ -130,23 +134,18 @@ class Retriever:
         ranked = rank(build_units(hits, containers, self._settings.units), limit, max_per_record)
         units = add_neighbours(ranked, containers, spare=limit - len(ranked))
         held = await self._records.holding(
-            user_id, list({u.content_id for u in units}), **scope.fields()
+            user_id, list({u.content_id for u in units}), dates, **scope.fields()
         )
+        cited = [(unit, record) for unit in units if (record := _record_for(unit, held))]
         # An attachment is cited with the email it came with.
         parents = {
             r.parent_id: await self._records.get(user_id, r.parent_id)
-            for r in held.values()
+            for _, r in cited
             if r.parent_id and r.mail is None
         }
         return [
-            _chunk(
-                unit,
-                held[unit.content_id],
-                containers[unit.content_id],
-                parents.get(held[unit.content_id].parent_id or ""),
-            )
-            for unit in units
-            if unit.content_id in held
+            _chunk(unit, record, containers[unit.content_id], parents.get(record.parent_id or ""))
+            for unit, record in cited
         ]
 
     async def _load(self, hits: list[Hit]) -> tuple[dict[str, Content], dict[str, BlocksContainer]]:
@@ -160,6 +159,15 @@ class Retriever:
 
         loaded = await asyncio.gather(*(blocks(c) for c in usable))
         return contents, {c.id: b for c, b in zip(usable, loaded, strict=True)}
+
+
+def _record_for(unit: Unit, held: dict[str, list[Record]]) -> Record | None:
+    """The newest record holding the unit's content, or for an email's header that email's
+    own record (left out when the scope or dates leave it out)."""
+    records = held.get(unit.content_id) or []
+    if unit.record_id is None:
+        return records[0] if records else None
+    return next((r for r in records if r.id == unit.record_id), None)
 
 
 def _current(hit: Hit, contents: dict[str, Content]) -> bool:
@@ -177,6 +185,8 @@ def _chunk(
         if group_cite is not None:
             cite = {"page": group_cite.page_number, "sheet": group_cite.sheet_name}
     where = unit.group_index if unit.kind in {"table", "list"} else unit.block_index
+    if unit.kind == "email":
+        where = 0
     return {
         # The same for the same passage across calls, so callers can dedupe and cache.
         "id": f"{record.id}:{unit.kind}:{where}",

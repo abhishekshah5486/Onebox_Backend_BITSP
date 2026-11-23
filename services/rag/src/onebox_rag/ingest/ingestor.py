@@ -13,6 +13,7 @@ from onebox_rag.ingest.inspect import Inspection, Limits, inspect_file
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Content, Record, SourceType, Stage, Status
+from onebox_rag.models.records import MailInfo
 from onebox_rag.parsers.base import ExtractedFile
 
 logger = logging.getLogger("onebox_rag.ingest")
@@ -31,6 +32,16 @@ class Ingested:
 class Source:
     type: SourceType
     id: str
+
+
+@dataclass(frozen=True)
+class ItemInfo:
+    """What the source knows of an item: when it was written and last changed (default: when
+    it arrived here), and an email's details."""
+
+    created_at: datetime | None = None
+    modified_at: datetime | None = None
+    mail: MailInfo | None = None
 
 
 def content_id(user_id: str, sha256: str) -> str:
@@ -63,11 +74,14 @@ class Ingestor:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         index_queue: IngestQueue | None = None,
         forget: Callable[[Content], Awaitable[None]] | None = None,
+        changed: Callable[[str, list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self._records, self._contents, self._blobs, self._queue = records, contents, blobs, queue
         self._limits, self._now = limits, now
         # Index jobs and indexed points of content that is deleted.
         self._index_queue, self._forget = index_queue, forget
+        # Told (content, removed record ids) when the records holding an indexed content change.
+        self._changed = changed
 
     async def ingest(
         self,
@@ -79,6 +93,7 @@ class Ingestor:
         stream: BinaryIO,
         external_id: str | None = None,
         parent_id: str | None = None,
+        info: ItemInfo | None = None,
     ) -> Ingested:
         content = await self.store(user_id, stream, name, declared_mime_type)
         return await self.add_record(
@@ -89,6 +104,7 @@ class Ingestor:
             declared_mime_type=declared_mime_type,
             external_id=external_id or content.sha256,
             parent_id=parent_id,
+            info=info,
         )
 
     async def store_extracted(self, user_id: str, file: ExtractedFile) -> Content:
@@ -145,8 +161,11 @@ class Ingestor:
         declared_mime_type: str | None,
         external_id: str,
         parent_id: str | None = None,
+        info: ItemInfo | None = None,
     ) -> Ingested:
         now = self._now()
+        info = info or ItemInfo()
+        created = info.created_at or now
         record = Record(
             id=str(uuid.uuid4()),
             user_id=user_id,
@@ -165,9 +184,12 @@ class Ingestor:
             reason=content.reason,
             created_at=now,
             updated_at=now,
+            mail=info.mail,
+            source_created_at=created,
+            source_modified_at=info.modified_at or created,
         )
-        saved, created = await self._records.insert(record)
-        if not created:
+        saved, inserted = await self._records.insert(record)
+        if not inserted:
             return Ingested(saved, duplicate=True)
         # The parse may have finished between reading the content and saving this record;
         # the worker only updates records that existed when it finished.
@@ -177,10 +199,12 @@ class Ingestor:
             if state != {"status": saved.status, "stage": saved.stage, "reason": saved.reason}:
                 saved = await self._records.update(saved.id, self._now(), **state) or saved
             await self.link_attachments(saved, latest)
+        await self._notify(content.id, [])
         return Ingested(saved, duplicate=False)
 
     async def link_attachments(self, parent: Record, content: Content) -> None:
         """Gives a record one child record per file inside its content (an email's attachments)."""
+        created, modified = parent.dates()
         for number, attachment in enumerate(content.attachments, start=1):
             child = await self._contents.get(attachment.content_id)
             if child is None:
@@ -193,6 +217,7 @@ class Ingestor:
                 declared_mime_type=attachment.mime_type,
                 external_id=f"{parent.external_id}/attachments/{number}",
                 parent_id=parent.id,
+                info=ItemInfo(created, modified),
             )
 
     async def delete(self, user_id: str, record_id: str) -> bool:
@@ -207,8 +232,21 @@ class Ingestor:
             pending += await self._records.children(user_id, item.id)
         await self._records.delete([item.id for item in doomed])
         for cid in dict.fromkeys(item.content_id for item in doomed):
-            await self.collect(cid)
+            if await self._records.holds_content(cid):
+                await self._notify(cid, [item.id for item in doomed if item.content_id == cid])
+            else:
+                await self.collect(cid)
         return True
+
+    async def _notify(self, content_id: str, removed: list[str]) -> None:
+        if self._changed is None:
+            return
+        try:
+            await self._changed(content_id, removed)
+        except Exception:
+            # The record change stands; the points catch up on the next sweep.
+            logger.warning("point upkeep failed", extra={"contentId": content_id}, exc_info=True)
+            await self._contents.update(content_id, self._now(), points_dated=False)
 
     async def collect(self, cid: str) -> None:
         """Deletes a content, its stored files and pending job once no record holds it."""

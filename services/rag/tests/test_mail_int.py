@@ -175,6 +175,31 @@ def test_keeps_emails_and_attachments_in_step_with_the_mailbox(
     if rates["id"] in by_record:
         assert by_record[rates["id"]]["attachedTo"]["recordId"] == email["id"]
 
+    # Found by who sent it, though the body never names her: the email whole, as it is short.
+    def ask(**extra: Any) -> list[Json]:
+        """Passages from this email and its attachment (other tests' uploads share the user)."""
+        body = {"query": "Ana acme", **extra}
+        chunks = client.post("/rag/retrieve", json=body, headers=bearer("u1")).json()["chunks"]
+        return [c for c in chunks if c["record"]["recordId"] in {email["id"], rates["id"]}]
+
+    found = until(lambda: [c for c in ask() if c["kind"] == "email"])
+    assert found[0]["record"]["recordId"] == email["id"]
+    assert "From: Ana <ana@acme.test>" in found[0]["text"]
+    assert "Attachments: rates.csv" in found[0]["text"]
+    assert "Parcelforce from Monday" in found[0]["text"]
+    # Received on 20 November: inside a bound on that day, outside one from the next.
+    assert ask(createdAfter="2026-11-20", createdBefore="2026-11-20")
+    assert ask(createdAfter="2026-11-21") == []
+    assert ask(modifiedBefore="2026-11-19") == []
+    # The attachment takes its email's dates.
+    rows = {"query": "islands 9.90 mainland", "createdBefore": "2026-11-20"}
+    dated = client.post("/rag/retrieve", json=rows, headers=bearer("u1")).json()["chunks"]
+    assert rates["id"] in {c["record"]["recordId"] for c in dated}
+    bad = client.post(
+        "/rag/retrieve", json={"query": "x", "createdAfter": "yesterday"}, headers=bearer("u1")
+    )
+    assert bad.status_code == 400
+
     # A copy in another folder: no new reading, only the copies change.
     reads = len(calls)
     send({**upsert, "version": 2, "messageIds": ["m-inbox", "m-label"]})
