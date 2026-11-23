@@ -25,5 +25,5 @@ def parse_worker(settings: Settings, stage: ParseStage) -> Worker:
     return Worker(
         settings.RAG_INGEST_QUEUE,
         process,
-        {"connection": settings.REDIS_URL, "concurrency": settings.RAG_PARSE_CONCURRENCY},
+        {"connection": settings.REDIS_URL, "concurrency": settings.RAG_PARSE_WORKERS},
     )

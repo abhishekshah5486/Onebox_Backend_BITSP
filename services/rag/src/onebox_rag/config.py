@@ -6,6 +6,8 @@ from typing import Annotated, Literal
 from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from onebox_rag.pipeline.pool import default_workers
+
 # The repo's shared .env, two levels above the service, like the TypeScript services read it.
 ROOT_ENV = Path(__file__).resolve().parents[4] / ".env"
 
@@ -50,7 +52,19 @@ class Settings(BaseSettings):
     RAG_INGEST_BACKOFF_MS: int = Field(default=5_000, ge=0)
     # Runs the parse worker inside the API process; off where it runs as its own deployment.
     RAG_RUN_WORKER: bool = True
-    RAG_PARSE_CONCURRENCY: int = Field(default=2, ge=1)
+    # Parse pool: worker processes (half the CPUs, at most 4), per-file time limit, memory cap
+    # per worker (enforced on Linux), and how many files a worker parses before it is replaced.
+    RAG_PARSE_WORKERS: int = Field(default_factory=default_workers, ge=1)
+    RAG_PARSE_TIMEOUT_S: float = Field(default=600, gt=0)
+    RAG_PARSE_MEMORY_MB: int = Field(default=4096, ge=0)
+    RAG_PARSE_WORKER_MAX_JOBS: int = Field(default=200, ge=0)
+
+    # PDF routing (PipesHub's defaults): scanned when this share of sampled pages needs OCR;
+    # Docling up to these pages and bytes, pdfplumber past them.
+    RAG_PDF_OCR_SAMPLE_PAGES: int = Field(default=30, ge=1)
+    RAG_PDF_OCR_PAGE_SHARE: float = Field(default=0.5, gt=0, le=1)
+    RAG_DOCLING_MAX_PAGES: int = Field(default=30, ge=1)
+    RAG_DOCLING_MAX_MB: int = Field(default=100, ge=1)
 
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked
     # size, compression ratio and entry count that mark a zip bomb.

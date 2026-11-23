@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field
 
@@ -63,7 +64,13 @@ class Content(CamelModel):
     # Gzipped BlocksContainer JSON, once parsed.
     blocks_key: str | None = None
     block_count: int | None = None
+    # Chosen once per revision and kept, so retries and re-indexes never re-decide.
     engine: str | None = None
+    engine_reason: str | None = None
+    # What inspection found (a PDF's pages, text layer, OCR share).
+    facts: dict[str, Any] | None = None
+    # Worker deaths (most likely out of memory) while parsing it: one retry, then it fails.
+    worker_deaths: int = 0
     revision: int = 1
     status: Status
     stage: Stage | None = Stage.PARSE

@@ -17,12 +17,34 @@ from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.logs import log_requests
 from onebox_rag.mongo import mongo_client
-from onebox_rag.pipeline.parse import ParseStage
+from onebox_rag.pipeline.parse import ParseStage, PdfInspection
+from onebox_rag.pipeline.pool import ParsePool
+from onebox_rag.pipeline.routing import PdfLimits
 from onebox_rag.pipeline.worker import parse_worker
 from onebox_rag.routes import rag_router
 
 logger = logging.getLogger("onebox_rag.app")
 PREPARE_RETRY_S = 5.0
+
+
+def pool_from(settings: Settings) -> ParsePool:
+    return ParsePool(
+        settings.RAG_PARSE_WORKERS,
+        timeout_s=settings.RAG_PARSE_TIMEOUT_S,
+        memory_mb=settings.RAG_PARSE_MEMORY_MB,
+        max_jobs_per_worker=settings.RAG_PARSE_WORKER_MAX_JOBS,
+    )
+
+
+def pdf_inspection_from(settings: Settings) -> PdfInspection:
+    return PdfInspection(
+        sample_pages=settings.RAG_PDF_OCR_SAMPLE_PAGES,
+        ocr_share=settings.RAG_PDF_OCR_PAGE_SHARE,
+        limits=PdfLimits(
+            docling_max_pages=settings.RAG_DOCLING_MAX_PAGES,
+            docling_max_bytes=settings.RAG_DOCLING_MAX_MB * 2**20,
+        ),
+    )
 
 
 def limits_from(settings: Settings) -> Limits:
@@ -83,9 +105,13 @@ def create_app(
                 [records.ensure_indexes, contents.ensure_indexes, blobs.ensure_bucket]
             )
         )
+        pool = pool_from(settings) if settings.RAG_RUN_WORKER else None
         worker = (
-            parse_worker(settings, ParseStage(contents, records, blobs, ingestor))
-            if settings.RAG_RUN_WORKER
+            parse_worker(
+                settings,
+                ParseStage(contents, records, blobs, ingestor, pool, pdf_inspection_from(settings)),
+            )
+            if pool is not None
             else None
         )
         try:
@@ -94,6 +120,8 @@ def create_app(
             prepare.cancel()
             if worker is not None:
                 await worker.close()
+            if pool is not None:
+                pool.close()
             await queue.close()
             await redis.aclose()
             await mongo.close()

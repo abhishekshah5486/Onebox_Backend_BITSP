@@ -12,6 +12,7 @@ from onebox_rag.app import create_app
 from onebox_rag.config import Settings
 from onebox_rag.ingest.blobs import BlobStore
 from tests.test_inspect import OOXML, archive, ooxml
+from tests.test_pdf_routing import make_pdf
 from tests.tokens import bearer, fake_verifier
 
 pytestmark = pytest.mark.integration
@@ -148,3 +149,19 @@ def test_users_only_see_their_records_and_deleting_frees_unshared_content(
     assert stored(), "the other record still holds this content"
     assert client.delete(f"/rag/records/{shared['id']}", headers=bearer("owner")).status_code == 204
     assert not stored()
+
+
+def test_inspects_pdfs_and_routes_them_to_an_engine(client: TestClient) -> None:
+    digital = make_pdf(["text", "text"])
+    scanned = make_pdf(["drawing", "drawing", "text"])
+    first, second = upload(client, ("terms.pdf", digital), ("scan.pdf", scanned), kb="pdfs")
+    first, second = wait_for(client, first["id"], settled), wait_for(client, second["id"], settled)
+    # Both wait for their engine's milestone, but were inspected and routed in the pool.
+    assert (first["status"], first["reason"]) == (
+        "file_type_not_supported",
+        "waiting for the docling engine",
+    )
+    assert (second["status"], second["reason"]) == (
+        "file_type_not_supported",
+        "waiting for the ocr engine",
+    )
