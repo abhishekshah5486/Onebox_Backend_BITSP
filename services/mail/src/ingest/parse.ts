@@ -29,7 +29,7 @@ export interface ParsedMessage {
 }
 
 const MAX_TEXT_CHARS = 200_000;
-export const TEXT_VERSION = 2;
+export const TEXT_VERSION = 3;
 
 function addresses(field: AddressObject | AddressObject[] | undefined): Address[] {
   const list = Array.isArray(field) ? field : field ? [field] : [];
@@ -66,7 +66,7 @@ export const readableText = (text: string) => (looksLikeHtml(text) ? htmlToText(
 // Invisible characters senders pad previews with (e.g. U+034F, U+FEFF, soft hyphens).
 const INVISIBLE = /\p{Default_Ignorable_Code_Point}/gu;
 // Plain-text links written as "Docs<https://…>".
-const BRACKETED_LINK = /<(?:https?|mailto):[^>\s]*>/gi;
+const BRACKETED_LINK = /<(?:https?|mailto):[^<>]*>/gi;
 
 export function makeSnippet(text: string): string {
   return decodeHTML(text)

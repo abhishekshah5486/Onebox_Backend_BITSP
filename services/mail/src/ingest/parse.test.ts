@@ -142,7 +142,9 @@ describe('makeSnippet', () => {
 
   it('leaves out links written as Text<https://…>', () => {
     expect(
-      makeSnippet('Google Developer Program<https://c.gle/ACT4xY> is here <mailto:a@b.c>'),
+      makeSnippet(
+        'Google Developer Program<https://c.gle/ACT4xY> is here <mailto:a@b.c> <https://u.com/ >',
+      ),
     ).toBe('Google Developer Program is here');
   });
 });
