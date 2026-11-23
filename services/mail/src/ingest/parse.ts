@@ -29,7 +29,7 @@ export interface ParsedMessage {
 }
 
 const MAX_TEXT_CHARS = 200_000;
-export const TEXT_VERSION = 3;
+export const TEXT_VERSION = 4;
 
 function addresses(field: AddressObject | AddressObject[] | undefined): Address[] {
   const list = Array.isArray(field) ? field : field ? [field] : [];
@@ -59,8 +59,10 @@ export function htmlToText(html: string): string {
 }
 
 // Some senders put their HTML in the plain-text part too.
-const looksLikeHtml = (text: string) =>
-  /<(!doctype|html|head|body|div|p|table|tr|td|span|br|a|img|style)\b[^>]*>/i.test(text);
+const TAGS = '!doctype|html|head|body|div|p|table|tr|td|span|br|a|img|style';
+const looksLikeHtml = (text: string) => new RegExp(`<(${TAGS})\\b[^>]*>`, 'i').test(text);
+// A tag left in the text anyway, even one the sender never closed.
+const STRAY_TAG = new RegExp(`</?(?:${TAGS})\\b[^>]*(?:>|$)`, 'gi');
 export const readableText = (text: string) => (looksLikeHtml(text) ? htmlToText(text) : text);
 
 // Invisible characters senders pad previews with (e.g. U+034F, U+FEFF, soft hyphens).
@@ -71,6 +73,7 @@ const BRACKETED_LINK = /<(?:https?|mailto):[^<>]*>/gi;
 export function makeSnippet(text: string): string {
   return decodeHTML(text)
     .replace(BRACKETED_LINK, ' ')
+    .replace(STRAY_TAG, ' ')
     .replace(INVISIBLE, '')
     .replace(/\s+/g, ' ')
     .trim()

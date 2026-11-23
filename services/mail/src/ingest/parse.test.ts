@@ -134,6 +134,13 @@ describe('makeSnippet', () => {
     expect(makeSnippet('Code: MAX\u034f\u00ad\ufeff\u200b to unlock')).toBe('Code: MAX to unlock');
   });
 
+  it('drops html tags left in plain text, even unclosed ones, but keeps other angle brackets', () => {
+    expect(
+      makeSnippet('All set to explore. <img src="https://t.example/x width="198" alt="Logo'),
+    ).toBe('All set to explore.');
+    expect(makeSnippet('Thanks <3 from <John> <br/>team')).toBe('Thanks <3 from <John> team');
+  });
+
   it('decodes entities in plain-text parts', () => {
     expect(makeSnippet('Thanks for applying&nbsp; We &amp; you')).toBe(
       'Thanks for applying We & you',
