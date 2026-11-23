@@ -89,6 +89,18 @@ class Settings(BaseSettings):
     RAG_DESCRIBE_IMAGES: bool = True
     RAG_DESCRIBE_MAX_IMAGES: int = Field(default=60, ge=0)
 
+    # Tables (spreadsheets and tables in documents): the user's model, through llm-proxy, finds
+    # a sheet's header rows, summarizes each table and writes its rows as sentences, for up to
+    # RAG_TABLE_LLM_ROWS rows per file; the rest keep "column: value" text. An empty
+    # RAG_LLM_PROXY_URL or RAG_TABLE_ENRICHMENT=false leaves every table plain.
+    RAG_LLM_PROXY_URL: str = "http://localhost:4006"
+    RAG_LLM_TIMEOUT_S: float = Field(default=180, gt=0)
+    RAG_TABLE_ENRICHMENT: bool = True
+    RAG_TABLE_LLM_ROWS: int = Field(default=1000, ge=0)
+    RAG_TABLE_ROW_BATCH: int = Field(default=50, ge=1, le=200)
+    RAG_TABLE_CONCURRENCY: int = Field(default=8, ge=1)
+    RAG_TABLE_MAX_OUTPUT_TOKENS: int = Field(default=8192, ge=256, le=32000)
+
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked
     # size, compression ratio and entry count that mark a zip bomb.
     RAG_MAX_FILE_MB: int = Field(default=200, ge=1)

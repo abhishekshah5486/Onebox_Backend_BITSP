@@ -21,10 +21,12 @@ from onebox_rag.mongo import mongo_client
 from onebox_rag.parsers.ocr.rapid import OcrLimits
 from onebox_rag.pipeline.describe import ImageDescriber
 from onebox_rag.pipeline.docling_client import DoclingClient
+from onebox_rag.pipeline.llm import LlmClient
 from onebox_rag.pipeline.ocr import OcrConfig, OcrProvider, OcrRunner, VisionCache
 from onebox_rag.pipeline.parse import ParseStage, PdfInspection
 from onebox_rag.pipeline.pool import ParsePool
 from onebox_rag.pipeline.routing import PdfLimits
+from onebox_rag.pipeline.tables import TableEnricher, TableSettings
 from onebox_rag.pipeline.vision import VisionClient, VisionSettings
 from onebox_rag.pipeline.worker import parse_worker
 from onebox_rag.routes import rag_router
@@ -158,6 +160,26 @@ def create_app(
             if vision is not None and settings.RAG_DESCRIBE_IMAGES
             else None
         )
+        llm = (
+            LlmClient(
+                settings.RAG_LLM_PROXY_URL, app.state.internal_token, settings.RAG_LLM_TIMEOUT_S
+            )
+            if pool is not None and settings.RAG_LLM_PROXY_URL and settings.RAG_TABLE_ENRICHMENT
+            else None
+        )
+        tables = (
+            TableEnricher(
+                llm,
+                TableSettings(
+                    max_llm_rows=settings.RAG_TABLE_LLM_ROWS,
+                    batch_rows=settings.RAG_TABLE_ROW_BATCH,
+                    concurrency=settings.RAG_TABLE_CONCURRENCY,
+                    max_output_tokens=settings.RAG_TABLE_MAX_OUTPUT_TOKENS,
+                ),
+            )
+            if llm is not None
+            else None
+        )
         worker = (
             parse_worker(
                 settings,
@@ -171,6 +193,7 @@ def create_app(
                     docling,
                     ocr,
                     describer,
+                    tables,
                 ),
             )
             if pool is not None
@@ -188,6 +211,8 @@ def create_app(
                 await docling.close()
             if vision is not None:
                 await vision.close()
+            if llm is not None:
+                await llm.close()
             await queue.close()
             await redis.aclose()
             await mongo.close()

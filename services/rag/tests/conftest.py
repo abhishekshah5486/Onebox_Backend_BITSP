@@ -28,6 +28,7 @@ def settings() -> Settings:
         BLOB_SECRET_KEY="testsecretkey",
         # Docling tests start their own; never reach one running in dev.
         RAG_DOCLING_URL="",
+        RAG_LLM_PROXY_URL="",
     )
 
 

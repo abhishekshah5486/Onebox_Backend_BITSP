@@ -31,6 +31,7 @@ from onebox_rag.pipeline.routing import (
     parser_for_engine,
     route_pdf,
 )
+from onebox_rag.pipeline.tables import TableEnricher
 
 logger = logging.getLogger("onebox_rag.parse")
 
@@ -65,11 +66,13 @@ class ParseStage:
         docling: DoclingClient | None = None,
         ocr: OcrRunner | None = None,
         describer: ImageDescriber | None = None,
+        tables: TableEnricher | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._contents, self._records, self._blobs = contents, records, blobs
         self._ingestor, self._pool, self._pdf, self._now = ingestor, pool, pdf, now
         self._docling, self._ocr, self._describer = docling, ocr, describer
+        self._tables = tables
 
     async def run(self, content_id: str, revision: int, *, final_attempt: bool) -> None:
         content = await self._contents.get(content_id)
@@ -281,6 +284,10 @@ class ParseStage:
             attachments.append(
                 Attachment(name=file.name, mime_type=child.mime_type, content_id=child.id)
             )
+        if self._tables is not None:
+            sentences = await self._tables.enrich(content.user_id, result.container)
+            if sentences:
+                logger.info("described rows", extra={"contentId": content.id, "rows": sentences})
         if self._describer is not None:
             described = await self._describer.describe(content.user_id, result.container)
             if described:
