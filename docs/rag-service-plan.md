@@ -102,11 +102,13 @@ The data model is source-agnostic from the start, so external connectors slot in
      or while it is down; vision-model OCR for pages the rest cannot read.
    - **DOCX, PPTX, HTML, Markdown:** Docling, with python-docx / BeautifulSoup fallbacks.
    - **DOC, PPT:** converted by LibreOffice to DOCX / PPTX first.
-   - **EPUB:** unpacked to its HTML chapters, then the HTML path.
+   - **EPUB:** unpacked to its HTML chapters, then the HTML path. **Done**: spine order, the
+     book's pictures inlined, DRM books reported as protected.
    - **XLSX, XLS, CSV:** openpyxl / pandas into tables, header rows found, one block per row with
      its headers.
    - **Images (PNG, JPG, WEBP, TIFF, HEIC, SVG):** OCR text plus a vision-model description; SVG
-     rasterised first.
+     rasterised first. **Done**, with AVIF; SVG checked for size, depth and reference
+     expansion before cairo draws it; pictures inline in HTML kept and described.
    - **EML:** headers and body as text; its attachments become their own records.
    - **TXT, JSON, YAML, code:** text blocks with format-aware splitting.
 4. **Enrich.** Image descriptions, table and sheet summaries, a sentence per spreadsheet row, a
