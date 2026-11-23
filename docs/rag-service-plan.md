@@ -17,7 +17,8 @@ structure and approach; we do not copy its files.
   settings (see Choices).
 - Their seams are OneBox's here: settings service instead of etcd, llm-proxy instead of their
   LLM gateway, our blob store, MongoDB instead of ArangoDB/Neo4j, BullMQ instead of Kafka.
-- Not in scope: connectors, the knowledge graph, entity resolution, agents and chat.
+- Not in scope here: connectors, the knowledge graph and entity resolution. Agents and chat live
+  in their own service (see Agent service below), which calls RAG like any other client.
 
 ## How PipesHub ingests multimodal documents
 
@@ -116,12 +117,61 @@ The data model is source-agnostic from the start, so external connectors slot in
    named vectors (`dense`, `sparse`) with payload `userId`, `sourceId`, `recordId` (and `kbId`
    for uploads), `blockIds`, `page`. Chunks keyed by content hash, so re-ingesting only embeds
    what changed; a re-index builds the new version, then swaps.
-7. **Retrieve.** Internal `/internal/rag/retrieve` for the reply drafter and `POST /rag/query`:
-   hybrid query (dense and sparse prefetch, RRF fusion in Qdrant), filters (user, source,
-   knowledge base, records), top-k, source diversity, optional rerank, neighbour-block
-   expansion, packing to a token budget, citations (record, page, block).
+7. **Retrieve.** `POST /rag/retrieve` (signed-in user) and `/internal/rag/retrieve` (other
+   services, for a given user), as PipesHub's retrieval does it:
+   - The query is embedded twice: the user's dense model and BM25. Qdrant runs both legs (each
+     `2 × limit` deep, the dense leg rescoring int8 hits at full precision with 1.5×
+     oversampling and `hnsw_ef` 256), fuses them with RRF, and ties are broken by id so the
+     same query always ranks the same. Filters: always the user; optionally knowledge bases,
+     sources or records.
+   - Optional record cut (off by default, as there): fetch 3× deeper, then keep at most
+     `max(4, limit / 6)` hits per record in the first half and give the rest to records not
+     yet represented, so one long file can't fill the page.
+   - Hits become units the model reads: a paragraph is itself; a list item brings its whole
+     list; table rows are gathered under their table (summary plus the matched rows, in table
+     order); a hit on a table's own point brings the whole table when it is small (≤ 250
+     cells), its summary otherwise. A block hit several ways (whole, sentence, window) keeps
+     its best score.
+   - Units are ranked by score and cut to the limit; spare room goes to the paragraph just
+     before and after each unit (around the whole table for a table), never taking a slot from
+     a real hit.
+   - Each chunk carries its record (id, name, type, knowledge base) and citation (page, sheet,
+     row, slide, line, heading path, block index); `maxChunksPerRecord` caps one record.
+   - Reading a record in pages: `/rag/records/{id}/read?start=&max=` returns blocks in order
+     (200 per page by default) with where to continue, for agents that need a whole document
+     or table (an average over every row, say).
+   - No reranker: PipesHub has none in retrieval either; one can be added behind a setting if
+     the evaluation set shows it helps. Packing passages into a token budget happens where the
+     prompt is built, in the agent service.
 
 Progress (`queued → parsing → indexing → ready | failed`) goes out on the realtime channel.
+
+## Agent service (separate)
+
+Agents and chat are a service of their own (`services/agent`), not part of RAG, so the same
+loop serves the reply drafter now and a chat over the user's own documents in the web app
+later (upload files, ask questions, get answers with citations). It follows PipesHub's agent
+loop:
+
+- **Loop:** a ReAct loop over the user's model through llm-proxy (tool calls), with a quick
+  mode for chat (retrieval prefetched in parallel with building the agent, so simple questions
+  answer in one turn with no tool call) and a plan-and-execute mode for longer tasks.
+- **Knowledge tools:** `search_knowledge` (RAG retrieve), `fetch_full_record` (RAG's paged
+  record read, with a continuation hint, for whole documents and tables), and later
+  `search_mail` (OneBox's own search).
+- **Exact numbers:** `evaluate_expression`, `date_difference`, `count_text` for any calculation
+  of more than one step; a locked-down Python sandbox (`run_code`) for aggregations over data,
+  such as averages over a table's rows.
+- **Answers:** citations to the chunks used (record, page, block), packing passages into the
+  model's token budget, images to multimodal models.
+- **Modes:** chat (internal search only), and the reply drafter (an email in, a draft with
+  sources out; autonomy rules decide whether it is sent).
+- **Streaming:** answers and tool progress over SSE, like PipesHub's `/chat/stream`.
+
+Built after RAG's retrieval (milestone 10) and the mail source (11), as milestones A1–A4:
+A1 service skeleton and the loop with `search_knowledge` + `fetch_full_record`; A2 calculator
+tools and citations; A3 chat API with streaming and history; A4 the reply drafter. The code
+sandbox comes after A4.
 
 ## Choices per step
 
@@ -129,17 +179,17 @@ Every pluggable step sits behind one interface with several providers, picked in
 `rag_config` (UI later). PipesHub offers OCR provider, embedding provider and vector database
 choices; we offer those and a few more:
 
-| Step                           | Choices                                                                                                                                                                 | Default                             |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| Scanned pages and images (OCR) | A free local model (a vision model served by Ollama, or RapidOCR through Docling), vision-model OCR with any multimodal model in llm-proxy, Azure Document Intelligence | A free local model                  |
-| Digital documents              | Docling, or pdfplumber + OpenCV only                                                                                                                                    | Docling, falling back automatically |
-| Image descriptions             | Any multimodal model in llm-proxy, or off                                                                                                                               | user's AI model                     |
-| Spreadsheet rows               | LLM row sentences, or plain "header: value" rows (no model calls)                                                                                                       | LLM row sentences                   |
-| Embedding model                | Any embedding model in llm-proxy (hosted, own key, or local through Ollama)                                                                                             | user's semantic-search model        |
-| Vector store                   | Qdrant, pgvector (both hybrid-capable); more later                                                                                                                      | OneBox Qdrant                       |
-| Chunking                       | Max tokens, overlap                                                                                                                                                     | 512, 64                             |
-| Retrieval                      | Top-k, hybrid on or off, fusion (RRF or weighted)                                                                                                                       | 8, on, RRF                          |
-| Reranker                       | Off, local cross-encoder (bge-reranker), Cohere, Voyage, Jina                                                                                                           | off                                 |
+| Step                                           | Choices                                                                                                                                                                 | Default                             |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Scanned pages and images (OCR)                 | A free local model (a vision model served by Ollama, or RapidOCR through Docling), vision-model OCR with any multimodal model in llm-proxy, Azure Document Intelligence | A free local model                  |
+| Digital documents                              | Docling, or pdfplumber + OpenCV only                                                                                                                                    | Docling, falling back automatically |
+| Image descriptions                             | Any multimodal model in llm-proxy, or off                                                                                                                               | user's AI model                     |
+| Spreadsheet rows                               | LLM row sentences, or plain "header: value" rows (no model calls)                                                                                                       | LLM row sentences                   |
+| Embedding model                                | Any embedding model in llm-proxy (hosted, own key, or local through Ollama)                                                                                             | user's semantic-search model        |
+| Vector store                                   | Qdrant, pgvector (both hybrid-capable); more later                                                                                                                      | OneBox Qdrant                       |
+| Chunking                                       | Max tokens, overlap                                                                                                                                                     | 512, 64                             |
+| Retrieval                                      | Top-k, hybrid on or off, fusion (RRF or weighted)                                                                                                                       | 8, on, RRF                          |
+| Reranker (later, if evaluation shows it helps) | Off, local cross-encoder (bge-reranker), Cohere, Voyage, Jina                                                                                                           | off                                 |
 
 ## Milestones (small commits, each with tests)
 
@@ -165,7 +215,8 @@ choices; we offer those and a few more:
    block-level points (sentences and windows for long blocks, a point per table), the user's
    embedding model through llm-proxy plus BM25, RAG's own `rag_<model>_<dims>` Qdrant
    collections. Per-user store and model choices come with the settings UI.
-10. Retrieval, packing, citations, optional reranker.
+10. Retrieval: hybrid search, units (lists, tables, small tables whole), neighbours,
+    citations, paged record reads.
 11. Mail source: backfill and live feed of all mail and attachments.
 12. Evaluation corpus (every format, questions with expected passages, recall@k and MRR in CI)
     and hardening (retries, dead letters, metrics).
