@@ -45,6 +45,7 @@ describe('defineUpstreams', () => {
       '/api/v1/ai',
       '/api/v1/events',
       '/api/v1/search',
+      '/api/v1/rag',
     ]);
     expect(others.every((u) => u.access === 'authenticated')).toBe(true);
   });

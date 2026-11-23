@@ -16,6 +16,7 @@ describe('loadGatewayConfig', () => {
       BILLING_SERVICE_URL: 'http://localhost:4009',
       REALTIME_SERVICE_URL: 'http://localhost:4010',
       SEARCH_SERVICE_URL: 'http://localhost:4011',
+      RAG_SERVICE_URL: 'http://localhost:4012',
     });
   });
 

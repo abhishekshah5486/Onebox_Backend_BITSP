@@ -103,5 +103,11 @@ export function defineUpstreams(config: GatewayConfig): Upstream[] {
       rewritePrefix: '/search',
       access: 'authenticated',
     },
+    {
+      prefix: '/api/v1/rag',
+      url: config.RAG_SERVICE_URL,
+      rewritePrefix: '/rag',
+      access: 'authenticated',
+    },
   ];
 }

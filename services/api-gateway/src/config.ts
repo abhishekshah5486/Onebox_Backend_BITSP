@@ -14,6 +14,7 @@ const schema = z.object({
   BILLING_SERVICE_URL: z.url().default('http://localhost:4009'),
   REALTIME_SERVICE_URL: z.url().default('http://localhost:4010'),
   SEARCH_SERVICE_URL: z.url().default('http://localhost:4011'),
+  RAG_SERVICE_URL: z.url().default('http://localhost:4012'),
 });
 
 export type GatewayConfig = z.infer<typeof schema>;
