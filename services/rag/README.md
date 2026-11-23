@@ -26,6 +26,9 @@ It needs LibreOffice (`soffice`) for DOC, RTF, ODT, PPT and ODP. Without it runn
 are read by the pdfplumber engine instead, and Word and PowerPoint files are retried and then
 fail as "the Docling service is unavailable" (`RAG_DOCLING_URL=`, empty, leaves those waiting).
 
+Indexing needs Qdrant (`docker compose --profile vector up -d qdrant`) and llm-proxy;
+`QDRANT_URL=` (empty) leaves parsed content waiting to be indexed.
+
 Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENCRYPTION_KEY`,
 `BLOB_ACCESS_KEY`, `BLOB_SECRET_KEY`, and optionally `BLOB_ENDPOINT`, `RAG_BLOB_BUCKET`, the
 `RAG_MAX_*` upload limits, `PORT`, `MONGO_DB`, `AUTH_SERVICE_URL`, `LOG_LEVEL` (all in
@@ -112,6 +115,19 @@ Following PipesHub's design:
   sentence. Up to `RAG_TABLE_LLM_ROWS` (1,000) rows per file get sentences; the rest, and any
   row the model leaves out or a failed call, keep "column: value" text. A user out of AI
   credits gets plain tables. `RAG_TABLE_ENRICHMENT=false` turns it off.
+- **Indexing.** Parsed content goes to the `rag-index` queue. Each block becomes a point
+  rather than fixed-size chunks: a paragraph, heading, list item, row sentence or image
+  description, plus one point per table (its summary and columns). A block of more than 100
+  words also gets a point per sentence (pysbd, in the language lingua detects for the
+  record), and one longer than `RAG_INDEX_MAX_BLOCK_CHARS` becomes overlapping 1,500
+  character windows instead. Points get a dense vector from the user's embedding model
+  through llm-proxy (not charged) and a BM25 sparse vector computed here (fastembed), and go
+  into RAG's own Qdrant collection for that model, `rag_<model>_<dims>` (never search's):
+  `dense` and `sparse` vectors (IDF from Qdrant), int8 quantization, on-disk storage, and the
+  user, content, revision, block, kind, text and citation in the payload. Point ids hash the
+  content, revision, block and text, so retries overwrite; a new revision is written before
+  the old one's points are deleted, and deleting content deletes its points. The content is
+  then `completed`.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
   JSON and JSON Lines, YAML, CSV and TSV, spreadsheets, PDF, Word, PowerPoint, images, and
   other text.

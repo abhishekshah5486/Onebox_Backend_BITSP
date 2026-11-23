@@ -161,7 +161,10 @@ choices; we offer those and a few more:
 8. Spreadsheets with header detection, summaries and row sentences. **Done**: CSV, XLSX/XLSM
    (openpyxl), XLS/ODS/XLSB (LibreOffice in the Docling service); every table, from any
    format, enriched through llm-proxy.
-9. Chunking, dense and sparse embeddings, RAG vector store settings, hybrid indexing.
+9. Chunking, dense and sparse embeddings, RAG vector store settings, hybrid indexing. **Done**:
+   block-level points (sentences and windows for long blocks, a point per table), the user's
+   embedding model through llm-proxy plus BM25, RAG's own `rag_<model>_<dims>` Qdrant
+   collections. Per-user store and model choices come with the settings UI.
 10. Retrieval, packing, citations, optional reranker.
 11. Mail source: backfill and live feed of all mail and attachments.
 12. Evaluation corpus (every format, questions with expected passages, recall@k and MRR in CI)
