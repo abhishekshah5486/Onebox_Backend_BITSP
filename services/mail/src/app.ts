@@ -8,6 +8,7 @@ import type { StorageService } from './storage/storage';
 import type { LabelService } from './mail/label-service';
 import type { MailService } from './mail/mail-service';
 import type { MailboxService } from './mail/mailbox-service';
+import { registerInternalMailRoutes } from './mail/internal-routes';
 import { registerMailRoutes } from './mail/routes';
 import type { ThreadActions } from './mail/thread-actions';
 
@@ -24,12 +25,15 @@ export interface AppDeps {
     compose?: ComposeService;
     verifyToken: TokenVerifier;
   };
+  // Stored mail for other services (RAG), behind the internal token.
+  internal?: Parameters<typeof registerInternalMailRoutes>[1];
 }
 
 export function buildApp(deps: AppDeps) {
   const app = createServer({ logger: deps.logger });
   registerHealthRoutes(app, deps.checks);
   if (deps.routes) registerMailRoutes(app, deps.routes);
+  if (deps.internal) registerInternalMailRoutes(app, deps.internal);
   if (deps.routes?.compose) {
     registerComposeRoutes(app, {
       compose: deps.routes.compose,

@@ -9,6 +9,7 @@ import {
   type IndexPayload,
   liveChannel,
   type MailboxOpPayload,
+  type RagMailPayload,
   type SendPayload,
 } from '@onebox/contracts';
 import { connectMongo } from '@onebox/db-mongo';
@@ -38,6 +39,7 @@ import { createThreadActions } from './mail/thread-actions';
 import { createChangesHandler } from './sync/apply-changes';
 import { labelWriter } from './sync/write-labels';
 import { enableThreadPreImages, startLiveFeed } from './feed/live-feed';
+import { startRagFeed } from './feed/rag-feed';
 import { startSearchFeed } from './feed/search-feed';
 import { refreshStoredText } from './ingest/refresh-text';
 import { backfillAttachmentRefs, migrateFolderRoles } from './threads/thread-store';
@@ -159,6 +161,20 @@ if (config.MAIL_ROLE !== 'api') {
     logger,
   });
   cleanups.push(live.close, searchFeed.close, indexProducer.close, embedProducer.close);
+  if (config.RAG_MAIL_FEED && internalToken) {
+    const ragProducer = createProducer<RagMailPayload>(QUEUES.ragMail, {
+      redisUrl: config.REDIS_URL,
+      logger,
+    });
+    const ragFeed = startRagFeed({
+      db: mongo.db,
+      messages: collections.messages,
+      redis,
+      producer: ragProducer,
+      logger,
+    });
+    cleanups.push(ragFeed.close, ragProducer.close);
+  }
   logger.info({ concurrency: config.INGEST_CONCURRENCY }, 'ingest worker started');
   void backfillAttachmentRefs(collections)
     .then((count) => count > 0 && logger.info({ count }, 'attachment lists added to older threads'))
@@ -200,5 +216,9 @@ const app = buildApp({
       verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
     },
   }),
+  ...(config.MAIL_ROLE !== 'worker' &&
+    internalToken && {
+      internal: { messages: collections.messages, attachments, internalToken },
+    }),
 });
 await startServer(app, { port: config.PORT, cleanups });

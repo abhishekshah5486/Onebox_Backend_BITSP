@@ -1,4 +1,4 @@
-import { envPort, loadConfig } from '@onebox/config';
+import { envBoolean, envPort, loadConfig } from '@onebox/config';
 import { blobConfigSchema } from '@onebox/blob-store';
 import { encryptionKeySchema } from '@onebox/crypto';
 import { z } from 'zod';
@@ -17,6 +17,9 @@ const schema = z.object({
   SETTINGS_SERVICE_URL: z.url().default('http://localhost:4004'),
   // Sending checks the account's owner here (needs CREDENTIALS_ENCRYPTION_KEY too).
   ACCOUNTS_SERVICE_URL: z.url().default('http://localhost:4002'),
+  // Feeds stored mail to the RAG service (its rag-mail queue); it reads bodies and attachments
+  // back through /internal (needs CREDENTIALS_ENCRYPTION_KEY too).
+  RAG_MAIL_FEED: envBoolean.default(true),
   ...blobConfigSchema,
 });
 
