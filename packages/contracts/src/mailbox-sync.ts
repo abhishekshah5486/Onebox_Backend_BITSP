@@ -112,6 +112,12 @@ export const mailboxChangePayloadSchema = z.discriminatedUnion('type', [
     add: z.array(path),
     remove: z.array(path).default([]),
   }),
+  // AI filled in a message's categories where the server gave none.
+  z.object({
+    type: z.literal('categorized'),
+    messageId: z.string().min(1),
+    categories: z.array(mailCategorySchema),
+  }),
   // How sending an outbox message ended: sent (its copy is in Sent) or failed for good.
   z.object({
     type: z.literal('sendResult'),

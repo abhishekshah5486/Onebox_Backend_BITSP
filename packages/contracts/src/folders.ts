@@ -41,6 +41,26 @@ export type MailCategory = (typeof MAIL_CATEGORIES)[number];
 
 export const mailCategorySchema = z.enum(MAIL_CATEGORIES);
 
+// What each category holds, as Gmail describes it; the AI fills categories in from these where
+// Gmail gives none (Gmail stopped tagging mail over IMAP in February 2026).
+export const MAIL_CATEGORY_DESCRIPTIONS: Record<MailCategory, string> = {
+  social:
+    'Messages from social networks, media-sharing sites, dating services and other social sites.',
+  promotions: 'Deals, offers, sales, newsletters and other marketing email from brands.',
+  updates:
+    'Automatic notifications from services and accounts: confirmations, alerts, statements, bills, security notices.',
+  forums: 'Messages from online groups, discussion boards and mailing lists.',
+  purchases: 'Orders, receipts, invoices, and shipping or delivery updates for things bought.',
+  travel:
+    'Flight, hotel, train, car rental and other trip bookings, itineraries and check-in reminders.',
+};
+
+// The categories a message shows under: Gmail's own when it gave any, else the AI's.
+export const categoriesOf = (doc: {
+  categories?: readonly MailCategory[] | null;
+  aiCategories?: readonly MailCategory[] | null;
+}): MailCategory[] => [...(doc.categories?.length ? doc.categories : (doc.aiCategories ?? []))];
+
 // The inbox tab a message shows under: its first tab category, else Primary.
 export const tabOf = (categories: readonly string[]): GmailCategory =>
   GMAIL_CATEGORIES.find((tab) => tab !== 'primary' && categories.includes(tab)) ?? 'primary';

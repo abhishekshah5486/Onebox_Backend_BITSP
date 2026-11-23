@@ -11,6 +11,8 @@ export const aiClassifyPayloadSchema = z.object({
   body: z.string().max(12_000),
   snippet: z.string().max(300),
   receivedAt: z.iso.datetime(),
+  // The server gave the message no categories, so the AI picks them too.
+  categorize: z.boolean().default(false),
 });
 
 export type AiClassifyPayload = z.infer<typeof aiClassifyPayloadSchema>;

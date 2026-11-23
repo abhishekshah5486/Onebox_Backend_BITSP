@@ -53,6 +53,13 @@ describe('mailbox ops', () => {
 });
 
 describe('mailbox changes', () => {
+  it('takes only known categories from the AI', () => {
+    const categorized = (categories: string[]) =>
+      mailboxChangePayloadSchema.safeParse({ type: 'categorized', messageId: 'm1', categories });
+    expect(categorized(['purchases', 'updates']).success).toBe(true);
+    expect(categorized(['receipts']).success).toBe(false);
+  });
+
   it('defaults snapshot flags and moved keepSource', () => {
     const snapshot = mailboxChangePayloadSchema.parse({
       type: 'snapshot',

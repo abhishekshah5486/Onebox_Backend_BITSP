@@ -34,6 +34,7 @@ export function aiJob(doc: MessageDoc) {
     body: freshText(doc.textBody),
     snippet: doc.snippet.slice(0, 300),
     receivedAt: doc.receivedAt.toISOString(),
+    categorize: !doc.categories?.length,
   };
   return createJobEnvelope({
     jobId: `classify-${doc._id}`,

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { FOLDER_ROLES, folderRoleSchema, mailboxKey, mailboxRoleSchema, tabOf } from './folders';
+import {
+  categoriesOf,
+  FOLDER_ROLES,
+  folderRoleSchema,
+  MAIL_CATEGORIES,
+  MAIL_CATEGORY_DESCRIPTIONS,
+  mailboxKey,
+  mailboxRoleSchema,
+  tabOf,
+} from './folders';
 
 describe('folder roles', () => {
   it('lists the folders OneBox syncs', () => {
@@ -20,5 +29,19 @@ describe('folder roles', () => {
   it('puts mail under its first tab category, else Primary', () => {
     expect(tabOf(['purchases', 'updates'])).toBe('updates');
     expect(tabOf(['travel'])).toBe('primary');
+  });
+});
+
+describe('categories', () => {
+  it("prefers Gmail's own categories, falling back to the AI's", () => {
+    expect(categoriesOf({ categories: ['social'], aiCategories: ['updates'] })).toEqual(['social']);
+    expect(categoriesOf({ categories: [], aiCategories: ['travel'] })).toEqual(['travel']);
+    expect(categoriesOf({})).toEqual([]);
+  });
+
+  it('describes every category', () => {
+    for (const category of MAIL_CATEGORIES) {
+      expect(MAIL_CATEGORY_DESCRIPTIONS[category].length).toBeGreaterThan(20);
+    }
   });
 });

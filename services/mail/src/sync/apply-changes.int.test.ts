@@ -181,6 +181,35 @@ describe('mailbox changes', () => {
     expect(await thread('Pricing question')).toMatchObject({ labels: [], aiLabels: [] });
   });
 
+  it('fills in categories Gmail left out, until Gmail tags the mail itself', async () => {
+    await put('Your flight to Pune', 7);
+    const [doc] = await collections.messages.find({ subject: 'Your flight to Pune' }).toArray();
+    await change({ type: 'categorized', messageId: doc!._id, categories: ['travel', 'updates'] });
+    expect(await thread('Your flight to Pune')).toMatchObject({
+      category: 'updates',
+      categories: ['travel', 'updates'],
+    });
+
+    const snapshot = (categories: Record<string, string>) =>
+      change({
+        type: 'snapshot',
+        ...inbox,
+        role: 'inbox',
+        uidNext: 8,
+        present: '7',
+        flags: [],
+        categories,
+      });
+    // A sync where Gmail tags nothing keeps the AI's; Gmail's own tags then win.
+    await snapshot({});
+    expect(await thread('Your flight to Pune')).toMatchObject({ category: 'updates' });
+    await snapshot({ promotions: '7' });
+    expect(await thread('Your flight to Pune')).toMatchObject({
+      category: 'promotions',
+      categories: ['promotions'],
+    });
+  });
+
   it('hands labels put on in OneBox to the mail server', async () => {
     await put('Invoice due', 6);
     const [doc] = await collections.messages.find({ subject: 'Invoice due' }).toArray();
