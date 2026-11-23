@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from redis.asyncio import Redis
@@ -17,10 +18,14 @@ from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.logs import log_requests
 from onebox_rag.mongo import mongo_client
+from onebox_rag.parsers.ocr.rapid import OcrLimits
+from onebox_rag.pipeline.describe import ImageDescriber
 from onebox_rag.pipeline.docling_client import DoclingClient
+from onebox_rag.pipeline.ocr import OcrConfig, OcrProvider, OcrRunner, VisionCache
 from onebox_rag.pipeline.parse import ParseStage, PdfInspection
 from onebox_rag.pipeline.pool import ParsePool
 from onebox_rag.pipeline.routing import PdfLimits
+from onebox_rag.pipeline.vision import VisionClient, VisionSettings
 from onebox_rag.pipeline.worker import parse_worker
 from onebox_rag.routes import rag_router
 
@@ -45,6 +50,31 @@ def pdf_inspection_from(settings: Settings) -> PdfInspection:
             docling_max_pages=settings.RAG_DOCLING_MAX_PAGES,
             docling_max_bytes=settings.RAG_DOCLING_MAX_MB * 2**20,
         ),
+    )
+
+
+def vision_from(settings: Settings) -> VisionClient | None:
+    if not settings.RAG_VISION_MODEL:
+        return None
+    return VisionClient(
+        VisionSettings(
+            base_url=settings.RAG_VISION_BASE_URL,
+            model=settings.RAG_VISION_MODEL,
+            api_key=settings.RAG_VISION_API_KEY,
+            timeout_s=settings.RAG_VISION_TIMEOUT_S,
+            max_tokens=settings.RAG_VISION_MAX_TOKENS,
+            concurrency=settings.RAG_VISION_CONCURRENCY,
+            retries=settings.RAG_VISION_RETRIES,
+        )
+    )
+
+
+def ocr_config_from(settings: Settings) -> OcrConfig:
+    return OcrConfig(
+        provider=OcrProvider(settings.RAG_OCR_PROVIDER),
+        limits=OcrLimits(dpi=settings.RAG_OCR_DPI, max_pages=settings.RAG_OCR_MAX_PAGES),
+        base_timeout_s=settings.RAG_PARSE_TIMEOUT_S,
+        seconds_per_page=settings.RAG_OCR_SECONDS_PER_PAGE,
     )
 
 
@@ -114,6 +144,20 @@ def create_app(
             if settings.RAG_DOCLING_URL
             else None
         )
+        vision = vision_from(settings) if pool is not None else None
+        cache = VisionCache(blobs)
+        ocr = (
+            OcrRunner(
+                pool, contents, ocr_config_from(settings), lambda: datetime.now(UTC), vision, cache
+            )
+            if pool is not None
+            else None
+        )
+        describer = (
+            ImageDescriber(vision, cache, settings.RAG_DESCRIBE_MAX_IMAGES)
+            if vision is not None and settings.RAG_DESCRIBE_IMAGES
+            else None
+        )
         worker = (
             parse_worker(
                 settings,
@@ -125,6 +169,8 @@ def create_app(
                     pool,
                     pdf_inspection_from(settings),
                     docling,
+                    ocr,
+                    describer,
                 ),
             )
             if pool is not None
@@ -140,6 +186,8 @@ def create_app(
                 pool.close()
             if docling is not None:
                 await docling.close()
+            if vision is not None:
+                await vision.close()
             await queue.close()
             await redis.aclose()
             await mongo.close()

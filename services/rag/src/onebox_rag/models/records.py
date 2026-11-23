@@ -71,6 +71,8 @@ class Content(CamelModel):
     facts: dict[str, Any] | None = None
     # Worker deaths (most likely out of memory) while parsing it: one retry, then it fails.
     worker_deaths: int = 0
+    # The OCR provider that read it (scans and images), kept for retries like the engine.
+    ocr_provider: str | None = None
     revision: int = 1
     status: Status
     stage: Stage | None = Stage.PARSE

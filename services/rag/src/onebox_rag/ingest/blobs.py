@@ -55,5 +55,13 @@ class BlobStore:
 
         return await asyncio.to_thread(read)
 
+    async def get_if_present(self, key: str) -> bytes | None:
+        try:
+            return await self.get(key)
+        except ClientError as err:
+            if err.response.get("Error", {}).get("Code") in {"404", "NoSuchKey"}:
+                return None
+            raise
+
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self._s3.delete_object, Bucket=self.bucket, Key=key)

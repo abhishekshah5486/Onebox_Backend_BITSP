@@ -8,6 +8,18 @@ from onebox_rag.parsers.pdf.pdfplumber_engine import parse_pdf_layout
 from onebox_rag.parsers.registry import Parser, parser_for
 
 PDF = "application/pdf"
+# Image files read by OCR (each frame of a TIFF or GIF as a page).
+IMAGE_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/tiff",
+        "image/bmp",
+        "image/x-ms-bmp",
+        "image/gif",
+    }
+)
 
 
 class PdfEngine(StrEnum):
@@ -15,7 +27,7 @@ class PdfEngine(StrEnum):
     DOCLING = "docling"
     # pdfplumber + OpenCV, for PDFs past Docling's limits or while it is down.
     PDFPLUMBER = "pdfplumber"
-    # Scanned pages through the OCR provider, a free local model by default (milestone 7).
+    # Scanned pages and image files through the OCR provider (RapidOCR by default).
     OCR = "ocr"
 
 

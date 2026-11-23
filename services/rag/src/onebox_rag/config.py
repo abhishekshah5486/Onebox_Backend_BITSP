@@ -69,6 +69,26 @@ class Settings(BaseSettings):
     RAG_DOCLING_URL: str = "http://localhost:4013"
     RAG_DOCLING_TIMEOUT_S: float = Field(default=900, gt=0)
 
+    # OCR for scanned PDFs and image files: "rapidocr" (free, local) or "vision" (the model
+    # below; without one it falls back to rapidocr). Pages render at 200 DPI.
+    RAG_OCR_PROVIDER: Literal["rapidocr", "vision"] = "rapidocr"
+    RAG_OCR_DPI: int = Field(default=200, ge=72, le=600)
+    RAG_OCR_MAX_PAGES: int = Field(default=500, ge=1)
+    # An OCR job may run this long on top of RAG_PARSE_TIMEOUT_S for each page.
+    RAG_OCR_SECONDS_PER_PAGE: float = Field(default=10, gt=0)
+
+    # A vision model behind an OpenAI-compatible API, for vision OCR and picture descriptions:
+    # a local Ollama by default; empty RAG_VISION_MODEL turns both off.
+    RAG_VISION_BASE_URL: str = "http://localhost:11434/v1"
+    RAG_VISION_MODEL: str = ""
+    RAG_VISION_API_KEY: str = ""
+    RAG_VISION_TIMEOUT_S: float = Field(default=360, gt=0)
+    RAG_VISION_MAX_TOKENS: int = Field(default=4096, ge=256)
+    RAG_VISION_CONCURRENCY: int = Field(default=10, ge=1)
+    RAG_VISION_RETRIES: int = Field(default=2, ge=0)
+    RAG_DESCRIBE_IMAGES: bool = True
+    RAG_DESCRIBE_MAX_IMAGES: int = Field(default=60, ge=0)
+
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked
     # size, compression ratio and entry count that mark a zip bomb.
     RAG_MAX_FILE_MB: int = Field(default=200, ge=1)

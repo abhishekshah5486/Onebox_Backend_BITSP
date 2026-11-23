@@ -1,4 +1,5 @@
 import asyncio
+import io
 import time
 from collections.abc import Callable, Iterator
 from email.message import EmailMessage
@@ -11,9 +12,9 @@ from fastapi.testclient import TestClient
 from onebox_rag.app import create_app
 from onebox_rag.config import Settings
 from onebox_rag.ingest.blobs import BlobStore
-from tests.pdf_samples import handbook
+from tests.pdf_samples import handbook, scanned
 from tests.test_inspect import OOXML, archive, ooxml
-from tests.test_pdf_routing import make_pdf
+from tests.test_ocr import picture
 from tests.tokens import bearer, fake_verifier
 
 pytestmark = pytest.mark.integration
@@ -158,15 +159,25 @@ def test_users_only_see_their_records_and_deleting_frees_unshared_content(
 
 
 def test_inspects_pdfs_and_routes_them_to_an_engine(client: TestClient) -> None:
-    scanned = make_pdf(["drawing", "drawing", "text"])
-    first, second = upload(client, ("handbook.pdf", handbook()), ("scan.pdf", scanned), kb="pdfs")
-    first, second = wait_for(client, first["id"], settled), wait_for(client, second["id"], settled)
-    # No Docling here, so the digital PDF falls back to pdfplumber; the scan waits for OCR.
-    assert parsed(first), first
-    blocks = client.get(f"/rag/records/{first['id']}/blocks", headers=bearer("u1")).json()
-    rows = [b["data"]["text"] for b in blocks["blocks"] if b["type"] == "table_row"]
-    assert "Plan: Pro, Return window: 60 days, Price: $12" in rows
-    assert (second["status"], second["reason"]) == (
-        "file_type_not_supported",
-        "waiting for the ocr engine",
+    photo = io.BytesIO()
+    picture("Invoice 2231 paid").save(photo, "PNG")
+    first, second, third = upload(
+        client,
+        ("handbook.pdf", handbook()),
+        ("scan.pdf", scanned(handbook())),
+        ("photo.png", photo.getvalue()),
+        kb="pdfs",
     )
+    first, second, third = (
+        wait_for(client, r["id"], settled, timeout_s=90) for r in (first, second, third)
+    )
+    # No Docling here, so the digital PDF falls back to pdfplumber; the scan and photo get OCR.
+    for record in (first, second, third):
+        assert parsed(record), record
+    for record in (first, second):
+        blocks = client.get(f"/rag/records/{record['id']}/blocks", headers=bearer("u1")).json()
+        rows = [b["data"]["text"] for b in blocks["blocks"] if b["type"] == "table_row"]
+        assert "Plan: Pro, Return window: 60 days, Price: $12" in rows
+    blocks = client.get(f"/rag/records/{third['id']}/blocks", headers=bearer("u1")).json()
+    assert blocks["engine"] == "ocr"
+    assert any("Invoice 2231 paid" in str(b.get("data")) for b in blocks["blocks"])

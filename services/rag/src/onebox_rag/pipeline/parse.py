@@ -17,9 +17,12 @@ from onebox_rag.parsers.office import office_format
 from onebox_rag.parsers.pdf.inspection import PdfFacts, inspect_pdf
 from onebox_rag.parsers.pdf.pdfplumber_engine import parse_pdf_layout
 from onebox_rag.parsers.registry import parser_for
+from onebox_rag.pipeline.describe import ImageDescriber
 from onebox_rag.pipeline.docling_client import DoclingClient, DoclingUnavailableError
+from onebox_rag.pipeline.ocr import OcrRunner
 from onebox_rag.pipeline.pool import ParsePool, ParseWorkerError
 from onebox_rag.pipeline.routing import (
+    IMAGE_TYPES,
     PDF,
     PdfEngine,
     PdfLimits,
@@ -59,11 +62,13 @@ class ParseStage:
         pool: ParsePool,
         pdf: PdfInspection,
         docling: DoclingClient | None = None,
+        ocr: OcrRunner | None = None,
+        describer: ImageDescriber | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._contents, self._records, self._blobs = contents, records, blobs
         self._ingestor, self._pool, self._pdf, self._now = ingestor, pool, pdf, now
-        self._docling = docling
+        self._docling, self._ocr, self._describer = docling, ocr, describer
 
     async def run(self, content_id: str, revision: int, *, final_attempt: bool) -> None:
         content = await self._contents.get(content_id)
@@ -119,6 +124,16 @@ class ParseStage:
     ) -> Callable[[], Awaitable[ParseResult]] | None:
         """How the engine parses this content, or None while that engine isn't available."""
         label = f"content {content.id}"
+        if engine == PdfEngine.OCR:
+            ocr = self._ocr
+            if ocr is None:
+                return None
+
+            async def with_ocr() -> ParseResult:
+                assert ocr is not None
+                return await ocr.parse(content, data)
+
+            return with_ocr
         office = office_format(content.mime_type)
         if engine == PdfEngine.DOCLING and office is not None:
             docling = self._docling
@@ -197,6 +212,8 @@ class ParseStage:
             route = route_pdf(facts, content.size_bytes, self._pdf.limits)
         elif office_format(content.mime_type) is not None:
             route = Route(PdfEngine.DOCLING, "format")
+        elif content.mime_type in IMAGE_TYPES:
+            route = Route(PdfEngine.OCR, "image")
         else:
             parser = parser_for(content.mime_type)
             if parser is None:
@@ -247,6 +264,10 @@ class ParseStage:
             attachments.append(
                 Attachment(name=file.name, mime_type=child.mime_type, content_id=child.id)
             )
+        if self._describer is not None:
+            described = await self._describer.describe(content.user_id, result.container)
+            if described:
+                logger.info("described images", extra={"contentId": content.id, "count": described})
         if not result.container.has_text() and not attachments:
             await self._settle(content, Status.EMPTY, reason="no text to index")
             return
