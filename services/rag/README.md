@@ -140,17 +140,28 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   paragraphs either side fill any room left. Each passage names its record and where it is
   (page, sheet, row, heading path, blocks). `GET /rag/records/{id}/read?start=&max=` returns
   a record's blocks in order, 200 at a time, with `next` to continue, for reading a whole
-  document or table.
+  document or table. With `query`, a record that fits `RAG_FOCUSED_READ_CHARS` (16,000) comes
+  whole; a longer one gives its opening, then the blocks matching the question (from a search
+  limited to it) with their neighbours, grown outward to fill the room, in order, and `gaps`
+  naming what was left out.
+- **What a search couldn't see.** The response carries `unindexed` (records whose names match
+  but whose content can't be searched yet), `incomplete` when part of the search didn't run
+  (the name lookup failed), and `notices` (`STILL_READING`: records still being read;
+  `DATES_PENDING`: records not yet searchable by date). Qdrant down or too slow is a 503
+  (`SEARCH_INDEX_UNREACHABLE` / `SEARCH_INDEX_TIMEOUT`), never an empty result.
 - **Dates.** Every record has a created and a modified date (an email's: when it was received;
   an attachment's: its email's; an upload's: when it was uploaded), and every point carries
   the dates of the records holding its content, so date bounds filter inside Qdrant's search.
   A bound is `YYYY-MM-DD` (the whole day, UTC) or a datetime with its zone; a reversed range
   or an "after" in the future is a 400. Records' changes reach their points at once, and a
   sweep (`RAG_UPKEEP_SWEEP_S`) catches up any that failed.
-- **Email headers.** Each email also gets a header point (subject, sender, recipients, date,
-  attachment names), so "the email from Ana" finds it when its body never names her. A hit on
-  it returns the email whole up to `RAG_EMAIL_WORDS` (700) words, else its opening and a note
-  to read the record for the rest; body hits inside what it shows fold into it.
+- **Titles.** Every record gets a title point the moment it is made, before its content is
+  read: an email's header (subject, sender, recipients, date, attachment names), else its name.
+  "The email from Ana" or "the budget sheet" then finds it though its text never says so. A
+  title hit on a read record returns it whole up to `RAG_TITLE_HIT_WORDS` (700) words, else
+  its opening and a note to read the rest; body hits inside what it shows fold into it. A
+  name search above a cosine floor (`RAG_TITLE_MIN_SCORE`, 0.45) lists records whose content
+  isn't searchable yet under `unindexed`.
 - **Mail.** The mail service follows its stored mail (a MongoDB change stream: every email
   once, then each change) and puts a job per email on `rag-mail`; RAG reads the email and its
   attachments back from mail's `/internal` routes. An email is one record whichever folders

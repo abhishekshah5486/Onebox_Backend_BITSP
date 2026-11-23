@@ -230,6 +230,10 @@ choices; we offer those and a few more:
     long; created/modified date bounds on retrieval, as dates on every point (one Qdrant range
     filter, the dates kept in step with the records by an upkeep step and a sweep), with the
     reference's rules for reading a bound. Upload dates stated in the content come later.
+    11b. Title search, focused reads and incomplete-search notices. **Done**: a title point per
+    record written when it is made (an email's header, else its name), listing unread records
+    found by name; `read?query=` returning a long record's best parts with its gaps named; a
+    503 when the index is down, and notices for records still being read or not yet dated.
 12. Evaluation corpus (every format, questions with expected passages, recall@k and MRR in CI)
     and hardening (retries, dead letters, metrics).
 
