@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from onebox_rag.app import create_app
 from onebox_rag.config import Settings
 from onebox_rag.ingest.blobs import BlobStore
+from tests.pdf_samples import handbook
 from tests.test_inspect import OOXML, archive, ooxml
 from tests.test_pdf_routing import make_pdf
 from tests.tokens import bearer, fake_verifier
@@ -92,8 +93,9 @@ def test_parses_an_email_and_its_attachments_once_per_content(client: TestClient
     assert set(by_name) == {"q3.csv", "scan.pdf"}
     csv_record = wait_for(client, by_name["q3.csv"]["id"], parsed)
     pdf_record = wait_for(client, by_name["scan.pdf"]["id"], settled)
-    # PDFs arrive with the Docling milestone.
-    assert pdf_record["status"] == "file_type_not_supported"
+    # Only a PDF header, nothing more: read (by pdfplumber, with no Docling here) and found broken.
+    assert pdf_record["status"] == "failed"
+    assert pdf_record["reason"].startswith("pdfplumber could not read it")
     rows = client.get(f"/rag/records/{csv_record['id']}/blocks", headers=bearer("u1")).json()[
         "blocks"
     ]
@@ -156,15 +158,14 @@ def test_users_only_see_their_records_and_deleting_frees_unshared_content(
 
 
 def test_inspects_pdfs_and_routes_them_to_an_engine(client: TestClient) -> None:
-    digital = make_pdf(["text", "text"])
     scanned = make_pdf(["drawing", "drawing", "text"])
-    first, second = upload(client, ("terms.pdf", digital), ("scan.pdf", scanned), kb="pdfs")
+    first, second = upload(client, ("handbook.pdf", handbook()), ("scan.pdf", scanned), kb="pdfs")
     first, second = wait_for(client, first["id"], settled), wait_for(client, second["id"], settled)
-    # Both wait for their engine's milestone, but were inspected and routed in the pool.
-    assert (first["status"], first["reason"]) == (
-        "file_type_not_supported",
-        "waiting for the docling engine",
-    )
+    # No Docling here, so the digital PDF falls back to pdfplumber; the scan waits for OCR.
+    assert parsed(first), first
+    blocks = client.get(f"/rag/records/{first['id']}/blocks", headers=bearer("u1")).json()
+    rows = [b["data"]["text"] for b in blocks["blocks"] if b["type"] == "table_row"]
+    assert "Plan: Pro, Return window: 60 days, Price: $12" in rows
     assert (second["status"], second["reason"]) == (
         "file_type_not_supported",
         "waiting for the ocr engine",

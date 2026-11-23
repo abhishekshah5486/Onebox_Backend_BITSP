@@ -15,6 +15,7 @@ from onebox_rag.parsers.base import ParseResult, UnreadableFileError
 from onebox_rag.parsers.docling_blocks import parse_docling_document
 from onebox_rag.parsers.office import office_format
 from onebox_rag.parsers.pdf.inspection import PdfFacts, inspect_pdf
+from onebox_rag.parsers.pdf.pdfplumber_engine import parse_pdf_layout
 from onebox_rag.parsers.registry import parser_for
 from onebox_rag.pipeline.docling_client import DoclingClient, DoclingUnavailableError
 from onebox_rag.pipeline.pool import ParsePool, ParseWorkerError
@@ -121,12 +122,23 @@ class ParseStage:
         office = office_format(content.mime_type)
         if engine == PdfEngine.DOCLING and office is not None:
             docling = self._docling
+            # A PDF can still be read without Docling, with pdfplumber.
+            is_pdf = office.docling == "pdf"
             if docling is None:
-                return None
+                return self._without_docling(content, data) if is_pdf else None
 
             async def with_docling() -> ParseResult:
                 assert docling is not None and office is not None
-                document = await docling.convert(data, office, name=content.id)
+                try:
+                    document = await docling.convert(data, office, name=content.id)
+                except DoclingUnavailableError as err:
+                    if not is_pdf:
+                        raise
+                    logger.warning(
+                        "docling unavailable; using pdfplumber",
+                        extra={"contentId": content.id, "why": str(err)},
+                    )
+                    return await self._without_docling(content, data)()
                 slides = office.docling == "pptx"
                 result: ParseResult = await self._pool.run(
                     parse_docling_document, document, slides, label=label
@@ -147,6 +159,24 @@ class ParseStage:
 
         return locally
 
+    def _without_docling(
+        self, content: Content, data: bytes
+    ) -> Callable[[], Awaitable[ParseResult]]:
+        async def with_pdfplumber() -> ParseResult:
+            # Recorded, so a retry of this revision uses the same engine.
+            await self._contents.update(
+                content.id,
+                self._now(),
+                engine=PdfEngine.PDFPLUMBER,
+                engine_reason="docling_unavailable",
+            )
+            result: ParseResult = await self._pool.run(
+                parse_pdf_layout, data, content.mime_type, label=f"content {content.id}"
+            )
+            return result
+
+        return with_pdfplumber
+
     async def _route(self, content: Content, data: bytes) -> Route | None:
         """The recorded route, or a new one recorded now."""
         if content.engine and content.engine_reason:
@@ -160,7 +190,7 @@ class ParseStage:
             except ParseWorkerError:
                 raise
             except Exception:
-                # Best effort, as in PipesHub: without facts the size decides.
+                # Best effort: without facts the size decides.
                 logger.warning(
                     "pdf inspection failed", extra={"contentId": content.id}, exc_info=True
                 )
