@@ -153,7 +153,7 @@ choices; we offer those and a few more:
 4. Sandboxed parse pool, PDF inspection and engine routing. **Done.**
 5. Docling service and the Docling path for PDF, DOCX and PPTX; LibreOffice conversion (both
    in a separate Docling image, as PipesHub runs it). **Done.**
-6. pdfplumber + OpenCV fallback.
+6. pdfplumber + OpenCV fallback. **Done.**
 7. OCR providers (free local model first, then llm-proxy image input for vision-model OCR and
    Azure DI); image descriptions.
 8. Spreadsheets with header detection, summaries and row sentences.
