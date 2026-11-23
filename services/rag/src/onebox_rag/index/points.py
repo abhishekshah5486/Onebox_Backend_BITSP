@@ -1,6 +1,7 @@
 """What gets embedded from a record's blocks: a point per block (paragraph, heading, list
 item, table row sentence, image description), one per table for its summary, and sentence
-points for long blocks; a block too long to embed whole becomes overlapping windows."""
+points for long blocks; a block too long to embed whole becomes overlapping windows. A
+table's rows and summary are led by its title."""
 
 import uuid
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from enum import StrEnum
 from typing import Any
 
 from onebox_rag.index.split import detect_language, split_sentences, windows
+from onebox_rag.index.texts import embed_text, table_titles, with_title, without_urls
 from onebox_rag.models.blocks import Block, BlocksContainer, BlockType, GroupType
 
 POINT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "onebox:rag-point")
@@ -48,15 +50,18 @@ class SplitSettings:
 def point_texts(container: BlocksContainer, settings: SplitSettings) -> list[PointText]:
     texts = [b.text() for b in container.blocks if b.type == BlockType.TEXT]
     language = detect_language(texts)
+    titles = table_titles(container.blocks, container.block_groups)
     points: list[PointText] = []
     for block in container.blocks:
         if _skipped(block):
             continue
-        text = block.text().strip()
+        text = embed_text(block).strip()
         if not text:
             continue
         payload = _citation(block)
         table = block.parent_index if block.type == BlockType.TABLE_ROW else None
+        if table is not None:
+            text = with_title(titles.get(table), text)
         if len(text) > settings.max_block_chars:
             points += [
                 PointText(piece, PointKind.WINDOW, block.index, table, payload)
@@ -75,8 +80,8 @@ def point_texts(container: BlocksContainer, settings: SplitSettings) -> list[Poi
             continue
         summary = group.semantic_metadata.summary if group.semantic_metadata else None
         columns = group.table_metadata.column_names if group.table_metadata else None
-        parts = [summary or "", f"Columns: {', '.join(columns)}" if columns else ""]
-        text = "\n".join(p for p in parts if p).strip()
+        body = embed_text_of(summary) or (f"Columns: {', '.join(columns)}" if columns else "")
+        text = with_title(titles.get(group.index), body) if body else ""
         if text:
             cite = group.citation_metadata
             payload = {"page": cite.page_number, "sheet": cite.sheet_name} if cite else {}
@@ -90,6 +95,10 @@ def point_texts(container: BlocksContainer, settings: SplitSettings) -> list[Poi
                 )
             )
     return points
+
+
+def embed_text_of(text: str | None) -> str:
+    return without_urls(text or "").strip()
 
 
 def _skipped(block: Block) -> bool:

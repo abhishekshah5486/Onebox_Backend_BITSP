@@ -117,7 +117,10 @@ Following PipesHub's design:
   credits gets plain tables. `RAG_TABLE_ENRICHMENT=false` turns it off.
 - **Indexing.** Parsed content goes to the `rag-index` queue. Each block becomes a point
   rather than fixed-size chunks: a paragraph, heading, list item, row sentence or image
-  description, plus one point per table (its summary and columns). A block of more than 100
+  description, plus one point per table (its summary). A table's rows and summary are
+  led by its title: the short lines right above it, and a sheet's name, so "Q3 sales
+  North revenue" finds a row that only says "Region: North, Revenue: 1200". URLs are
+  embedded as their host, and images as their description plus alt text. A block of more than 100
   words also gets a point per sentence (pysbd, in the language lingua detects for the
   record), and one longer than `RAG_INDEX_MAX_BLOCK_CHARS` becomes overlapping 1,500
   character windows instead. Points get a dense vector from the user's embedding model
