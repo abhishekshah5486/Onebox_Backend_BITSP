@@ -158,7 +158,9 @@ choices; we offer those and a few more:
    Azure DI); image descriptions. **Done** with RapidOCR (default) and any OpenAI-compatible
    vision model; Docling's own OCR behind a setting, off. Per-user provider settings and Azure
    DI come later.
-8. Spreadsheets with header detection, summaries and row sentences.
+8. Spreadsheets with header detection, summaries and row sentences. **Done**: CSV, XLSX/XLSM
+   (openpyxl), XLS/ODS/XLSB (LibreOffice in the Docling service); every table, from any
+   format, enriched through llm-proxy.
 9. Chunking, dense and sparse embeddings, RAG vector store settings, hybrid indexing.
 10. Retrieval, packing, citations, optional reranker.
 11. Mail source: backfill and live feed of all mail and attachments.

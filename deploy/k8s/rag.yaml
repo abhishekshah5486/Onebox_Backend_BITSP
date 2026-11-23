@@ -27,6 +27,7 @@ spec:
             - { name: RAG_PARSE_WORKERS, value: '1' }
             - { name: RAG_PARSE_MEMORY_MB, value: '1536' }
             - { name: RAG_DOCLING_URL, value: 'http://docling:4013' }
+            - { name: RAG_LLM_PROXY_URL, value: 'http://llm-proxy:4006' }
             - name: MONGO_URI
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: MONGO_URI } }
             - { name: BLOB_ENDPOINT, value: 'http://objects:8333' }

@@ -98,8 +98,23 @@ Following PipesHub's design:
 - **Image descriptions.** With a vision model set, up to `RAG_DESCRIBE_MAX_IMAGES` (60)
   pictures per file get a description (any text in them transcribed too), capped at 8,000
   characters; tiny, thin or icon-sized ones are skipped, and one that fails keeps its caption.
+- **Spreadsheets.** CSV and TSV, Excel (XLSX, XLSM; openpyxl, cached formula values), and
+  XLS, ODS and XLSB after the Docling service's LibreOffice turns them into XLSX. Each sheet
+  is a group; in it every rectangle of cells bounded by empty rows and columns is a table
+  (titles above it become text). Merged cells fill each cell they cover, dates and
+  percentages read as shown, and rows are cited by sheet, row and cell range; at most 20,000
+  rows per table. Header rows are only guessed at parse time, kept as flagged row blocks.
+- **Table enrichment.** Every table, from any format, goes to the user's model through
+  llm-proxy (`RAG_LLM_PROXY_URL`; billed and cached there): one call decides a sheet's
+  header rows (several rows join into "Group - Column" names), names unlabeled columns and
+  writes a summary; then rows go 50 at a time (`RAG_TABLE_ROW_BATCH`), each tagged with a
+  short key the answer must copy, so a skipped or reordered row can't take another's
+  sentence. Up to `RAG_TABLE_LLM_ROWS` (1,000) rows per file get sentences; the rest, and any
+  row the model leaves out or a failed call, keep "column: value" text. A user out of AI
+  credits gets plain tables. `RAG_TABLE_ENRICHMENT=false` turns it off.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
-  JSON and JSON Lines, YAML, CSV and TSV, and other text.
+  JSON and JSON Lines, YAML, CSV and TSV, spreadsheets, PDF, Word, PowerPoint, images, and
+  other text.
 
 ## Check
 
