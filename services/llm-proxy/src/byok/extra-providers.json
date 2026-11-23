@@ -7,11 +7,111 @@
     "doc": "https://docs.compactif.ai/",
     "env": ["MULTIVERSE_API_KEY"],
     "models": {
-      "glm-5-3": { "id": "glm-5-3", "name": "GLM 5.3 (CompactifAI)" },
-      "glm-5-2": { "id": "glm-5-2", "name": "GLM 5.2 (CompactifAI)" },
-      "quasar-1-2-358b": { "id": "quasar-1-2-358b", "name": "Quasar 1.2 358B" },
-      "carina-60b": { "id": "carina-60b", "name": "Carina 60B" },
-      "qwen-3-8-27b": { "id": "qwen-3-8-27b", "name": "Qwen 3.8 27B (CompactifAI)" }
+      "glm-5-3": {
+        "id": "glm-5-3",
+        "name": "GLM 5.3 (CompactifAI)"
+      },
+      "glm-5-2": {
+        "id": "glm-5-2",
+        "name": "GLM 5.2 (CompactifAI)"
+      },
+      "quasar-1-2-358b": {
+        "id": "quasar-1-2-358b",
+        "name": "Quasar 1.2 358B"
+      },
+      "carina-60b": {
+        "id": "carina-60b",
+        "name": "Carina 60B"
+      },
+      "qwen-3-8-27b": {
+        "id": "qwen-3-8-27b",
+        "name": "Qwen 3.8 27B (CompactifAI)"
+      }
+    }
+  },
+  "qwen": {
+    "id": "qwen",
+    "name": "Qwen (Alibaba Cloud)",
+    "from": "alibaba",
+    "doc": "https://www.alibabacloud.com/help/en/model-studio/"
+  },
+  "core42": {
+    "id": "core42",
+    "name": "Core42 Compass (G42)",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.core42.ai/v1",
+    "doc": "https://www.core42.ai/compass/documentation/chat-completion",
+    "env": ["CORE42_API_KEY"],
+    "models": {
+      "k2-think-core42": {
+        "id": "k2-think-core42",
+        "name": "K2 Think",
+        "reasoning": true
+      },
+      "gpt-oss-120b-core42": {
+        "id": "gpt-oss-120b-core42",
+        "name": "gpt-oss 120B",
+        "reasoning": true
+      },
+      "Llama-3.3-70B": {
+        "id": "Llama-3.3-70B",
+        "name": "Llama 3.3 70B"
+      },
+      "qwen3-14b": {
+        "id": "qwen3-14b",
+        "name": "Qwen3 14B"
+      },
+      "gpt-4.1": {
+        "id": "gpt-4.1",
+        "name": "GPT-4.1"
+      }
+    }
+  },
+  "ifm": {
+    "id": "ifm",
+    "name": "IFM (MBZUAI)",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.ifm.ai/v1",
+    "doc": "https://docs.ifm.ai/",
+    "env": ["IFM_API_KEY"],
+    "models": {
+      "IFM/K2-Horizon-375B-A23B": {
+        "id": "IFM/K2-Horizon-375B-A23B",
+        "name": "K2 Horizon",
+        "reasoning": true,
+        "limit": {
+          "context": 512000
+        }
+      },
+      "IFM/Jais-3-MoVA-36B-A4B": {
+        "id": "IFM/Jais-3-MoVA-36B-A4B",
+        "name": "Jais 3",
+        "limit": {
+          "context": 512000
+        }
+      }
+    }
+  },
+  "falcon": {
+    "id": "falcon",
+    "name": "Falcon (TII, self-hosted)",
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "http://localhost:8000/v1",
+    "doc": "https://github.com/tiiuae/Falcon-H1",
+    "env": ["FALCON_API_KEY"],
+    "models": {
+      "tiiuae/Falcon-H1-34B-Instruct": {
+        "id": "tiiuae/Falcon-H1-34B-Instruct",
+        "name": "Falcon-H1 34B Instruct"
+      },
+      "tiiuae/Falcon-H1-7B-Instruct": {
+        "id": "tiiuae/Falcon-H1-7B-Instruct",
+        "name": "Falcon-H1 7B Instruct"
+      },
+      "tiiuae/Falcon3-10B-Instruct": {
+        "id": "tiiuae/Falcon3-10B-Instruct",
+        "name": "Falcon3 10B Instruct"
+      }
     }
   }
 }

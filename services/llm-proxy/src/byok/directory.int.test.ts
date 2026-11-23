@@ -37,7 +37,10 @@ describe('provider directory', () => {
     const ids = (list: { id: string }[]) => list.map((provider) => provider.id);
     expect(ids(await live.providers())).toEqual([
       'amazon-bedrock',
+      'core42',
+      'falcon',
       'fireworks-ai',
+      'ifm',
       'lmstudio',
       'multiverse',
       'openai',

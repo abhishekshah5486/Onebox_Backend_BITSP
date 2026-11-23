@@ -135,6 +135,18 @@ function modelOf(raw: unknown): DirectoryModel | null {
   };
 }
 
+// An extra entry may be another catalogue provider under the name people look for, e.g. Qwen
+// for Alibaba Cloud's, kept current with it; it's left out if that provider is gone.
+export function withExtras(catalog: Record<string, unknown>) {
+  const extras: Record<string, unknown> = {};
+  for (const [id, extra] of Object.entries(extraProviders as Record<string, { from?: string }>)) {
+    const { from, ...own } = extra;
+    if (!from) extras[id] = own;
+    else if (catalog[from]) extras[id] = { ...catalog[from], ...own };
+  }
+  return { ...extras, ...catalog };
+}
+
 // Providers OneBox can call (their AI SDK package is installed), from a models.dev catalogue.
 export function parseCatalog(body: unknown, logoBase: string | null): DirectoryProvider[] {
   const providers: DirectoryProvider[] = [];
@@ -200,7 +212,7 @@ export function createProviderDirectory({
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body: unknown = await response.json();
     // Providers models.dev doesn't list yet; its own entry wins once it does.
-    const providers = parseCatalog({ ...extraProviders, ...(body as object) }, logoBase);
+    const providers = parseCatalog(withExtras(body as Record<string, unknown>), logoBase);
     await db
       .insert(providerCatalog)
       .values({ source: SOURCE, body: providers, fetchedAt: new Date() })

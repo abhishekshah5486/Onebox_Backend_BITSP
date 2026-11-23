@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCatalog, settingFor } from './directory';
+import { parseCatalog, settingFor, withExtras } from './directory';
 import { catalogFixture } from './fixture';
 
 describe('settingFor', () => {
@@ -71,5 +71,46 @@ describe('parseCatalog', () => {
       expect.objectContaining({ key: 'apiKey', required: true }),
     ]);
     expect(byId('lmstudio').fields[1]).toMatchObject({ key: 'apiKey', required: false });
+  });
+});
+
+describe('withExtras', () => {
+  const alibaba = {
+    id: 'alibaba',
+    name: 'Alibaba',
+    npm: '@ai-sdk/openai-compatible',
+    api: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    env: ['DASHSCOPE_API_KEY'],
+    models: { 'qwen3-max': { id: 'qwen3-max', name: 'Qwen3 Max' } },
+  };
+
+  it('offers Qwen as Alibaba Cloud’s provider under its own name, with its models', () => {
+    const qwen = parseCatalog(withExtras({ alibaba }), null).find((p) => p.id === 'qwen');
+    expect(qwen).toMatchObject({ name: 'Qwen (Alibaba Cloud)' });
+    expect(qwen!.models.map((model) => model.id)).toEqual(['qwen3-max']);
+    expect(qwen!.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'baseURL', default: alibaba.api }),
+        expect.objectContaining({ key: 'apiKey', required: true }),
+      ]),
+    );
+  });
+
+  it('adds the UAE labs’ APIs, and Falcon for a server of the user’s own', () => {
+    const ids = parseCatalog(withExtras({}), null).map((provider) => provider.id);
+    expect(ids).toEqual(expect.arrayContaining(['core42', 'ifm', 'falcon']));
+    // Nothing to inherit from: left out rather than half-made.
+    expect(ids).not.toContain('qwen');
+    const falcon = parseCatalog(withExtras({}), null).find((p) => p.id === 'falcon');
+    expect(falcon!.fields).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'apiKey', required: false })]),
+    );
+  });
+
+  it('lets models.dev’s own entry win once it lists one', () => {
+    const listed = { ...alibaba, id: 'ifm', name: 'IFM' };
+    expect(
+      parseCatalog(withExtras({ ifm: listed }), null).find((p) => p.id === 'ifm'),
+    ).toMatchObject({ name: 'IFM' });
   });
 });
