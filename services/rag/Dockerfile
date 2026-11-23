@@ -8,6 +8,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
+# RapidOCR fetches its models on first use; fetched here, so pods start offline.
+RUN .venv/bin/python -c "from onebox_rag.parsers.ocr.rapid import _engine; _engine()"
 
 FROM python:3.13.18-slim-bookworm
 RUN useradd --uid 1000 --no-create-home app

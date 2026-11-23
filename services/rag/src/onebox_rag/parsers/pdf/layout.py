@@ -33,9 +33,12 @@ CAPTION = re.compile(
     re.IGNORECASE,
 )
 CAPTION_MAX_GAP = 0.06  # of the page height
+# Bullet symbols may touch their text (OCR often reads "\u00b7Item"); dashes, stars, numbers and
+# letters need a space after them.
 LIST_ITEM = re.compile(
-    r"^\s*(?:[\u2022\-\*\u2013\u2014\u2023\u2043\u2217\u25aa\u25cf\u25a0\u25c6\u25ba\u2192\u00b7]"
-    r"|\(\s*\d+\s*\)|\d+[.)]|\(\s*[a-zA-Z]\s*\)|[a-zA-Z][.)]|[ivxlcdmIVXLCDM]+[.)])\s+"
+    r"^\s*(?:[\u2022\u00b7\u2023\u2043\u2219\u25aa\u25cf\u25a0\u25c6\u25ba\u2192]\s*"
+    r"|(?:[\-\*\u2013\u2014\u2217]|\(\s*\d+\s*\)|\d+[.)]|\(\s*[a-zA-Z]\s*\)|[a-zA-Z][.)]"
+    r"|[ivxlcdmIVXLCDM]+[.)])\s+)"
 )
 ORDERED_ITEM = re.compile(r"^\s*(?:\(\s*\d+\s*\)|\d+[.)])\s+")
 UNMAPPED_GLYPH = re.compile(r"\(cid:\d+\)")
@@ -137,16 +140,18 @@ def _clean_grid(rows: list[list[str | None]]) -> list[list[str]] | None:
 
 
 class PageRaster:
-    """The page rendered once, on first use, for OpenCV and picture crops."""
+    """The page rendered once, on first use, for OpenCV and picture crops (or an image already
+    rendered, as OCR has)."""
 
-    def __init__(self, pdfium_page: Any, width: float) -> None:
-        self._page, self._width = pdfium_page, width
-        self._image: np.ndarray | None = None
+    def __init__(
+        self, pdfium_page: Any, width: float, image: np.ndarray | None = None, dpi: int = RASTER_DPI
+    ) -> None:
+        self._page, self._width, self._image, self._dpi = pdfium_page, width, image, dpi
 
     @property
     def image(self) -> np.ndarray:
         if self._image is None:
-            bitmap = self._page.render(scale=RASTER_DPI / 72)
+            bitmap = self._page.render(scale=self._dpi / 72)
             self._image = np.ascontiguousarray(bitmap.to_numpy()[:, :, :3])
         return self._image
 
@@ -183,7 +188,7 @@ def words_of(page: Any) -> list[Word]:
     return kept
 
 
-def ruled_tables(page: Any, raster: PageRaster) -> list[tuple[Box, list[float], list[float]]]:
+def ruled_tables(raster: PageRaster) -> list[tuple[Box, list[float], list[float]]]:
     """Grids drawn as rules, found on the raster (catches ones pdfplumber's vector edges miss):
     each box with the x and y of its rules in points."""
     gray = cv2.cvtColor(raster.image, cv2.COLOR_RGB2GRAY)
@@ -237,7 +242,7 @@ def tables_on(page: Any, raster: PageRaster | None) -> list[Region]:
             regions.append(Region(Kind.TABLE, box, grid=grid))
     if raster is None:
         return regions
-    for box, xs, ys in ruled_tables(page, raster):
+    for box, xs, ys in ruled_tables(raster):
         if any(_overlap(box, r.box) > 0.3 or _overlap(r.box, box) > 0.3 for r in regions):
             continue
         settings = {
@@ -380,7 +385,7 @@ def aligned_tables(lines: list[Line]) -> tuple[list[Region], set[int]]:
     return regions, used
 
 
-def blocks_of(lines: list[Line], rules: list[float]) -> list[Region]:
+def blocks_of(lines: list[Line], rules: list[float], size_change: float = 0.1) -> list[Region]:
     """Lines into paragraphs and list items: a new block at a wide gap, a size or weight change,
     a column change, a horizontal rule, or a bullet."""
     regions: list[Region] = []
@@ -414,7 +419,7 @@ def blocks_of(lines: list[Line], rules: list[float]) -> list[Region]:
                 line.side != prev.side
                 or gap > 0.7 * prev.size
                 or gap < -prev.size
-                or abs(line.size - prev.size) > 0.1 * prev.size
+                or abs(line.size - prev.size) > size_change * prev.size
                 or line.bold != prev.bold
                 or ruled
                 or LIST_ITEM.match(line.text)
@@ -474,6 +479,47 @@ def reading_order[T: Placed](items: list[T], gutter: float | None) -> list[T]:
     return ordered
 
 
+def grid_from_words(words: list[Word], xs: list[float], ys: list[float]) -> list[list[str]] | None:
+    """A ruled grid's cells filled with the words whose centres fall in them."""
+    xs, ys = sorted(xs), sorted(ys)
+    cells: list[list[list[Word]]] = [[[] for _ in xs[1:]] for _ in ys[1:]]
+    for word in words:
+        x, y = (word["x0"] + word["x1"]) / 2, (word["top"] + word["bottom"]) / 2
+        col = next((c for c in range(len(xs) - 1) if xs[c] <= x < xs[c + 1]), None)
+        row = next((r for r in range(len(ys) - 1) if ys[r] <= y < ys[r + 1]), None)
+        if col is not None and row is not None:
+            cells[row][col].append(word)
+    rows: list[list[str | None]] = [
+        [
+            " ".join(w["text"] for w in sorted(cell, key=lambda w: (w["top"], w["x0"])))
+            for cell in row
+        ]
+        for row in cells
+    ]
+    return _clean_grid(rows)
+
+
+def arrange(
+    words: list[Word],
+    width: float,
+    height: float,
+    placed: list[Region],
+    rules: list[float],
+    size_change: float = 0.1,
+) -> list[Region]:
+    """The words outside the tables and pictures already found, as lines, borderless tables and
+    blocks, all in reading order."""
+    taken = [r.box for r in placed]
+    free = [w for w in words if not _inside(w, taken)]
+    gutter = gutter_of(free, width)
+    lines = lines_of(free, gutter)
+    aligned, used = aligned_tables(lines)
+    rest = reading_order([line for i, line in enumerate(lines) if i not in used], gutter)
+    regions = placed + aligned + blocks_of(rest, rules, size_change)
+    link_captions(regions, height)
+    return reading_order(regions, gutter)
+
+
 def page_regions(page: Any, pdfium_page: Any) -> list[Region]:
     words = words_of(page)
     vectors = len(page.lines) + len(page.rects) + len(page.curves)
@@ -481,19 +527,22 @@ def page_regions(page: Any, pdfium_page: Any) -> list[Region]:
     raster = PageRaster(pdfium_page, float(page.width)) if needs_raster else None
     tables = tables_on(page, raster)
     images = images_on(page, words, raster, [t.box for t in tables])
-    taken = [r.box for r in tables + images]
-    free = [w for w in words if not _inside(w, taken)]
-    gutter = gutter_of(free, float(page.width))
-    lines = lines_of(free, gutter)
-    aligned, used = aligned_tables(lines)
     rules = [
         (float(ln["top"]) + float(ln["bottom"])) / 2
         for ln in page.lines
         if abs(float(ln["bottom"]) - float(ln["top"])) < 2
         and float(ln["x1"]) - float(ln["x0"]) >= 0.5 * float(page.width)
     ]
-    rest = reading_order([line for i, line in enumerate(lines) if i not in used], gutter)
-    text = blocks_of(rest, rules)
-    regions = tables + images + aligned + text
-    link_captions(regions, float(page.height))
-    return reading_order(regions, gutter)
+    return arrange(words, float(page.width), float(page.height), tables + images, rules)
+
+
+def ocr_regions(
+    words: list[Word], width: float, height: float, raster: PageRaster, size_change: float
+) -> list[Region]:
+    """A scanned page: OCR words, with ruled tables found by OpenCV on the same render."""
+    tables = []
+    for box, xs, ys in ruled_tables(raster):
+        grid = grid_from_words(words, xs, ys)
+        if grid:
+            tables.append(Region(Kind.TABLE, box, grid=grid))
+    return arrange(words, width, height, tables, [], size_change)

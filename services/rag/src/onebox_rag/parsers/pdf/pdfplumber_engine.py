@@ -86,9 +86,9 @@ def running_noise(pages: list[Page]) -> set[int]:
     }
 
 
-def heading_levels(pages: list[Page]) -> tuple[float, dict[float, int]]:
-    """The body size (the median text size) and a level per heading size, largest first; bold
-    headings at body size come after them."""
+def heading_levels(pages: list[Page], ratio: float, tolerance: float) -> tuple[float, list[float]]:
+    """The body size (the median text size) and the size of each heading level, largest first.
+    Sizes within `tolerance` of a level share it (OCR measures sizes only roughly)."""
     sizes = sorted(r.size for p in pages for r in p.regions if r.kind == Kind.TEXT and r.size)
     body = sizes[len(sizes) // 2] if sizes else 0.0
     larger = sorted(
@@ -96,18 +96,31 @@ def heading_levels(pages: list[Page]) -> tuple[float, dict[float, int]]:
             round(r.size * 2) / 2
             for p in pages
             for r in p.regions
-            if _is_heading(r, body) and r.size >= body * HEADING_SIZE_RATIO
+            if _is_heading(r, body, ratio) and r.size >= body * ratio
         },
         reverse=True,
     )
-    return body, {size: min(i + 1, MAX_HEADING_LEVELS) for i, size in enumerate(larger)}
+    levels: list[float] = []
+    for size in larger:
+        if not levels or size < levels[-1] / (1 + tolerance):
+            levels.append(size)
+    return body, levels
 
 
-def _is_heading(region: Region, body: float) -> bool:
+def _level(size: float, levels: list[float], tolerance: float) -> int:
+    """The first level this size reaches; smaller (bold at body size) headings come after all."""
+    size = round(size * 2) / 2
+    for i, level in enumerate(levels):
+        if size >= level / (1 + tolerance):
+            return min(i + 1, MAX_HEADING_LEVELS)
+    return min(len(levels) + 1, MAX_HEADING_LEVELS)
+
+
+def _is_heading(region: Region, body: float, ratio: float) -> bool:
     text = region.text.strip()
     if region.kind != Kind.TEXT or region.lines != 1 or not text or len(text) > HEADING_MAX_CHARS:
         return False
-    return region.bold or (body > 0 and region.size >= body * HEADING_SIZE_RATIO)
+    return region.bold or (body > 0 and region.size >= body * ratio)
 
 
 def _citation(page: Page, region: Region) -> dict[str, Any]:
@@ -125,11 +138,12 @@ def _citation(page: Page, region: Region) -> dict[str, Any]:
     }
 
 
-def _build(pages: list[Page]) -> BlocksBuilder:
+def build_blocks(
+    pages: list[Page], heading_ratio: float = HEADING_SIZE_RATIO, size_tolerance: float = 0.0
+) -> BlocksBuilder:
     out = BlocksBuilder()
     noise = running_noise(pages)
-    body, levels = heading_levels(pages)
-    bold_level = min(len(levels) + 1, MAX_HEADING_LEVELS)
+    body, levels = heading_levels(pages, heading_ratio, size_tolerance)
     for page in pages:
         open_list: BlockGroup | None = None
         for region in page.regions:
@@ -173,8 +187,8 @@ def _build(pages: list[Page]) -> BlocksBuilder:
                     sub_type=BlockSubType.LIST_ITEM,
                     citation_metadata=out.citation(**cite),
                 )
-            elif _is_heading(region, body):
-                level = levels.get(round(region.size * 2) / 2, bold_level)
+            elif _is_heading(region, body, heading_ratio):
+                level = _level(region.size, levels, size_tolerance)
                 out.heading(level, region.text)
                 out.text(
                     region.text,
@@ -207,4 +221,4 @@ def parse_pdf_layout(data: bytes, mime_type: str = "") -> ParseResult:
         raise
     except Exception as err:
         raise UnreadableFileError(f"pdfplumber could not read it ({type(err).__name__})") from err
-    return ParseResult(_build(pages).build())
+    return ParseResult(build_blocks(pages).build())
