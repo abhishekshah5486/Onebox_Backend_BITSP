@@ -152,7 +152,7 @@ choices; we offer those and a few more:
    HTML, Markdown, EML, JSON, YAML, CSV) and the parse worker. **Done.**
 4. Sandboxed parse pool, PDF inspection and engine routing. **Done.**
 5. Docling service and the Docling path for PDF, DOCX and PPTX; LibreOffice conversion (both
-   added to the image here).
+   in a separate Docling image, as PipesHub runs it). **Done.**
 6. pdfplumber + OpenCV fallback.
 7. OCR providers (free local model first, then llm-proxy image input for vision-model OCR and
    Azure DI); image descriptions.

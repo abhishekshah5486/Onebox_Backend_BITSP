@@ -15,6 +15,17 @@ uv sync                              # once
 npm run dev -w @onebox/rag-service   # or `turbo run dev`, with the other services (port 4012)
 ```
 
+PDF, Word and PowerPoint files are read by the separate Docling service (port 4013):
+
+```sh
+uv sync --extra docling                  # once; PyTorch and Docling's models
+npm run dev:docling -w @onebox/rag-service
+```
+
+It needs LibreOffice (`soffice`) for DOC, RTF, ODT, PPT and ODP. Without it running, those
+files are retried and then fail as "the Docling service is unavailable"; `RAG_DOCLING_URL=`
+(empty) leaves them waiting instead.
+
 Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENCRYPTION_KEY`,
 `BLOB_ACCESS_KEY`, `BLOB_SECRET_KEY`, and optionally `BLOB_ENDPOINT`, `RAG_BLOB_BUCKET`, the
 `RAG_MAX_*` upload limits, `PORT`, `MONGO_DB`, `AUTH_SERVICE_URL`, `LOG_LEVEL` (all in
@@ -53,7 +64,15 @@ Following PipesHub's design:
   pdfplumber's checks on a sample of up to 30 text pages (little text with big images, low
   text density, one dominant image, unmapped glyphs). Scanned PDFs go to OCR, those past
   `RAG_DOCLING_MAX_PAGES` or `RAG_DOCLING_MAX_MB` to pdfplumber, the rest to Docling. Until
-  those engines land (milestones 5 to 7) a PDF is recorded as waiting for its engine.
+  those engines land (milestones 6 and 7) such a PDF is recorded as waiting for its engine.
+- **Docling.** Digital PDFs, Word and PowerPoint go to the Docling service with PipesHub's
+  options: no Docling OCR (scanned pages have their own engine), accurate tables, picture
+  images kept, and only PDF, DOCX and PPTX allowed whatever the bytes resemble. DOC, RTF, ODT,
+  PPT and ODP are converted first by headless LibreOffice (a throwaway profile and process
+  group per file). Conversions run in the same kind of worker pool, so timeouts and
+  out-of-memory kills are handled the same way, and it answers 429 when every worker is busy.
+  Its document becomes blocks in reading order: heading paths, lists, tables (header rows,
+  captions), pictures (captions as their text), and each item's page or slide with its box.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
   JSON and JSON Lines, YAML, CSV and TSV, and other text.
 
@@ -63,7 +82,8 @@ Following PipesHub's design:
 uv run ruff check . && uv run ruff format --check .
 uv run mypy
 uv run pytest                  # unit tests
-uv run pytest -m integration   # needs Docker (MongoDB, Redis via Testcontainers)
+uv run pytest -m integration   # needs Docker (MongoDB, Redis via Testcontainers); the
+                               # Docling tests also need the docling extra and LibreOffice
 ```
 
 Dependencies are pinned exactly, and `exclude-newer` in `pyproject.toml` keeps every package,
