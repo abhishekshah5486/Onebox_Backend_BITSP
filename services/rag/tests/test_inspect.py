@@ -2,9 +2,11 @@ import io
 import zipfile
 
 import pytest
+from msoffcrypto.format.ooxml import OOXMLFile
 from pypdf import PdfWriter
 
 from onebox_rag.ingest.inspect import Limits, inspect_file
+from onebox_rag.models import Status
 
 LIMITS = Limits(
     max_bytes=10 * 2**20, max_unzipped_bytes=50 * 2**20, max_zip_ratio=100, max_zip_entries=1000
@@ -51,7 +53,7 @@ def pdf(password: str | None = None) -> bytes:
 
 def check(data: bytes, name: str, declared: str | None = None) -> tuple[str, str | None]:
     found = inspect_file(io.BytesIO(data), len(data), name, declared, LIMITS)
-    return found.mime_type, found.rejection
+    return found.mime_type, found.rejection.reason if found.rejection else None
 
 
 @pytest.mark.parametrize(
@@ -81,19 +83,60 @@ def test_knows_the_type_from_the_bytes_not_the_name(data: bytes, name: str, expe
     assert check(data, name) == (expected, None)
 
 
-@pytest.mark.parametrize(
-    ("data", "reason"),
-    [
-        (b"x" * (LIMITS.max_bytes + 1), "larger than 10 MB"),
-        (archive({"zeros.bin": b"\0" * 20 * 2**20}), "compressed more than 100:1 (zip bomb)"),
-        (archive({f"{i}.txt": b"" for i in range(1001)}), "more than 1000 entries (zip bomb)"),
-        (archive({"secret.txt": b"hello"}, encrypted=True), "encrypted"),
-        (pdf("secret"), "encrypted"),
-    ],
-    ids=["too-big", "zip-bomb", "too-many-entries", "encrypted-zip", "encrypted-pdf"],
+def encrypted_ooxml() -> bytes:
+    out = io.BytesIO()
+    OOXMLFile(io.BytesIO(ooxml(f"{OOXML}.wordprocessingml.document"))).encrypt("secret", out)
+    return out.getvalue()
+
+
+ODF_ENCRYPTED = archive(
+    {
+        "mimetype": b"application/vnd.oasis.opendocument.text",
+        "META-INF/manifest.xml": (
+            b"<manifest:manifest "
+            b'xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">'
+            b'<manifest:file-entry manifest:full-path="content.xml">'
+            b'<manifest:encryption-data manifest:checksum-type="SHA1"/>'
+            b"</manifest:file-entry></manifest:manifest>"
+        ),
+    }
 )
-def test_rejects_files_it_must_not_parse(data: bytes, reason: str) -> None:
-    assert check(data, "file")[1] == reason
+
+
+@pytest.mark.parametrize(
+    ("data", "status", "reason"),
+    [
+        (b"x" * (LIMITS.max_bytes + 1), Status.FAILED, "larger than 10 MB"),
+        (
+            archive({"zeros.bin": b"\0" * 20 * 2**20}),
+            Status.FAILED,
+            "compressed more than 100:1 (zip bomb)",
+        ),
+        (
+            archive({f"{i}.txt": b"" for i in range(1001)}),
+            Status.FAILED,
+            "more than 1000 entries (zip bomb)",
+        ),
+        (archive({"secret.txt": b"hello"}, encrypted=True), Status.PASSWORD_PROTECTED, None),
+        (pdf("secret"), Status.PASSWORD_PROTECTED, None),
+        (encrypted_ooxml(), Status.PASSWORD_PROTECTED, None),
+        (ODF_ENCRYPTED, Status.PASSWORD_PROTECTED, None),
+    ],
+    ids=[
+        "too-big",
+        "zip-bomb",
+        "too-many-entries",
+        "encrypted-zip",
+        "encrypted-pdf",
+        "encrypted-docx",
+        "encrypted-odt",
+    ],
+)
+def test_rejects_files_it_must_not_parse(data: bytes, status: Status, reason: str | None) -> None:
+    found = inspect_file(io.BytesIO(data), len(data), "file", None, LIMITS).rejection
+    assert found is not None
+    assert found.status == status
+    assert found.reason == (reason or "password-protected")
 
 
 def test_opens_pdfs_locked_only_against_printing() -> None:

@@ -7,9 +7,12 @@ dependencies = [
   "boto3==1.43.126",
   "bullmq==3.5.0",
   "certifi==2026.10.23",
+  "charset-normalizer==3.5.2",
   "cryptography==50.0.2",
+  "defusedxml==0.7.1",
   "fastapi==0.162.1",
   "httpx==0.28.1",
+  "markdown-it-py==4.2.0",
   "msoffcrypto-tool==6.1.0",
   "pydantic==2.14.3",
   "pydantic-settings==2.16.2",
@@ -18,7 +21,9 @@ dependencies = [
   "puremagic==2.2.0",
   "pypdf==7.0.0",
   "python-multipart==0.0.33",
+  "pyyaml==6.0.3",
   "redis==8.1.0",
+  "selectolax==1.0.2",
   "uvicorn==0.54.0",
 ]
 
@@ -30,6 +35,8 @@ dev = [
   "pytest-asyncio==1.4.1.post1",
   "ruff==0.17.4",
   "testcontainers==4.15.0",
+  "types-defusedxml==0.7.0.20260504",
+  "types-pyyaml==6.0.12.20261103",
 ]
 
 [build-system]
