@@ -18,5 +18,6 @@ resources:
   - billing.yaml
   - realtime.yaml
   - search.yaml
+  - docling.yaml
   - rag.yaml
   - api-gateway.yaml

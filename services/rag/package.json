@@ -9,6 +9,7 @@
     "typecheck": "uv run --frozen mypy",
     "lint:py": "uv run --frozen ruff check . && uv run --frozen ruff format --check .",
     "test:py": "uv run --frozen pytest",
-    "test:py:int": "uv run --frozen pytest -m integration"
+    "test:py:int": "uv run --frozen pytest -m integration",
+    "dev:docling": "uv run --frozen --extra docling python -m onebox_rag.docling --reload"
   }
 }

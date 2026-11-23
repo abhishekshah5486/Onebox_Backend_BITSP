@@ -1,0 +1,29 @@
+# The Docling service: docker build -f services/rag/Dockerfile.docling -t onebox/docling:dev services/rag
+FROM python:3.13.18-slim-bookworm AS build
+RUN pip install --no-cache-dir uv==0.13.7
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --extra docling --no-install-project
+COPY src ./src
+RUN uv sync --frozen --no-dev --extra docling --no-editable
+
+FROM python:3.13.18-slim-bookworm
+# LibreOffice converts DOC, RTF, ODT, PPT and ODP; the GL and GLib libraries are for OpenCV.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libreoffice-writer-nogui libreoffice-impress-nogui fonts-dejavu-core libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --uid 1000 --no-create-home app
+WORKDIR /app
+COPY --from=build /app/.venv /app/.venv
+ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 HOME=/tmp
+# The layout and table models are baked in, so pods start without downloading them.
+RUN docling-tools models download layout tableformer -o /models && chmod -R a+rX /models
+ENV DOCLING_ARTIFACTS_PATH=/models HF_HUB_OFFLINE=1
+# Fails the build if the pipeline can't load from the baked-in models alone.
+RUN python -c "from onebox_rag.docling.convert import ConvertOptions, warm_up; \
+warm_up(ConvertOptions('accurate', 1.0, 600, 'soffice'))"
+USER 1000
+EXPOSE 4013
+CMD ["python", "-m", "onebox_rag.docling"]
