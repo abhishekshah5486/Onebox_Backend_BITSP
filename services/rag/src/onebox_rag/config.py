@@ -143,6 +143,9 @@ class Settings(BaseSettings):
     RAG_TITLE_MIN_SCORE: float = Field(default=0.45, ge=0, le=1)
     RAG_TITLE_UNINDEXED_MAX: int = Field(default=10, ge=0, le=50)
     RAG_SMALL_TABLE_CELLS: int = Field(default=250, ge=0)
+    # A read with a question returns a record whole up to this many characters, else the
+    # part that answers it within them.
+    RAG_FOCUSED_READ_CHARS: int = Field(default=16_000, ge=4_000)
     RAG_READ_MAX_BLOCKS: int = Field(default=200, ge=1, le=5000)
 
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked

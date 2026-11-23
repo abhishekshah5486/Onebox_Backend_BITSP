@@ -195,6 +195,36 @@ class Retriever:
             for unit, record in cited
         ]
 
+    async def matching_blocks(
+        self, user_id: str, content: Content, query: str, limit: int = 60
+    ) -> list[int]:
+        """The content's blocks matching `query`, best first: a search limited to it, asked for
+        generously since the reader's room, not this count, decides how many are shown."""
+        model = await self._dense.model_for(user_id)
+        collection = collection_name(model)
+        if content.index_collection != collection:
+            return []
+        dense, sparse = await asyncio.gather(
+            self._dense.embed(user_id, model, [query]), asyncio.to_thread(sparse_query, query)
+        )
+        hits = await self._store.search(
+            collection,
+            dense[0],
+            sparse,
+            user_id=user_id,
+            content_ids=[content.id],
+            limit=limit,
+            tuning=self._settings.tuning,
+        )
+        found = []
+        for hit in hits:
+            if hit.payload.get("revision") != content.revision:
+                continue  # a title, or a revision being replaced
+            index = hit.payload.get("blockIndex")
+            if isinstance(index, int):
+                found.append(index)
+        return found
+
     async def _unindexed(
         self,
         user_id: str,

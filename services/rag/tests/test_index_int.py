@@ -210,6 +210,12 @@ def test_finds_records_by_name_and_names_the_unreadable(
     record = next(c for c in found["chunks"] if c["record"]["recordId"] == budget["id"])
     assert record["kind"] == "record"
     assert record["text"] == "Name: Quarterly budget.md\n\nSpend stays flat until spring."
+    # Read with a question, a short record comes whole.
+    read = client.get(
+        f"/rag/records/{budget['id']}/read", params={"query": "spend"}, headers=bearer("u1")
+    ).json()
+    assert read["focused"] and read["gaps"] == [] and read["next"] is None
+    assert [b["text"] for b in read["blocks"]] == ["Spend stays flat until spring."]
     # A file that can't be read is still found by name, named apart from the passages.
     [unread] = [u for u in ask("board minutes")["unindexed"] if u["recordId"] == minutes["id"]]
     assert unread["name"] == "Board minutes.dat" and unread["status"] != "completed"

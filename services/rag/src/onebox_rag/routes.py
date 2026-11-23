@@ -13,7 +13,7 @@ from onebox_rag.ingest.ingestor import Ingestor, Source
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Record, SourceType, Status
 from onebox_rag.pipeline.parse import decode_blocks
-from onebox_rag.retrieval.read import read_page
+from onebox_rag.retrieval.read import FocusSettings, focused_read, read_page
 from onebox_rag.retrieval.service import Retriever, Scope
 
 SOURCE_ID = r"^[A-Za-z0-9_-]{1,64}$"
@@ -75,7 +75,12 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
 
 
 async def _read(
-    request: Request, user_id: str, record_id: str, start: int, max_blocks: int | None
+    request: Request,
+    user_id: str,
+    record_id: str,
+    start: int,
+    max_blocks: int | None,
+    query: str | None = None,
 ) -> dict[str, Any]:
     records: RecordStore = request.app.state.records
     contents: ContentStore = request.app.state.contents
@@ -85,13 +90,21 @@ async def _read(
     if record is None or content is None or content.blocks_key is None:
         raise NotFoundError("No parsed blocks for this record")
     container = decode_blocks(await blobs.get(content.blocks_key))
-    size = max_blocks or request.app.state.settings.RAG_READ_MAX_BLOCKS
-    return {
-        "recordId": record.id,
-        "name": record.name,
-        "mimeType": record.mime_type,
-        **read_page(container, start, size),
-    }
+    settings = request.app.state.settings
+    head = {"recordId": record.id, "name": record.name, "mimeType": record.mime_type}
+    retriever: Retriever | None = getattr(request.app.state, "retriever", None)
+    # With a question, from the start: the part that answers it (a continuation reads in order).
+    if query and query.strip() and start == 0 and retriever is not None:
+        try:
+            matches = await retriever.matching_blocks(user_id, content, query)
+        except EmbeddingUnavailableError as err:
+            raise UnavailableError("The embedding model is unavailable") from err
+        focus = FocusSettings(max_chars=settings.RAG_FOCUSED_READ_CHARS)
+        focused = focused_read(container, matches, focus)
+        if focused is not None:
+            return {**head, **focused, "focused": True}
+    size = max_blocks or settings.RAG_READ_MAX_BLOCKS
+    return {**head, **read_page(container, start, size)}
 
 
 def record_json(record: Record, **extra: Any) -> dict[str, Any]:
@@ -179,9 +192,12 @@ def rag_router() -> APIRouter:
         record_id: str,
         start: Annotated[int, Query(ge=0)] = 0,
         max_blocks: Annotated[int | None, Query(alias="max", ge=1, le=5000)] = None,
+        query: Annotated[str | None, Query(max_length=1000)] = None,
     ) -> dict[str, Any]:
-        """The record's blocks in order, a page at a time; `next` is where to continue."""
-        return await _read(request, user.user_id, record_id, start, max_blocks)
+        """The record's blocks in order, a page at a time; `next` is where to continue. With a
+        `query`, a record too long to read whole gives the part that answers it, `gaps` naming
+        what was left out."""
+        return await _read(request, user.user_id, record_id, start, max_blocks, query)
 
     @router.delete("/records/{record_id}", status_code=204)
     async def delete_record(request: Request, user: CurrentUser, record_id: str) -> Response:
@@ -208,7 +224,8 @@ def internal_router() -> APIRouter:
         user_id: Annotated[str, Query(alias="userId", min_length=1)],
         start: Annotated[int, Query(ge=0)] = 0,
         max_blocks: Annotated[int | None, Query(alias="max", ge=1, le=5000)] = None,
+        query: Annotated[str | None, Query(max_length=1000)] = None,
     ) -> dict[str, Any]:
-        return await _read(request, user_id, record_id, start, max_blocks)
+        return await _read(request, user_id, record_id, start, max_blocks, query)
 
     return router
