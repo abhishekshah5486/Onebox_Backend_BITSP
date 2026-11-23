@@ -43,8 +43,18 @@ Following PipesHub's design:
   are groups of row blocks, lists groups of items, and each block carries citation metadata
   (heading path, line, page, row, sheet, cell, slide). Stored gzipped in the blob store.
 - **Parsing.** Jobs on the `rag-ingest` BullMQ queue (the TypeScript job envelope, one per
-  content revision), consumed in-process unless `RAG_RUN_WORKER=false`. Formats so far: plain
-  text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
+  content revision), consumed in-process unless `RAG_RUN_WORKER=false`. Parsing and inspection run in a pool of
+  worker processes (PipesHub's lanes: one thread and one process each, one file at a time), so
+  a hostile or huge file can only take down its own worker. A file past `RAG_PARSE_TIMEOUT_S`
+  has its worker's process group killed and fails; a worker killed outright (most likely out
+  of memory) gets the file one retry, and a second death fails it.
+- **Routing.** Each content's engine is chosen once per revision and recorded. A PDF is
+  inspected first: scanned when at least half its pages have no text layer or fail
+  pdfplumber's checks on a sample of up to 30 text pages (little text with big images, low
+  text density, one dominant image, unmapped glyphs). Scanned PDFs go to OCR, those past
+  `RAG_DOCLING_MAX_PAGES` or `RAG_DOCLING_MAX_MB` to pdfplumber, the rest to Docling. Until
+  those engines land (milestones 5 to 7) a PDF is recorded as waiting for its engine.
+- **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
   JSON and JSON Lines, YAML, CSV and TSV, and other text.
 
 ## Check

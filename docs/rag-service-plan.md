@@ -150,7 +150,7 @@ choices; we offer those and a few more:
 3. PipesHub's block model (blocks, block groups, citation metadata), status set and shared
    content per set of bytes; OpenDocument and OOXML password detection; light parsers (text,
    HTML, Markdown, EML, JSON, YAML, CSV) and the parse worker. **Done.**
-4. Sandboxed parse pool, PDF inspection and engine routing.
+4. Sandboxed parse pool, PDF inspection and engine routing. **Done.**
 5. Docling service and the Docling path for PDF, DOCX and PPTX; LibreOffice conversion (both
    added to the image here).
 6. pdfplumber + OpenCV fallback.
