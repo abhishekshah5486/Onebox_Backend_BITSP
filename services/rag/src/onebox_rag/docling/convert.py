@@ -61,8 +61,10 @@ def _converter(options: ConvertOptions) -> Any:
 
 
 def warm_up(options: ConvertOptions) -> bool:
-    """Builds the converter (loading its models) before the first real file."""
-    _converter(options)
+    """Loads the PDF pipeline's models before the first real file (Docling defers it)."""
+    from docling.datamodel.base_models import InputFormat
+
+    _converter(options).initialize_pipeline(InputFormat.PDF)
     return True
 
 

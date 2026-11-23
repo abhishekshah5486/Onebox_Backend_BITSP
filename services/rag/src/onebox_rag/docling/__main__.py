@@ -10,7 +10,7 @@ from onebox_rag.logs import configure_logging
 
 def app_from_env() -> FastAPI:
     settings = load_docling_settings()
-    configure_logging(settings.LOG_LEVEL)
+    configure_logging(settings.LOG_LEVEL, service="docling")
     return create_docling_app(settings)
 
 
