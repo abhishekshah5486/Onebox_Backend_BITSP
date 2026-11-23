@@ -24,6 +24,11 @@ spec:
             - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
             - name: MONGO_URI
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: MONGO_URI } }
+            - { name: BLOB_ENDPOINT, value: 'http://objects:8333' }
+            - name: BLOB_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_ACCESS_KEY } }
+            - name: BLOB_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: BLOB_SECRET_KEY } }
             - name: CREDENTIALS_ENCRYPTION_KEY
               valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
           startupProbe:

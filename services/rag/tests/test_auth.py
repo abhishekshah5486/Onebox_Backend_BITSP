@@ -1,9 +1,7 @@
-import json
 import time
 from collections.abc import Iterator
-from typing import Annotated, Any
+from typing import Annotated
 
-import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -14,34 +12,13 @@ from onebox_rag.app import create_app
 from onebox_rag.auth import (
     INTERNAL_TOKEN_HEADER,
     AuthUser,
-    JwksVerifier,
     current_user,
     derive_internal_token,
     require_internal,
 )
 from onebox_rag.config import Settings
 from tests.conftest import KEY
-
-SIGNING_KEY = Ed25519PrivateKey.generate()
-
-
-def jwks() -> dict[str, Any]:
-    public = json.loads(jwt.algorithms.OKPAlgorithm.to_jwk(SIGNING_KEY.public_key()))
-    return {"keys": [{**public, "kid": "k1", "alg": "EdDSA", "use": "sig"}]}
-
-
-def token(**claims: Any) -> str:
-    now = int(time.time())
-    payload = {
-        "sub": "user-1",
-        "email": "me@onebox.dev",
-        "iss": "onebox-auth",
-        "aud": "onebox",
-        "iat": now,
-        "exp": now + 900,
-        **claims,
-    }
-    return jwt.encode(payload, SIGNING_KEY, algorithm="EdDSA", headers={"kid": "k1"})
+from tests.tokens import fake_verifier, token
 
 
 @pytest.fixture
@@ -51,14 +28,7 @@ def jwks_calls() -> list[str]:
 
 @pytest.fixture
 def client(settings: Settings, jwks_calls: list[str]) -> Iterator[TestClient]:
-    def serve(request: httpx.Request) -> httpx.Response:
-        jwks_calls.append(str(request.url))
-        return httpx.Response(200, json=jwks())
-
-    verifier = JwksVerifier(
-        "http://auth.test", httpx.AsyncClient(transport=httpx.MockTransport(serve))
-    )
-    app: FastAPI = create_app(settings, verifier=verifier, checks={})
+    app: FastAPI = create_app(settings, verifier=fake_verifier(jwks_calls), checks={})
 
     @app.get("/whoami")
     async def whoami(user: Annotated[AuthUser, Depends(current_user)]) -> dict[str, str]:
