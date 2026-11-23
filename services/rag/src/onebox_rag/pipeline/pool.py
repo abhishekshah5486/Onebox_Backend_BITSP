@@ -1,6 +1,6 @@
 """Worker processes for parsing, so a hostile or huge file can only take down its own worker.
 
-After PipesHub's parse pool: a few *lanes*, each one thread and the one worker process it talks
+A few *lanes*, each one thread and the one worker process it talks
 to, running one job at a time. A worker that dies is therefore always the fault of the job it
 was running: that job fails and the lane starts a fresh worker for the next. A job that runs
 past its timeout has its worker's whole process group killed.
@@ -216,5 +216,5 @@ class _Replace(Exception):
 
 
 def default_workers() -> int:
-    # As PipesHub sizes it: half the CPUs, at most four.
+    # Half the CPUs, at most four.
     return max(1, min(4, (os.cpu_count() or 2) // 2))

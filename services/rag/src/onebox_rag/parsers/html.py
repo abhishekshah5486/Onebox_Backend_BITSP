@@ -1,4 +1,4 @@
-"""HTML to blocks by walking the DOM with selectolax (PipesHub's default HTML backend)."""
+"""HTML to blocks by walking the DOM with selectolax."""
 
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 

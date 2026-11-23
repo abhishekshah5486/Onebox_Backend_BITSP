@@ -30,7 +30,7 @@ PLAIN_TEXT = Parser("plain-text", parse_plain_text)
 _BY_MIME = {
     "text/markdown": MARKDOWN,
     "text/x-markdown": MARKDOWN,
-    # As PipesHub reads .txt: through the Markdown path.
+    # Plain .txt goes through the Markdown path.
     "text/plain": MARKDOWN,
     "text/html": HTML,
     "application/xhtml+xml": HTML,

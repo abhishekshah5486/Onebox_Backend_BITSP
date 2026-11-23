@@ -17,7 +17,7 @@ def _set(fields: dict[str, Any], now: datetime) -> Doc:
 
 
 class ContentStore:
-    """One document per user and set of bytes (the PipesHub "virtual record")."""
+    """One document per user and set of bytes (a "virtual record")."""
 
     def __init__(self, db: AsyncDatabase[Doc]) -> None:
         self._contents = db["contents"]

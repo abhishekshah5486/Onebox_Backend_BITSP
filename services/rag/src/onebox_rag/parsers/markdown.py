@@ -1,4 +1,4 @@
-"""Markdown (and plain .txt, as PipesHub reads it) to blocks by walking markdown-it tokens."""
+"""Markdown (and plain .txt) to blocks by walking markdown-it tokens."""
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token

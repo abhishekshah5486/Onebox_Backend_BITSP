@@ -33,7 +33,7 @@ def _converter(options: ConvertOptions) -> Any:
         WordFormatOption,
     )
 
-    # PipesHub's choices: no Docling OCR (scanned pages go to our OCR engine), accurate
+    # No Docling OCR (scanned pages go to our OCR engine), accurate
     # tables, picture images kept for descriptions, small batches to bound memory.
     pdf_options = ThreadedPdfPipelineOptions(
         do_ocr=False,

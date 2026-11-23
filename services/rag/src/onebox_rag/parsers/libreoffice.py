@@ -1,4 +1,4 @@
-"""Legacy Office and OpenDocument files to OOXML with headless LibreOffice (as PipesHub does)."""
+"""Legacy Office and OpenDocument files to OOXML with headless LibreOffice."""
 
 import contextlib
 import os

@@ -1,4 +1,4 @@
-"""JSON and YAML to blocks, deterministically (PipesHub's JSON approach, no LLM):
+"""JSON and YAML to blocks, deterministically (no LLM):
 flat fields become one "key: value" block, nested objects become KEY_VALUE_AREA groups,
 arrays of objects become tables with a row per item, and long strings get their own block."""
 

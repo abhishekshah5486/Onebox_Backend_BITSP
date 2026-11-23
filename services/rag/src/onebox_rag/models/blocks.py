@@ -1,4 +1,4 @@
-"""What every parser produces, whatever the format (structure after PipesHub's blocks model).
+"""What every parser produces, whatever the format.
 
 A container holds two flat lists, blocks and block groups. Every cross-reference is positional:
 a block's ``parent_index`` is its group's index, and a group lists its children as ranges of

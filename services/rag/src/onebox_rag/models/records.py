@@ -13,7 +13,7 @@ class SourceType(StrEnum):
 
 
 class Status(StrEnum):
-    """Outcomes after PipesHub's: the same bytes give the same outcome, so only a new version
+    """Outcomes: the same bytes give the same outcome, so only a new version
     of the file (or an explicit re-index) changes a terminal one."""
 
     QUEUED = "queued"
@@ -52,7 +52,7 @@ class Attachment(CamelModel):
 
 
 class Content(CamelModel):
-    """One set of bytes for one user (PipesHub's virtual record): stored, parsed and indexed
+    """One set of bytes for one user (a virtual record): stored, parsed and indexed
     once however many records (emails, uploads, knowledge bases) hold it."""
 
     id: str = Field(alias="_id")

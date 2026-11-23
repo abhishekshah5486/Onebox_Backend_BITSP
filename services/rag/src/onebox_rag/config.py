@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     RAG_PARSE_MEMORY_MB: int = Field(default=4096, ge=0)
     RAG_PARSE_WORKER_MAX_JOBS: int = Field(default=200, ge=0)
 
-    # PDF routing (PipesHub's defaults): scanned when this share of sampled pages needs OCR;
+    # PDF routing: scanned when this share of sampled pages needs OCR;
     # Docling up to these pages and bytes, pdfplumber past them.
     RAG_PDF_OCR_SAMPLE_PAGES: int = Field(default=30, ge=1)
     RAG_PDF_OCR_PAGE_SHARE: float = Field(default=0.5, gt=0, le=1)

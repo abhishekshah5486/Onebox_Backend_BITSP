@@ -1,4 +1,4 @@
-"""Whether a PDF needs OCR, and how many pages it has (PipesHub's inspection rules).
+"""Whether a PDF needs OCR, and how many pages it has.
 
 Runs in a parse worker. pdfium counts each page's text-layer characters cheaply: when at least
 half the pages have none, the PDF is scanned. Otherwise a fixed sample of the pages with text

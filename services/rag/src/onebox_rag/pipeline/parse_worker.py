@@ -1,6 +1,6 @@
 """A parse worker process: ``python -m onebox_rag.pipeline.parse_worker <request fd> <reply fd>``.
 
-It has a main module of its own (as PipesHub's does) so a worker imports only what the jobs it
+It has a main module of its own so a worker imports only what the jobs it
 is sent need, never the service. Each message is an 8-byte length then a pickle; a request is
 (function, args) and a reply is (ok, result or exception, traceback). Keep imports stdlib-only.
 """

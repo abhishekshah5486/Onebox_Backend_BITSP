@@ -1,4 +1,4 @@
-"""A DoclingDocument (as a dict) to blocks, walking its body in reading order like PipesHub."""
+"""A DoclingDocument (as a dict) to blocks, walking its body in reading order."""
 
 from typing import Any
 

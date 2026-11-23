@@ -50,7 +50,7 @@ def _digest(stream: BinaryIO) -> tuple[str, int]:
 class Ingestor:
     """Step 1: check a file, store its bytes once per user, and give it a record in its source.
 
-    Identical bytes share one content (PipesHub's virtual record), so an attachment sent in ten
+    Identical bytes share one content (a virtual record), so an attachment sent in ten
     emails is stored, parsed and indexed once and its ten records follow that one outcome."""
 
     def __init__(

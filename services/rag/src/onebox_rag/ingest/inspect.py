@@ -195,7 +195,7 @@ def _pdf_rejection(stream: BinaryIO) -> Rejection | None:
 
 def _office_rejection(stream: BinaryIO) -> Rejection | None:
     # A password turns DOCX, XLSX and PPTX into a compound file; msoffcrypto reads its flags,
-    # and those of legacy .doc, .xls and .ppt (which PipesHub leaves to fail in the parser).
+    # and those of legacy .doc, .xls and .ppt (otherwise they would only fail in the parser).
     try:
         if msoffcrypto.OfficeFile(stream).is_encrypted():
             return PASSWORD_PROTECTED
