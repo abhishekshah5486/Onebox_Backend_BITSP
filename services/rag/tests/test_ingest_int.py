@@ -97,9 +97,8 @@ def test_parses_an_email_and_its_attachments_once_per_content(client: TestClient
     # Only a PDF header, nothing more: read (by pdfplumber, with no Docling here) and found broken.
     assert pdf_record["status"] == "failed"
     assert pdf_record["reason"].startswith("pdfplumber could not read it")
-    rows = client.get(f"/rag/records/{csv_record['id']}/blocks", headers=bearer("u1")).json()[
-        "blocks"
-    ]
+    blocks = client.get(f"/rag/records/{csv_record['id']}/blocks", headers=bearer("u1")).json()
+    rows = [b for b in blocks["blocks"] if not b["tableRowMetadata"].get("isHeader")]
     assert [b["data"]["text"] for b in rows] == [
         "region: north, revenue: 120",
         "region: south, revenue: 95",

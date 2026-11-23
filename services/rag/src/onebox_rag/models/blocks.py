@@ -101,6 +101,9 @@ class TableMetadata(CamelModel):
     num_of_cols: int | None = None
     has_header: bool = False
     column_names: list[str] | None = None
+    # A spreadsheet's header is only a guess until table enrichment decides it; its header
+    # rows are blocks too, flagged is_header.
+    header_guessed: bool = False
     captions: list[str] = Field(default_factory=list)
     footnotes: list[str] = Field(default_factory=list)
 

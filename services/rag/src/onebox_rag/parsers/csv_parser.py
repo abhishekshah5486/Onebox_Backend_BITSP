@@ -4,15 +4,15 @@ import io
 from onebox_rag.models.blocks import DataFormat
 from onebox_rag.parsers.base import ParseResult
 from onebox_rag.parsers.builder import BlocksBuilder
-from onebox_rag.parsers.tables import add_table, looks_like_header
+from onebox_rag.parsers.sheets import add_sheet_table, find_tables, guess_header_rows
 from onebox_rag.parsers.text_decoding import decode_text
 
 _SAMPLE = 64 * 1024
 
 
 def parse_csv(data: bytes, mime_type: str = "", *, delimiter: str | None = None) -> ParseResult:
-    """One table, a row block per line. Headers come from csv.Sniffer for now; the LLM header
-    detection and row sentences arrive with spreadsheets (milestone 8)."""
+    """Every table in the file (blocks of rows split by empty rows or columns), each row cited
+    to its record and line. Headers are guessed here; table enrichment decides them."""
     text = decode_text(data)
     sample = text[:_SAMPLE]
     sniffer = csv.Sniffer()
@@ -21,22 +21,29 @@ def parse_csv(data: bytes, mime_type: str = "", *, delimiter: str | None = None)
     except csv.Error:
         dialect = csv.excel_tab if delimiter == "\t" else csv.excel
     try:
-        has_header = sniffer.has_header(sample)
+        sniffed_header = sniffer.has_header(sample)
     except csv.Error:
-        has_header = False
+        sniffed_header = False
 
     reader = csv.reader(io.StringIO(text), dialect)
-    rows: list[list[str]] = []
+    grid: list[list[str]] = []
     lines: list[int] = []
     for row in reader:
-        if any(cell.strip() for cell in row):
-            rows.append(row)
-            lines.append(reader.line_num)
-    header = rows.pop(0) if rows and (has_header or looks_like_header(rows[0])) else []
-    if header:
-        lines.pop(0)
+        grid.append(row)
+        lines.append(reader.line_num)
     out = BlocksBuilder()
-    add_table(out, header, rows, row_lines=lines, format=DataFormat.CSV)
+    for table in find_tables(grid):
+
+        def guess(rows: list[list[str]], at_top: bool = table.top == 0) -> int:
+            # The sniffer looked at the file's start, so it speaks only for a table there.
+            if at_top and sniffed_header and len(rows) > 1:
+                return 1
+            return guess_header_rows(rows)
+
+        def cite(i: int, _width: int, top: int = table.top) -> dict[str, int]:
+            return {"row_number": top + i + 1, "line_number": lines[top + i]}
+
+        add_sheet_table(out, table, guess_header=guess, format=DataFormat.CSV, cite=cite)
     return ParseResult(out.build())
 
 

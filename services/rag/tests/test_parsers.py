@@ -117,15 +117,38 @@ def test_structured_data_becomes_fields_groups_and_tables() -> None:
     assert texts(valid(parse_json(b"{oops, not json"))) == ["{oops, not json"]
 
 
-def test_csv_rows_name_their_columns_and_lines() -> None:
-    data = "name,amount,note\nrent,1200,\ncafé,4.5,oat milk\n".encode("cp1252")
+def test_csv_finds_each_table_and_cites_its_rows() -> None:
+    data = (
+        "Expenses,,,,\n"
+        "name,amount,note,,region\n"
+        "rent,1200,,,north\n"
+        "café,4.5,oat milk,,south\n"
+        ",,,,\n"
+        "2024,31,\n"
+        "2025,40,\n"
+    ).encode("cp1252")
     doc = valid(parse_csv(data))
-    rows = [b for b in doc.blocks if b.type == BlockType.TABLE_ROW]
-    assert [r.text() for r in rows] == [
-        "name: rent, amount: 1200",
-        "name: café, amount: 4.5, note: oat milk",
+    tables = [g for g in doc.block_groups if g.type == GroupType.TABLE]
+    by_table = [[doc.blocks[i] for i in t.children.block_indices()] for t in tables]
+    # A title line, then the expenses table beside a one-column table, then a headerless one.
+    assert texts(doc, BlockType.TEXT) == ["Expenses"]
+    assert [[b.text() for b in rows] for rows in by_table] == [
+        [
+            "name | amount | note",
+            "name: rent, amount: 1200",
+            "name: café, amount: 4.5, note: oat milk",
+        ],
+        ["region", "region: north", "region: south"],
+        ["2024, 31", "2025, 40"],
     ]
-    assert [r.citation_metadata.line_number for r in rows if r.citation_metadata] == [2, 3]
+    first = by_table[0]
+    assert [b.table_row_metadata.is_header for b in first if b.table_row_metadata] == [
+        True,
+        False,
+        False,
+    ]
+    assert [b.citation_metadata.line_number for b in first if b.citation_metadata] == [2, 3, 4]
+    assert tables[0].table_metadata is not None and tables[0].table_metadata.header_guessed
 
 
 def test_picks_a_parser_by_type_and_leaves_binary_formats_for_later() -> None:
