@@ -1,0 +1,53 @@
+# Ingestion and retrieval for automated replies (Python, FastAPI).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: rag }
+  template:
+    metadata:
+      labels: { app: rag }
+    spec:
+      # Service env vars (e.g. AUTH_PORT=tcp://...) would collide with app config.
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: rag
+          image: onebox/rag:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4012 }]
+          env:
+            - { name: REDIS_URL, value: 'redis://redis:6379' }
+            - { name: AUTH_SERVICE_URL, value: 'http://auth:4001' }
+            - name: MONGO_URI
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: MONGO_URI } }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+          startupProbe:
+            httpGet: { path: /health/live, port: 4012 }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4012 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4012 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag
+spec:
+  selector: { app: rag }
+  ports: [{ port: 4012 }]

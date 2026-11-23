@@ -4,14 +4,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROFILE=onebox
-SERVICES=(auth accounts settings mail connector llm-proxy ai payments billing realtime search api-gateway)
+SERVICES=(auth accounts settings mail connector llm-proxy ai payments billing realtime search rag api-gateway)
 CTX="$PROFILE"
 
 minikube -p "$PROFILE" status >/dev/null 2>&1 ||
   minikube start -p "$PROFILE" --driver=docker --cpus=2 --memory=3000
 
 for service in "${SERVICES[@]}"; do
-  docker build -q --build-arg SERVICE="$service" -t "onebox/$service:dev" .
+  if [ -f "services/$service/Dockerfile" ]; then
+    # Python services build from their own Dockerfile.
+    docker build -q -t "onebox/$service:dev" "services/$service"
+  else
+    docker build -q --build-arg SERVICE="$service" -t "onebox/$service:dev" .
+  fi
   minikube -p "$PROFILE" image load --overwrite "onebox/$service:dev"
 done
 
