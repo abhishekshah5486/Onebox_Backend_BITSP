@@ -39,6 +39,12 @@ describe('mailbox ops', () => {
     expect(mailboxOpPayloadSchema.safeParse(op(['\\Deleted'])).success).toBe(false);
   });
 
+  it('accepts Gmail labels to put on and take off, by path', () => {
+    const op = (add: string[]) => ({ ...base, op: { type: 'labels', add, remove: ['Old'] } });
+    expect(mailboxOpPayloadSchema.safeParse(op(['Leads', 'Work/Clients'])).success).toBe(true);
+    expect(mailboxOpPayloadSchema.safeParse(op([''])).success).toBe(false);
+  });
+
   it('rejects empty uid lists', () => {
     expect(
       mailboxOpPayloadSchema.safeParse({ ...base, uids: [], op: { type: 'expunge' } }).success,

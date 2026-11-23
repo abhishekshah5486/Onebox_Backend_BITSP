@@ -432,7 +432,16 @@ describe('imap connector', () => {
       expect(flags.has('\\Flagged')).toBe(true);
       expect(flags.has('\\Seen')).toBe(false);
     });
-    expect(changes).toContainEqual({ type: 'settled', ...base, uids: [fresh] });
+    await vi.waitFor(() =>
+      expect(changes).toContainEqual({ type: 'settled', ...base, uids: [fresh] }),
+    );
+
+    // Plain IMAP has no labels apart from folders: the message stays put, the op settles.
+    await runOp({ ...base, uids: [fresh], op: { type: 'labels', add: ['Leads'], remove: [] } });
+    await vi.waitFor(() =>
+      expect(changes.filter((c) => c.type === 'settled' && c.uids.includes(fresh))).toHaveLength(2),
+    );
+    expect((await serverState('INBOX')).messages['Fresh news']).toBeDefined();
 
     await runOp({ ...base, uids: [old], op: { type: 'move', to: { role: 'archive' } } });
     await vi.waitFor(async () => {

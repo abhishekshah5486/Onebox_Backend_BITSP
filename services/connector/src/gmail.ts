@@ -3,6 +3,20 @@ import type { ImapFlow } from 'imapflow';
 
 export const isGmail = (client: ImapFlow) => client.capabilities.has('X-GM-EXT-1');
 
+// Puts Gmail labels on (or takes them off) messages in the locked folder. Other servers have no
+// labels apart from folders, so they are left alone. Gmail ignores labels already there.
+export async function setGmailLabels(
+  client: ImapFlow,
+  uids: string,
+  { add, remove }: { add: string[]; remove: string[] },
+) {
+  if (!isGmail(client)) return false;
+  const options = { uid: true, useLabels: true };
+  if (add.length) await client.messageFlagsAdd(uids, add, options);
+  if (remove.length) await client.messageFlagsRemove(uids, remove, options);
+  return true;
+}
+
 // Gmail's inbox and All Mail carry categories (tabs, Purchases, Travel).
 export const hasCategories = (client: ImapFlow, role: string) =>
   (role === 'inbox' || role === 'archive') && isGmail(client);

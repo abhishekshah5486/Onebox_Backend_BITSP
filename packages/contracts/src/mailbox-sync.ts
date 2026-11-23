@@ -53,6 +53,8 @@ export const messageOpSchema = z.object({
     z.object({ type: z.literal('move'), to: mailboxTargetSchema }),
     // Permanent deletion, offered only in Trash and Spam.
     z.object({ type: z.literal('expunge') }),
+    // Gmail labels put on or taken off; other servers keep labels in OneBox only.
+    z.object({ type: z.literal('labels'), add: z.array(path), remove: z.array(path) }),
   ]),
 });
 
