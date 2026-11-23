@@ -6,7 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from onebox_rag.dates import DateBounds
 from onebox_rag.index.embed import EmbeddingModel, SparseVector
@@ -20,6 +22,20 @@ UPSERT_BATCH = 256
 # RRF ties hits of equal rank, which Qdrant returns in any order; a few more are fetched and
 # ties broken by id, so the same query always ranks the same.
 TIE_MARGIN = 2
+
+
+class SearchIndexError(Exception):
+    """Qdrant could not answer a search: unreachable, too slow, or failing."""
+
+    def __init__(self, message: str, *, timed_out: bool) -> None:
+        super().__init__(message)
+        self.timed_out = timed_out
+
+    @classmethod
+    def from_client(cls, err: Exception) -> "SearchIndexError":
+        source = getattr(err, "source", None)
+        timed_out = isinstance(source, httpx.TimeoutException | TimeoutError)
+        return cls(f"qdrant failed ({type(source or err).__name__})", timed_out=timed_out)
 
 
 @dataclass(frozen=True)
@@ -204,7 +220,7 @@ class QdrantStore:
         must = [*_scope(user_id, content_ids), _match("kind", TITLE)]
         if dates is not None:
             must += _date_conditions(dates)
-        response = await self._client.query_points(
+        response = await self._query(
             collection,
             query=dense,
             using=DENSE,
@@ -249,7 +265,7 @@ class QdrantStore:
         if dates is not None:
             must += _date_conditions(dates)
         where = models.Filter(must=must)
-        response = await self._client.query_points(
+        response = await self._query(
             collection,
             prefetch=[
                 models.Prefetch(
@@ -280,7 +296,17 @@ class QdrantStore:
         return [Hit(str(p.id), float(p.score or 0.0), dict(p.payload or {})) for p in points]
 
     async def exists(self, collection: str) -> bool:
-        return bool(await self._client.collection_exists(collection))
+        try:
+            return bool(await self._client.collection_exists(collection))
+        except (ResponseHandlingException, UnexpectedResponse) as err:
+            raise SearchIndexError.from_client(err) from err
+
+    async def _query(self, collection: str, **kwargs: Any) -> models.QueryResponse:
+        """A search, its failure told apart from "nothing matched"."""
+        try:
+            return await self._client.query_points(collection, **kwargs)
+        except (ResponseHandlingException, UnexpectedResponse) as err:
+            raise SearchIndexError.from_client(err) from err
 
     async def ping(self) -> None:
         await self._client.get_collections()

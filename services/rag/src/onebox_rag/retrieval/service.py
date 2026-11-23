@@ -75,12 +75,23 @@ class RetrieveSettings:
     unindexed_max: int = 10
 
 
+# Said beside results that may not be all there, so "nothing found" isn't taken as "none".
+TITLE_LOOKUP_FAILED = (
+    "The lookup of records by name did not finish, so a record not read yet may exist even "
+    "though none is listed."
+)
+
+
 @dataclass
 class Retrieved:
     chunks: list[dict[str, Any]] = field(default_factory=list)
     # Records whose names match but whose content can't be searched yet (still being read,
     # or failed): search can't see their text, so they are named apart.
     unindexed: list[dict[str, Any]] = field(default_factory=list)
+    # Part of the search could not run; what was found stands.
+    incomplete: str | None = None
+    # What the search can't see yet: {code, count, message}.
+    notices: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Retriever:
@@ -107,15 +118,16 @@ class Retriever:
         dates: DateBounds | None = None,
     ) -> Retrieved:
         dates = dates if dates is not None and dates.given() else None
+        notices = await self._notices(user_id, scope, dates)
         content_ids = None
         if scope.given():
             content_ids = await self._records.scoped_contents(user_id, **scope.fields())
             if not content_ids:
-                return Retrieved()
+                return Retrieved(notices=notices)
         model = await self._dense.model_for(user_id)
         collection = collection_name(model)
         if not await self._store.exists(collection):
-            return Retrieved()
+            return Retrieved(notices=notices)
         dense, sparse = await asyncio.gather(
             self._dense.embed(user_id, model, [query]), asyncio.to_thread(sparse_query, query)
         )
@@ -137,7 +149,41 @@ class Retriever:
         except BaseException:
             unindexed.cancel()
             raise
-        return Retrieved(chunks, await unindexed)
+        names = await unindexed
+        return Retrieved(
+            chunks,
+            names or [],
+            TITLE_LOOKUP_FAILED if names is None else None,
+            notices,
+        )
+
+    async def _notices(
+        self, user_id: str, scope: Scope, dates: DateBounds | None
+    ) -> list[dict[str, Any]]:
+        notices = []
+        reading = await self._records.count_reading(user_id, dates, **scope.fields())
+        if reading:
+            notices.append(
+                {
+                    "code": "STILL_READING",
+                    "count": reading,
+                    "message": f"{reading} record{'s are' if reading != 1 else ' is'} still being "
+                    "read, so their text can't be searched yet.",
+                }
+            )
+        if dates is not None:
+            waiting = await self._contents.undated_for(user_id)
+            undated = await self._records.count_holding(user_id, waiting, **scope.fields())
+            if undated:
+                notices.append(
+                    {
+                        "code": "DATES_PENDING",
+                        "count": undated,
+                        "message": f"{undated} record{'s' if undated != 1 else ''} can't be "
+                        "searched by date yet; a search without dates finds them.",
+                    }
+                )
+        return notices
 
     async def _chunks(
         self,
@@ -233,7 +279,8 @@ class Retriever:
         content_ids: list[str] | None,
         scope: Scope,
         dates: DateBounds | None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]] | None:
+        """None when the lookup failed (the passages stand without it)."""
         settings = self._settings
         if settings.unindexed_max == 0:
             return []
@@ -252,9 +299,8 @@ class Retriever:
             waiting = {c.id for c in contents.values() if c.status != Status.COMPLETED}
             held = await self._records.holding(user_id, list(waiting), dates, **scope.fields())
         except Exception:
-            # The passages stand without it.
             logger.warning("title search failed", exc_info=True)
-            return []
+            return None
         by_id = {r.id: r for records in held.values() for r in records}
         found: list[dict[str, Any]] = []
         for hit in hits:

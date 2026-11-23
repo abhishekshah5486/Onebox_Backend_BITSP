@@ -55,6 +55,12 @@ class ContentStore:
         )
         return Content.model_validate(doc) if doc else None
 
+    async def undated_for(self, user_id: str, limit: int = 1000) -> list[str]:
+        cursor = self._contents.find(
+            {"userId": user_id, "status": "completed", "pointsDated": {"$ne": True}}, {"_id": 1}
+        ).limit(limit)
+        return [str(doc["_id"]) async for doc in cursor]
+
     async def undated(self, limit: int = 1000) -> list[str]:
         cursor = self._contents.find(
             {"status": "completed", "indexCollection": {"$ne": None}, "pointsDated": {"$ne": True}},
@@ -175,6 +181,22 @@ class RecordStore:
     async def with_mail_copy(self, message_id: str) -> Record | None:
         doc = await self._records.find_one({"mail.copyIds": message_id})
         return Record.model_validate(doc) if doc else None
+
+    async def count_reading(
+        self, user_id: str, dates: DateBounds | None = None, **scope: list[str] | None
+    ) -> int:
+        """The user's records (within the scope and dates) whose content is still being read."""
+        query = {**_scope(user_id, scope), **_dated(dates)}
+        query["status"] = {"$in": ["queued", "in_progress"]}
+        return await self._records.count_documents(query)
+
+    async def count_holding(
+        self, user_id: str, content_ids: list[str], **scope: list[str] | None
+    ) -> int:
+        if not content_ids:
+            return 0
+        query = {**_scope(user_id, scope), "contentId": {"$in": content_ids}}
+        return await self._records.count_documents(query)
 
     async def untitled(self, limit: int = 1000) -> list[Record]:
         cursor = self._records.find({"titled": {"$ne": True}}).limit(limit)

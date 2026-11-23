@@ -227,3 +227,28 @@ def test_finds_records_by_name_and_names_the_unreadable(
     assert qdrant.count(COLLECTION, count_filter=title).count == 1
     assert client.delete(f"/rag/records/{minutes['id']}", headers=bearer("u1")).status_code == 204
     assert qdrant.count(COLLECTION, count_filter=title).count == 0
+
+
+def test_says_what_a_search_could_not_see(live_settings: Settings, proxy_url: str) -> None:
+    base = {"RAG_LLM_PROXY_URL": proxy_url, "RAG_TABLE_ENRICHMENT": False}
+    # Nothing reads uploads: they stay waiting, named by title, counted as unread.
+    idle = live_settings.model_copy(update={**base, "RAG_RUN_WORKER": False})
+    with TestClient(create_app(idle, verifier=fake_verifier())) as client:
+        while client.get("/health/ready").status_code != 200:
+            time.sleep(0.5)
+        [plan] = upload(client, ("Launch plan.md", b"Ship it in March."), kb="waiting", user="u9")
+        found = client.post(
+            "/rag/retrieve",
+            json={"query": "launch plan", "sourceIds": ["waiting"]},
+            headers=bearer("u9"),
+        ).json()
+        assert found["chunks"] == []
+        assert [u["recordId"] for u in found["unindexed"]] == [plan["id"]]
+        assert found["notices"][0]["code"] == "STILL_READING" and found["notices"][0]["count"] == 1
+
+    # The index down: an error that says so, never an empty result.
+    down = live_settings.model_copy(update={**base, "QDRANT_URL": "http://127.0.0.1:9"})
+    with TestClient(create_app(down, verifier=fake_verifier())) as client:
+        response = client.post("/rag/retrieve", json={"query": "x"}, headers=bearer("u9"))
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "SEARCH_INDEX_UNREACHABLE"

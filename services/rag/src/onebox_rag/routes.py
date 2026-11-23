@@ -8,6 +8,7 @@ from onebox_rag.auth import CurrentUser, require_internal
 from onebox_rag.dates import parse_bounds
 from onebox_rag.errors import NotFoundError, UnavailableError
 from onebox_rag.index.embed import EmbeddingUnavailableError
+from onebox_rag.index.qdrant_store import SearchIndexError
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor, Source
 from onebox_rag.ingest.records import ContentStore, RecordStore
@@ -18,6 +19,14 @@ from onebox_rag.retrieval.service import Retriever, Scope
 
 SOURCE_ID = r"^[A-Za-z0-9_-]{1,64}$"
 DEFAULT_RETRIEVE_LIMIT, MAX_RETRIEVE_LIMIT = 8, 50
+
+
+INDEX_TIMEOUT = (
+    "The search index took too long to respond, so no results are shown. Try again in a minute."
+)
+INDEX_UNREACHABLE = (
+    "The search index can't be reached just now, so no results are shown. Try again in a minute."
+)
 
 
 class RetrieveQuery(BaseModel):
@@ -71,7 +80,17 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
         )
     except EmbeddingUnavailableError as err:
         raise UnavailableError("The embedding model is unavailable") from err
-    return {"chunks": found.chunks, "unindexed": found.unindexed}
+    except SearchIndexError as err:
+        # Never an empty result: "nothing found" would read as "there is nothing".
+        if err.timed_out:
+            raise UnavailableError(INDEX_TIMEOUT, code="SEARCH_INDEX_TIMEOUT") from err
+        raise UnavailableError(INDEX_UNREACHABLE, code="SEARCH_INDEX_UNREACHABLE") from err
+    out: dict[str, Any] = {"chunks": found.chunks, "unindexed": found.unindexed}
+    if found.incomplete:
+        out["incomplete"] = found.incomplete
+    if found.notices:
+        out["notices"] = found.notices
+    return out
 
 
 async def _read(
@@ -97,8 +116,9 @@ async def _read(
     if query and query.strip() and start == 0 and retriever is not None:
         try:
             matches = await retriever.matching_blocks(user_id, content, query)
-        except EmbeddingUnavailableError as err:
-            raise UnavailableError("The embedding model is unavailable") from err
+        except (EmbeddingUnavailableError, SearchIndexError):
+            # The record is still readable; it is read in order instead.
+            matches = []
         focus = FocusSettings(max_chars=settings.RAG_FOCUSED_READ_CHARS)
         focused = focused_read(container, matches, focus)
         if focused is not None:
