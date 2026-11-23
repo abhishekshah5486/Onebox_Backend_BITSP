@@ -87,6 +87,28 @@ class Content(CamelModel):
     updated_at: datetime
 
 
+class Address(CamelModel):
+    name: str = ""
+    address: str
+
+
+class MailInfo(CamelModel):
+    """An email record's place in the mailbox: the copies (one per folder) it is read from and
+    who sent it to whom, for citations and for the model's context."""
+
+    key: str
+    copy_ids: list[str]
+    version: int
+    thread_id: str | None = None
+    message_id_header: str | None = None
+    sender: Address | None = None
+    to: list[Address] = Field(default_factory=list)
+    cc: list[Address] = Field(default_factory=list)
+    received_at: datetime | None = None
+    # Every attachment has its record (one that failed to download is tried again).
+    attachments_done: bool = False
+
+
 class Record(CamelModel):
     """One item in a source (an email, an attachment, an uploaded file) pointing at its content."""
 
@@ -110,3 +132,4 @@ class Record(CamelModel):
     reason: str | None = None
     created_at: datetime
     updated_at: datetime
+    mail: MailInfo | None = None

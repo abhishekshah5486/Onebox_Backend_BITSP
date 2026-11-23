@@ -20,6 +20,8 @@ from onebox_rag.ingest.inspect import Limits
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.logs import log_requests
+from onebox_rag.mail.client import MailClient
+from onebox_rag.mail.source import MailSource
 from onebox_rag.models import Content
 from onebox_rag.mongo import mongo_client
 from onebox_rag.parsers.ocr.rapid import OcrLimits
@@ -33,7 +35,7 @@ from onebox_rag.pipeline.pool import ParsePool
 from onebox_rag.pipeline.routing import PdfLimits
 from onebox_rag.pipeline.tables import TableEnricher, TableSettings
 from onebox_rag.pipeline.vision import VisionClient, VisionSettings
-from onebox_rag.pipeline.worker import parse_worker, stage_worker
+from onebox_rag.pipeline.worker import mail_worker, parse_worker, stage_worker
 from onebox_rag.retrieval.service import RecordCut, Retriever, RetrieveSettings
 from onebox_rag.retrieval.units import UnitSettings
 from onebox_rag.routes import internal_router, rag_router
@@ -260,6 +262,19 @@ def create_app(
             app.state.retriever = Retriever(
                 records, contents, blobs, dense, store, retrieve_settings_from(settings)
             )
+        mail = (
+            MailSource(
+                records,
+                ingestor,
+                MailClient(
+                    settings.RAG_MAIL_URL, app.state.internal_token, settings.RAG_MAIL_TIMEOUT_S
+                ),
+                settings.RAG_MAX_FILE_MB * 1024 * 1024,
+            )
+            if settings.RAG_MAIL_URL and settings.RAG_RUN_WORKER
+            else None
+        )
+        mail_reader = mail_worker(settings, mail) if mail is not None else None
         indexer = (
             stage_worker(
                 settings,
@@ -278,6 +293,10 @@ def create_app(
                 await worker.close()
             if indexer is not None:
                 await indexer.close()
+            if mail_reader is not None:
+                await mail_reader.close()
+            if mail is not None:
+                await mail.close()
             if dense is not None:
                 await dense.close()
             if store is not None:

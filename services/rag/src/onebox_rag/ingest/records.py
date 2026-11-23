@@ -76,6 +76,7 @@ class RecordStore:
         await self._records.create_index([("userId", ASCENDING), ("createdAt", DESCENDING)])
         await self._records.create_index([("contentId", ASCENDING)])
         await self._records.create_index([("parentId", ASCENDING)], sparse=True)
+        await self._records.create_index([("mail.copyIds", ASCENDING)], sparse=True)
 
     async def insert(self, record: Record) -> tuple[Record, bool]:
         """Saves the record, or returns the one already there for the same item (and False)."""
@@ -138,6 +139,23 @@ class RecordStore:
         async for doc in self._records.find(query).sort("createdAt", DESCENDING):
             held.setdefault(doc["contentId"], Record.model_validate(doc))
         return held
+
+    async def by_external_id(
+        self, user_id: str, source_type: str, source_id: str, external_id: str
+    ) -> Record | None:
+        doc = await self._records.find_one(
+            {
+                "userId": user_id,
+                "sourceType": source_type,
+                "sourceId": source_id,
+                "externalId": external_id,
+            }
+        )
+        return Record.model_validate(doc) if doc else None
+
+    async def with_mail_copy(self, message_id: str) -> Record | None:
+        doc = await self._records.find_one({"mail.copyIds": message_id})
+        return Record.model_validate(doc) if doc else None
 
     async def holds_content(self, content_id: str) -> bool:
         return await self._records.count_documents({"contentId": content_id}, limit=1) > 0

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Index jobs (embedding and writing points) run apart from parsing: they wait on the network.
     RAG_INDEX_QUEUE: str = "rag-index"
     RAG_INDEX_CONCURRENCY: int = Field(default=4, ge=1)
+    # The mail source: the mail service feeds stored mail on rag-mail, and RAG reads each email
+    # and its attachments back from it. An empty RAG_MAIL_URL leaves the queue unread.
+    RAG_MAIL_URL: str = "http://localhost:4003"
+    RAG_MAIL_QUEUE: str = "rag-mail"
+    RAG_MAIL_CONCURRENCY: int = Field(default=4, ge=1)
+    RAG_MAIL_TIMEOUT_S: float = Field(default=120, gt=0)
     RAG_INGEST_ATTEMPTS: int = Field(default=5, ge=1)
     RAG_INGEST_BACKOFF_MS: int = Field(default=5_000, ge=0)
     # Runs the parse worker inside the API process; off where it runs as its own deployment.

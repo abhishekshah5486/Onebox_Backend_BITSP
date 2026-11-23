@@ -29,6 +29,7 @@ def settings() -> Settings:
         # Docling tests start their own; never reach one running in dev.
         RAG_DOCLING_URL="",
         RAG_LLM_PROXY_URL="",
+        RAG_MAIL_URL="",
         QDRANT_URL="",
     )
 

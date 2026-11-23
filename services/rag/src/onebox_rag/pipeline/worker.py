@@ -30,3 +30,20 @@ def stage_worker(settings: Settings, queue: str, stage: Stage, concurrency: int)
 
 def parse_worker(settings: Settings, stage: Stage) -> Worker:
     return stage_worker(settings, settings.RAG_INGEST_QUEUE, stage, settings.RAG_PARSE_WORKERS)
+
+
+class MailHandler(Protocol):
+    async def handle(self, user_id: str, payload: dict[str, Any]) -> None: ...
+
+
+def mail_worker(settings: Settings, source: MailHandler) -> Worker:
+    """Consumes the mail service's rag-mail jobs (the TypeScript job envelope)."""
+
+    async def process(job: Any, _token: str) -> None:
+        await source.handle(str(job.data["userId"]), dict(job.data["payload"]))
+
+    return Worker(
+        settings.RAG_MAIL_QUEUE,
+        process,
+        {"connection": settings.REDIS_URL, "concurrency": settings.RAG_MAIL_CONCURRENCY},
+    )

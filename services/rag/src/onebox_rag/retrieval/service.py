@@ -132,8 +132,19 @@ class Retriever:
         held = await self._records.holding(
             user_id, list({u.content_id for u in units}), **scope.fields()
         )
+        # An attachment is cited with the email it came with.
+        parents = {
+            r.parent_id: await self._records.get(user_id, r.parent_id)
+            for r in held.values()
+            if r.parent_id and r.mail is None
+        }
         return [
-            _chunk(unit, held[unit.content_id], containers[unit.content_id])
+            _chunk(
+                unit,
+                held[unit.content_id],
+                containers[unit.content_id],
+                parents.get(held[unit.content_id].parent_id or ""),
+            )
             for unit in units
             if unit.content_id in held
         ]
@@ -156,7 +167,9 @@ def _current(hit: Hit, contents: dict[str, Content]) -> bool:
     return content is not None and content.revision == hit.payload.get("revision")
 
 
-def _chunk(unit: Unit, record: Record, container: BlocksContainer) -> dict[str, Any]:
+def _chunk(
+    unit: Unit, record: Record, container: BlocksContainer, parent: Record | None = None
+) -> dict[str, Any]:
     block = container.blocks[unit.block_index] if unit.block_index < len(container.blocks) else None
     cite = citation_of(block) if block is not None else {}
     if unit.kind == "table" and unit.group_index is not None and not cite:
@@ -177,6 +190,12 @@ def _chunk(unit: Unit, record: Record, container: BlocksContainer) -> dict[str, 
             "sourceType": record.source_type,
             "sourceId": record.source_id,
             "updatedAt": record.updated_at.isoformat(),
+            **({"mail": _mail(record)} if record.mail is not None else {}),
+            **(
+                {"attachedTo": {"recordId": parent.id, "name": parent.name, "mail": _mail(parent)}}
+                if parent is not None and parent.mail is not None
+                else {}
+            ),
         },
         "citation": {
             **{k: v for k, v in cite.items() if v is not None},
@@ -185,3 +204,14 @@ def _chunk(unit: Unit, record: Record, container: BlocksContainer) -> dict[str, 
             **({"neighbourOf": unit.neighbour_of} if unit.neighbour_of is not None else {}),
         },
     }
+
+
+def _mail(record: Record) -> dict[str, Any]:
+    """Who wrote an email to whom and when, which its body rarely says."""
+    assert record.mail is not None
+    return record.mail.model_dump(
+        by_alias=True,
+        mode="json",
+        include={"thread_id", "sender", "to", "cc", "received_at"},
+        exclude_none=True,
+    )
