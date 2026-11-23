@@ -31,6 +31,8 @@ export function createChangesHandler(
     status: 'sent' | 'failed',
     error: string | null,
   ) => Promise<void> = async () => {},
+  // Hands labels put on in OneBox to the mail server (Gmail keeps them as its own labels).
+  writeLabels: (doc: MessageDoc, add: string[], remove: string[]) => Promise<void> = async () => {},
 ) {
   const { messages } = collections;
 
@@ -60,6 +62,9 @@ export function createChangesHandler(
         await messages.updateMany(filter, { $pull: { aiLabels: { $in: change.remove } } });
       }
       await refreshThread(collections, doc.threadId);
+      if (change.add.length || change.remove.length) {
+        await writeLabels(doc, change.add, change.remove);
+      }
       logger.info(
         { accountId, added: change.add.length, removed: change.remove.length },
         'labels applied',

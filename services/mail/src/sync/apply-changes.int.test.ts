@@ -7,7 +7,7 @@ import {
 import { connectMongo, type MongoHandle } from '@onebox/db-mongo';
 import { createLogger } from '@onebox/logger';
 import { startMongo, type TestMongo } from '@onebox/testing';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureIndexes, mailCollections, type MailCollections } from '../db/collections';
 import { createIngestHandler } from '../ingest/ingest-message';
 import { ingestJob } from '../test/fixtures';
@@ -179,6 +179,34 @@ describe('mailbox changes', () => {
     });
     await change({ type: 'tagged', messageId: doc!._id, add: [], remove: ['Leads'] });
     expect(await thread('Pricing question')).toMatchObject({ labels: [], aiLabels: [] });
+  });
+
+  it('hands labels put on in OneBox to the mail server', async () => {
+    await put('Invoice due', 6);
+    const [doc] = await collections.messages.find({ subject: 'Invoice due' }).toArray();
+    const writeLabels = vi.fn(async () => {});
+    const tag = (add: string[], remove: string[]) =>
+      createChangesHandler(
+        collections,
+        undefined,
+        writeLabels,
+      )(
+        createJobEnvelope({
+          jobId: 't',
+          userId: 'user-1',
+          accountId: ACCOUNT,
+          payload: { type: 'tagged', messageId: doc!._id, add, remove },
+        }),
+        context,
+      );
+    await tag(['Receipts'], []);
+    await tag([], []);
+    expect(writeLabels).toHaveBeenCalledTimes(1);
+    expect(writeLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: doc!._id, uid: 6 }),
+      ['Receipts'],
+      [],
+    );
   });
 
   it('forgets a renumbered folder and removed messages', async () => {

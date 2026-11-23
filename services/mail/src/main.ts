@@ -36,6 +36,7 @@ import { createMailboxService } from './mail/mailbox-service';
 import { createLabelService } from './mail/label-service';
 import { createThreadActions } from './mail/thread-actions';
 import { createChangesHandler } from './sync/apply-changes';
+import { labelWriter } from './sync/write-labels';
 import { enableThreadPreImages, startLiveFeed } from './feed/live-feed';
 import { startSearchFeed } from './feed/search-feed';
 import { refreshStoredText } from './ingest/refresh-text';
@@ -124,9 +125,13 @@ if (config.MAIL_ROLE !== 'api') {
   const changes = createConsumer(
     QUEUES.mailboxChanges,
     mailboxChangePayloadSchema,
-    createChangesHandler(collections, async (outboxId, status, error) => {
-      await compose?.applyResult(outboxId, status, error);
-    }),
+    createChangesHandler(
+      collections,
+      async (outboxId, status, error) => {
+        await compose?.applyResult(outboxId, status, error);
+      },
+      labelWriter(opsProducer),
+    ),
     { redisUrl: config.REDIS_URL, logger, concurrency: 1 },
   );
   cleanups.push(consumer.close, changes.close);
