@@ -19,4 +19,6 @@ def mongo_client(uri: str, **options: Any) -> AsyncMongoClient[dict[str, Any]]:
     # Trust certifi's CA bundle: some Python installs ship none, and Atlas then fails TLS.
     if uses_tls(uri):
         options.setdefault("tlsCAFile", certifi.where())
+    # Dates come back in UTC as written, not as naive times that lose their zone.
+    options.setdefault("tz_aware", True)
     return AsyncMongoClient(uri, **options)
