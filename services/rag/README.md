@@ -140,6 +140,15 @@ maxChunksPerRecord}`) and `/internal/rag/retrieve` (with `userId`, for the agent
   (page, sheet, row, heading path, blocks). `GET /rag/records/{id}/read?start=&max=` returns
   a record's blocks in order, 200 at a time, with `next` to continue, for reading a whole
   document or table.
+- **Mail.** The mail service follows its stored mail (a MongoDB change stream: every email
+  once, then each change) and puts a job per email on `rag-mail`; RAG reads the email and its
+  attachments back from mail's `/internal` routes. An email is one record whichever folders
+  hold copies of it (spam, trash and drafts are left out), named by its subject, its content
+  the latest reply only: quoted history is removed with talon, as earlier emails of the thread
+  hold it, but a forward is kept whole. Each attachment is a child record. A copy moved or
+  deleted updates the record; once no readable copy is left, the email and its attachments
+  leave RAG. Passages from mail carry the sender, recipients and date, and an attachment's
+  carry its email's.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
   JSON and JSON Lines, YAML, CSV and TSV, spreadsheets, PDF, Word, PowerPoint, images, and
   other text.

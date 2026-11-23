@@ -218,7 +218,11 @@ choices; we offer those and a few more:
 10. Retrieval: hybrid search, units (lists, tables, small tables whole), neighbours,
     citations, paged record reads. **Done**: `POST /rag/retrieve`, `/internal/rag/retrieve`, and
     `/rag/records/{id}/read` (plus its internal twin) for the agent service's tools.
-11. Mail source: backfill and live feed of all mail and attachments.
+11. Mail source: backfill and live feed of all mail and attachments. **Done**: the mail service's change
+    feed (shared with search) puts a job per email on `rag-mail`; RAG reads it back through
+    mail's `/internal/messages` routes; latest reply only (talon, forwards kept whole); spam,
+    trash and drafts left out; attachments as child records; sender, recipients and date on
+    every passage.
 12. Evaluation corpus (every format, questions with expected passages, recall@k and MRR in CI)
     and hardening (retries, dead letters, metrics).
 
