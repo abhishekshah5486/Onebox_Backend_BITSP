@@ -4,7 +4,7 @@ from onebox_rag.parsers.builder import BlocksBuilder
 from onebox_rag.parsers.text_decoding import decode_text
 
 
-def parse_plain_text(data: bytes) -> ParseResult:
+def parse_plain_text(data: bytes, mime_type: str = "") -> ParseResult:
     return ParseResult(plain_text_to_blocks(decode_text(data)))
 
 

@@ -30,7 +30,7 @@ _BLOCK_TAGS = {
 }  # fmt: skip
 
 
-def parse_html(data: bytes) -> ParseResult:
+def parse_html(data: bytes, mime_type: str = "") -> ParseResult:
     return ParseResult(html_to_blocks(decode_text(data)))
 
 

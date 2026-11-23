@@ -10,7 +10,7 @@ from onebox_rag.parsers.text_decoding import decode_text
 _SAMPLE = 64 * 1024
 
 
-def parse_csv(data: bytes, delimiter: str | None = None) -> ParseResult:
+def parse_csv(data: bytes, mime_type: str = "", *, delimiter: str | None = None) -> ParseResult:
     """One table, a row block per line. Headers come from csv.Sniffer for now; the LLM header
     detection and row sentences PipesHub uses arrive with spreadsheets (milestone 8)."""
     text = decode_text(data)
@@ -54,5 +54,5 @@ def _looks_like_header(row: list[str]) -> bool:
     return True
 
 
-def parse_tsv(data: bytes) -> ParseResult:
-    return parse_csv(data, delimiter="\t")
+def parse_tsv(data: bytes, mime_type: str = "") -> ParseResult:
+    return parse_csv(data, mime_type, delimiter="\t")

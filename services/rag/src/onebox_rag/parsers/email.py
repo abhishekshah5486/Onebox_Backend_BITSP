@@ -13,7 +13,7 @@ from onebox_rag.parsers.plain_text import plain_text_to_blocks
 _HEADERS = ("From", "To", "Cc", "Date", "Subject")
 
 
-def parse_email(data: bytes) -> ParseResult:
+def parse_email(data: bytes, mime_type: str = "") -> ParseResult:
     message = BytesParser(policy=policy.default).parsebytes(data)
     if not isinstance(message, EmailMessage):
         message = EmailMessage(policy=policy.default)

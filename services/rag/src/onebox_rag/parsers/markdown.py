@@ -23,7 +23,7 @@ from onebox_rag.parsers.text_decoding import decode_text
 _MD = MarkdownIt("commonmark").enable("table").enable("strikethrough")
 
 
-def parse_markdown(data: bytes) -> ParseResult:
+def parse_markdown(data: bytes, mime_type: str = "") -> ParseResult:
     return ParseResult(markdown_to_blocks(decode_text(data)))
 
 

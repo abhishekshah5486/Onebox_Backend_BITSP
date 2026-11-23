@@ -42,6 +42,8 @@ class DataFormat(StrEnum):
     YAML = "yaml"
     CSV = "csv"
     CODE = "code"
+    # A data URI (images).
+    BASE64 = "base64"
 
 
 class GroupType(StrEnum):
@@ -185,13 +187,16 @@ class Block(CamelModel):
     semantic_metadata: SemanticMetadata | None = None
 
     def text(self) -> str:
-        """The block's searchable text."""
+        """The block's searchable text; an image's is its description or captions, not its bytes."""
+        if self.type == BlockType.IMAGE:
+            meta = self.image_metadata
+            if meta is None:
+                return ""
+            return meta.description or " ".join(meta.captions)
         if isinstance(self.data, str):
             return self.data
         if isinstance(self.data, dict):
             return str(self.data.get("text") or "")
-        if self.image_metadata and self.image_metadata.description:
-            return self.image_metadata.description
         return ""
 
 

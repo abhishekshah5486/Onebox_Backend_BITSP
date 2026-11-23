@@ -18,7 +18,7 @@ from onebox_rag.parsers.text_decoding import decode_text
 LONG_TEXT = 200
 
 
-def parse_json(data: bytes) -> ParseResult:
+def parse_json(data: bytes, mime_type: str = "") -> ParseResult:
     text = decode_text(data)
     try:
         docs = [json.loads(text)]
@@ -31,7 +31,7 @@ def parse_json(data: bytes) -> ParseResult:
     return ParseResult(structured_to_blocks(docs, DataFormat.JSON))
 
 
-def parse_yaml(data: bytes) -> ParseResult:
+def parse_yaml(data: bytes, mime_type: str = "") -> ParseResult:
     text = decode_text(data)
     try:
         docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]

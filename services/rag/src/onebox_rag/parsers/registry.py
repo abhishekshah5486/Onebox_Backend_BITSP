@@ -14,7 +14,8 @@ from onebox_rag.parsers.structured import parse_json, parse_yaml
 class Parser:
     # Recorded per revision, so a retry or re-index uses the same one.
     engine: str
-    parse: Callable[[bytes], ParseResult]
+    # (bytes, mime type) -> blocks; runs in a parse worker, so it must pickle by reference.
+    parse: Callable[[bytes, str], ParseResult]
 
 
 MARKDOWN = Parser("markdown-it", parse_markdown)
