@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     RAG_INGEST_QUEUE: str = "rag-ingest"
     RAG_INGEST_ATTEMPTS: int = Field(default=5, ge=1)
     RAG_INGEST_BACKOFF_MS: int = Field(default=5_000, ge=0)
+    # Runs the parse worker inside the API process; off where it runs as its own deployment.
+    RAG_RUN_WORKER: bool = True
+    RAG_PARSE_CONCURRENCY: int = Field(default=2, ge=1)
 
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked
     # size, compression ratio and entry count that mark a zip bomb.

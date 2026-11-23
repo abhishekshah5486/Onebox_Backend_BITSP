@@ -10,13 +10,13 @@ from onebox_rag.config import Settings
 JOB_SCHEMA_VERSION = 1
 
 
-def job_id(record_id: str, revision: int) -> str:
+def job_id(content_id: str, revision: int) -> str:
     # BullMQ refuses ids with ':' (its key separator).
-    return f"{record_id}_{revision}"
+    return f"{content_id}_{revision}"
 
 
 class IngestQueue:
-    """Parse jobs, one per record revision; enqueuing the same revision twice is a no-op."""
+    """Parse jobs, one per content revision; enqueuing the same revision twice is a no-op."""
 
     def __init__(self, settings: Settings) -> None:
         self.name = settings.RAG_INGEST_QUEUE
@@ -28,9 +28,9 @@ class IngestQueue:
             "removeOnFail": {"age": 7 * 24 * 3600},
         }
 
-    async def enqueue(self, user_id: str, record_id: str, revision: int) -> bool:
+    async def enqueue(self, user_id: str, content_id: str, revision: int) -> bool:
         """True when queued, False when that revision was already queued."""
-        jid = job_id(record_id, revision)
+        jid = job_id(content_id, revision)
         if await self._queue.getJob(jid) is not None:
             return False
         envelope: dict[str, Any] = {
@@ -42,17 +42,17 @@ class IngestQueue:
             .isoformat(timespec="milliseconds")
             .replace("+00:00", "Z"),
             "schemaVersion": JOB_SCHEMA_VERSION,
-            "payload": {"recordId": record_id, "revision": revision},
+            "payload": {"contentId": content_id, "revision": revision},
         }
         await self._queue.add(self.name, envelope, {**self._opts, "jobId": jid})
         return True
 
-    async def job_data(self, record_id: str, revision: int) -> dict[str, Any] | None:
-        job = await self._queue.getJob(job_id(record_id, revision))
+    async def job_data(self, content_id: str, revision: int) -> dict[str, Any] | None:
+        job = await self._queue.getJob(job_id(content_id, revision))
         return dict(job.data) if job is not None else None
 
-    async def remove(self, record_id: str, revision: int) -> None:
-        job = await self._queue.getJob(job_id(record_id, revision))
+    async def remove(self, content_id: str, revision: int) -> None:
+        job = await self._queue.getJob(job_id(content_id, revision))
         if job is not None:
             await job.remove()
 

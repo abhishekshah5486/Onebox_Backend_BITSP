@@ -1,13 +1,57 @@
 from datetime import datetime
 from typing import Any
 
+from pydantic.alias_generators import to_camel
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
-from onebox_rag.models import Record
+from onebox_rag.models import Content, Record
 
 Doc = dict[str, Any]
+
+
+def _set(fields: dict[str, Any], now: datetime) -> Doc:
+    # Callers pass model field names; documents store them camelCase.
+    return {"$set": {**{to_camel(k): v for k, v in fields.items()}, "updatedAt": now}}
+
+
+class ContentStore:
+    """One document per user and set of bytes (the PipesHub "virtual record")."""
+
+    def __init__(self, db: AsyncDatabase[Doc]) -> None:
+        self._contents = db["contents"]
+
+    async def ensure_indexes(self) -> None:
+        await self._contents.create_index(
+            [("userId", ASCENDING), ("sha256", ASCENDING)], unique=True
+        )
+
+    async def claim(self, content: Content) -> tuple[Content, bool]:
+        """Saves new content, or returns what is already stored for those bytes (and False)."""
+        try:
+            await self._contents.insert_one(content.model_dump(by_alias=True))
+        except DuplicateKeyError:
+            existing = await self.get(content.id)
+            if existing is None:
+                raise
+            return existing, False
+        return content, True
+
+    async def get(self, content_id: str) -> Content | None:
+        doc = await self._contents.find_one({"_id": content_id})
+        return Content.model_validate(doc) if doc else None
+
+    async def update(self, content_id: str, now: datetime, **fields: Any) -> Content | None:
+        doc = await self._contents.find_one_and_update(
+            {"_id": content_id},
+            _set(fields, now),
+            return_document=ReturnDocument.AFTER,
+        )
+        return Content.model_validate(doc) if doc else None
+
+    async def delete(self, content_id: str) -> None:
+        await self._contents.delete_one({"_id": content_id})
 
 
 class RecordStore:
@@ -26,6 +70,7 @@ class RecordStore:
             unique=True,
         )
         await self._records.create_index([("userId", ASCENDING), ("createdAt", DESCENDING)])
+        await self._records.create_index([("contentId", ASCENDING)])
         await self._records.create_index([("parentId", ASCENDING)], sparse=True)
 
     async def insert(self, record: Record) -> tuple[Record, bool]:
@@ -59,13 +104,24 @@ class RecordStore:
         cursor = self._records.find(query).sort("createdAt", DESCENDING).limit(limit)
         return [Record.model_validate(doc) async for doc in cursor]
 
-    async def set_status(self, record_id: str, now: datetime, **fields: Any) -> Record | None:
+    async def update(self, record_id: str, now: datetime, **fields: Any) -> Record | None:
         doc = await self._records.find_one_and_update(
             {"_id": record_id},
-            {"$set": {**fields, "updatedAt": now}},
+            _set(fields, now),
             return_document=ReturnDocument.AFTER,
         )
         return Record.model_validate(doc) if doc else None
+
+    async def update_for_content(self, content_id: str, now: datetime, **fields: Any) -> None:
+        await self._records.update_many({"contentId": content_id}, _set(fields, now))
+
+    async def for_content(self, content_id: str) -> list[Record]:
+        return [
+            Record.model_validate(d) async for d in self._records.find({"contentId": content_id})
+        ]
+
+    async def holds_content(self, content_id: str) -> bool:
+        return await self._records.count_documents({"contentId": content_id}, limit=1) > 0
 
     async def children(self, user_id: str, parent_id: str) -> list[Record]:
         cursor = self._records.find({"userId": user_id, "parentId": parent_id})

@@ -44,6 +44,11 @@ class BlobStore:
             self._s3.upload_fileobj, body, self.bucket, key, ExtraArgs={"ContentType": content_type}
         )
 
+    async def put_bytes(self, key: str, body: bytes, content_type: str) -> None:
+        await asyncio.to_thread(
+            self._s3.put_object, Bucket=self.bucket, Key=key, Body=body, ContentType=content_type
+        )
+
     async def get(self, key: str) -> bytes:
         def read() -> bytes:
             return self._s3.get_object(Bucket=self.bucket, Key=key)["Body"].read()
