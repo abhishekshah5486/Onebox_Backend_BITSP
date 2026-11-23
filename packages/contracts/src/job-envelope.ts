@@ -16,6 +16,8 @@ export const QUEUES = {
   payments: 'payments',
   usage: 'usage',
   send: 'send',
+  // Stored mail for the RAG service to read (its records, parsed and indexed).
+  ragMail: 'rag-mail',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

@@ -24,6 +24,8 @@ export const RETRY_POLICIES: Record<QueueName, RetryPolicy> = {
   usage: { attempts: 8, backoffMs: 2_000 },
   // A send that fails before the server accepts it is retried; once accepted it never resends.
   send: { attempts: 5, backoffMs: 10_000 },
+  // RAG reads the email back from the mail service; a busy or restarting one is waited out.
+  'rag-mail': { attempts: 8, backoffMs: 15_000 },
 };
 
 export const deadLetterQueue = (queue: QueueName) => `${queue}-dlq`;
