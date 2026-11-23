@@ -90,8 +90,23 @@ describe('parseMessage', () => {
         '<h2>Dependabot alerts</h2><p>3 new alerts in <b>onebox</b>.</p><img src="https://t.example/p.gif"><a href="https://github.com">View</a>',
       ]),
     );
-    expect(parsed.snippet).toBe('Dependabot alerts 3 new alerts in onebox . View');
+    expect(parsed.snippet).toBe('Dependabot alerts 3 new alerts in onebox. View');
     expect(parsed.snippet).not.toMatch(/https?:|DEPENDABOT/);
+  });
+
+  it('reads an html document sent as the plain-text part as text', async () => {
+    const parsed = await parseMessage(
+      mime([
+        'From: news@example.com',
+        'Subject: Program',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        '<!doctype html><html><head><title></title><style>p{color:red}</style></head>',
+        '<body><p style="margin:0">With the online program</p><p>you can apply today.</p></body></html>',
+      ]),
+    );
+    expect(parsed.snippet).toBe('With the online program you can apply today.');
+    expect(parsed.textBody).not.toMatch(/<|color:red/);
   });
 
   it('copes with a message that has no headers worth reading', async () => {
@@ -109,5 +124,25 @@ describe('makeSnippet', () => {
   it('collapses whitespace and caps the length', () => {
     expect(makeSnippet('  a\n\n b  ')).toBe('a b');
     expect(makeSnippet('x'.repeat(500))).toHaveLength(200);
+  });
+
+  // As seen in real mail: preview padding, entities in plain text, and bracketed links.
+  it('drops the invisible padding senders add to previews', () => {
+    expect(makeSnippet('Fast deliveries. &#847; &#847; &shy; &#8199; &#65279; &#847;')).toBe(
+      'Fast deliveries.',
+    );
+    expect(makeSnippet('Code: MAX\u034f\u00ad\ufeff\u200b to unlock')).toBe('Code: MAX to unlock');
+  });
+
+  it('decodes entities in plain-text parts', () => {
+    expect(makeSnippet('Thanks for applying&nbsp; We &amp; you')).toBe(
+      'Thanks for applying We & you',
+    );
+  });
+
+  it('leaves out links written as Text<https://…>', () => {
+    expect(
+      makeSnippet('Google Developer Program<https://c.gle/ACT4xY> is here <mailto:a@b.c>'),
+    ).toBe('Google Developer Program is here');
   });
 });

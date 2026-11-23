@@ -38,6 +38,7 @@ import { createThreadActions } from './mail/thread-actions';
 import { createChangesHandler } from './sync/apply-changes';
 import { enableThreadPreImages, startLiveFeed } from './feed/live-feed';
 import { startSearchFeed } from './feed/search-feed';
+import { refreshStoredText } from './ingest/refresh-text';
 import { backfillAttachmentRefs, migrateFolderRoles } from './threads/thread-store';
 
 const logger = createLogger({ service: 'mail', pretty: process.stdout.isTTY });
@@ -56,6 +57,8 @@ await ensureIndexes(collections);
 logger.info({ db: config.MONGO_DB }, 'mongodb connected');
 const migrated = await migrateFolderRoles(collections);
 if (migrated > 0) logger.info({ threads: migrated }, 'conversations tagged with folders');
+const retexted = await refreshStoredText(collections);
+if (retexted > 0) logger.info({ messages: retexted }, 'snippets cleaned of html and padding');
 
 const cleanups: Cleanup[] = [];
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: 3 });

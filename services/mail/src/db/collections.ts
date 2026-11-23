@@ -48,6 +48,7 @@ export interface MessageDoc {
   replyTo: Address[];
   subject: string;
   snippet: string;
+  textVersion?: number;
   textBody: string;
   htmlBody: string | null;
   hasRemoteImages: boolean;
