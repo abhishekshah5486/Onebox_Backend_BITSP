@@ -83,13 +83,18 @@ The data model is source-agnostic from the start, so external connectors slot in
 
 1. **Ingest.** Records come from the mail source (every email and attachment), from
    `POST /rag/documents` (multipart upload into a knowledge base), and later from external
-   sources. Each one: real type checked from magic bytes, size caps, zip bombs and encrypted
-   files rejected or flagged; the original stored in the blob store; the record saved as
-   `queued`; a parse job enqueued.
+   sources. Each one: real type read from its bytes (magic bytes, and the declared type inside
+   ZIP containers: OOXML's `[Content_Types].xml`, EPUB's and ODF's `mimetype`); size caps; zip
+   bombs (unpacked size, ratio, entry count) and encrypted files recorded as `rejected` with a
+   reason; the same content in the same source reuses its record; the original stored in the
+   blob store; the record saved as `queued`; a parse job enqueued (BullMQ, the TypeScript job
+   envelope, one job per record revision).
 2. **Inspect and route.** A sandboxed worker inspects the file (page count, text layer, scanned
    share of sampled pages) and picks one engine per revision, recorded so retries, replays and
-   re-indexes never re-decide.
-3. **Parse** (worker subprocess, time, memory and page caps per file):
+   re-indexes never re-decide (PipesHub's PDF inspection and cost-based engine choice are the
+   model).
+3. **Parse** in sandboxed worker processes with time, memory and page caps per file (PipesHub's
+   parse pool is the model), each engine with a fallback:
    - **PDF:** Docling layout for digital text (its own OCR off, TableFormer for tables, page
      images kept); scanned pages through the OCR provider (default: a free local model, see
      Choices); pdfplumber + OpenCV for tables Docling misses and for PDFs over Docling's limits
@@ -140,7 +145,8 @@ choices; we offer those and a few more:
 
 1. Service skeleton: FastAPI, health, auth, config, Docker image, turbo scripts, gateway route,
    k8s deployment, CI job, README crediting PipesHub as the reference. **Done.**
-2. Block model and records in MongoDB; blob storage; ingest queue.
+2. Block model and records in MongoDB; blob storage; ingest queue; upload and record routes.
+   **Done.**
 3. Light parsers (text, HTML, Markdown, EML, JSON, YAML, CSV).
 4. Sandboxed parse pool, PDF inspection and engine routing.
 5. Docling service and the Docling path for PDF, DOCX and PPTX; LibreOffice conversion (both
