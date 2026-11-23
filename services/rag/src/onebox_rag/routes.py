@@ -5,9 +5,11 @@ from fastapi import APIRouter, File, Form, Query, Request, Response, UploadFile
 
 from onebox_rag.auth import CurrentUser
 from onebox_rag.errors import NotFoundError
-from onebox_rag.ingest.ingestor import Ingestor
-from onebox_rag.ingest.records import RecordStore
-from onebox_rag.models import Record, RecordStatus, SourceType
+from onebox_rag.ingest.blobs import BlobStore
+from onebox_rag.ingest.ingestor import Ingestor, Source
+from onebox_rag.ingest.records import ContentStore, RecordStore
+from onebox_rag.models import Record, SourceType, Status
+from onebox_rag.pipeline.parse import decode_blocks
 
 SOURCE_ID = r"^[A-Za-z0-9_-]{1,64}$"
 
@@ -33,8 +35,7 @@ def rag_router() -> APIRouter:
         for upload in files:
             done = await ingestor.ingest(
                 user_id=user.user_id,
-                source_type=SourceType.UPLOAD,
-                source_id=knowledge_base,
+                source=Source(SourceType.UPLOAD, knowledge_base),
                 name=upload.filename or "untitled",
                 declared_mime_type=upload.content_type,
                 stream=upload.file,
@@ -48,7 +49,7 @@ def rag_router() -> APIRouter:
         user: CurrentUser,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         before: datetime | None = None,
-        status: RecordStatus | None = None,
+        status: Status | None = None,
         source_type: Annotated[SourceType | None, Query(alias="sourceType")] = None,
         source_id: Annotated[str | None, Query(alias="sourceId", pattern=SOURCE_ID)] = None,
     ) -> dict[str, list[dict[str, Any]]]:
@@ -70,6 +71,22 @@ def rag_router() -> APIRouter:
         if record is None:
             raise NotFoundError("Record not found")
         return record_json(record)
+
+    @router.get("/records/{record_id}/blocks")
+    async def get_blocks(request: Request, user: CurrentUser, record_id: str) -> dict[str, Any]:
+        """The parsed blocks behind a record, as stored for indexing and citations."""
+        records: RecordStore = request.app.state.records
+        contents: ContentStore = request.app.state.contents
+        blobs: BlobStore = request.app.state.blobs
+        record = await records.get(user.user_id, record_id)
+        content = await contents.get(record.content_id) if record else None
+        if content is None or content.blocks_key is None:
+            raise NotFoundError("No parsed blocks for this record")
+        container = decode_blocks(await blobs.get(content.blocks_key))
+        return {
+            "engine": content.engine,
+            **container.model_dump(by_alias=True, mode="json", exclude_none=True),
+        }
 
     @router.delete("/records/{record_id}", status_code=204)
     async def delete_record(request: Request, user: CurrentUser, record_id: str) -> Response:

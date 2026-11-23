@@ -14,9 +14,11 @@ from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
 from onebox_rag.ingest.queue import IngestQueue
-from onebox_rag.ingest.records import RecordStore
+from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.logs import log_requests
 from onebox_rag.mongo import mongo_client
+from onebox_rag.pipeline.parse import ParseStage
+from onebox_rag.pipeline.worker import parse_worker
 from onebox_rag.routes import rag_router
 
 logger = logging.getLogger("onebox_rag.app")
@@ -62,10 +64,12 @@ def create_app(
         mongo = mongo_client(settings.MONGO_URI)
         redis = Redis.from_url(settings.REDIS_URL)
         records = RecordStore(mongo[settings.MONGO_DB])
+        contents = ContentStore(mongo[settings.MONGO_DB])
         blobs = BlobStore(settings)
         queue = IngestQueue(settings)
-        app.state.records = records
-        app.state.ingestor = Ingestor(records, blobs, queue, limits_from(settings))
+        ingestor = Ingestor(records, contents, blobs, queue, limits_from(settings))
+        app.state.records, app.state.contents, app.state.blobs = records, contents, blobs
+        app.state.ingestor = ingestor
 
         async def mongodb() -> object:
             return await mongo.admin.command("ping")
@@ -75,12 +79,21 @@ def create_app(
 
         app.state.checks = {"mongodb": mongodb, "redis": redis_ping, "blobs": blobs.ping}
         prepare = asyncio.create_task(
-            _prepare_until_done([records.ensure_indexes, blobs.ensure_bucket])
+            _prepare_until_done(
+                [records.ensure_indexes, contents.ensure_indexes, blobs.ensure_bucket]
+            )
+        )
+        worker = (
+            parse_worker(settings, ParseStage(contents, records, blobs, ingestor))
+            if settings.RAG_RUN_WORKER
+            else None
         )
         try:
             yield
         finally:
             prepare.cancel()
+            if worker is not None:
+                await worker.close()
             await queue.close()
             await redis.aclose()
             await mongo.close()
