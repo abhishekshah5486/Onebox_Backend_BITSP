@@ -81,22 +81,40 @@ The data model is source-agnostic from the start, so external connectors slot in
 
 ## Pipeline
 
-1. **Ingest:** record created, real type from magic bytes, size caps, zip-bomb and encryption
-   checks; original stored; parse job queued.
-2. **Inspect and route:** inspection and an engine decision, as PipesHub does, recorded per
-   revision.
-3. **Parse:** the engine per the table above, in sandboxed worker processes with time, memory
-   and page caps (PipesHub's parse pool is the model).
-4. **Enrich:** image descriptions, sheet summaries and row sentences, heading paths, a summary
-   block per record.
-5. **Chunk:** structure-aware within token limits; tables as summary plus rows; chunks keep
-   their block ids for citations.
-6. **Embed and index:** dense through llm-proxy, BM25 sparse locally; Qdrant named vectors with
-   payload `userId`, `sourceId`, `recordId`, `blockIds`, `page`; content fingerprints skip
-   unchanged chunks; re-index builds then swaps.
-7. **Retrieve:** `/internal/rag/retrieve` (and `POST /rag/query` for testing): hybrid dense and
-   sparse with fusion, filters, top-k, source diversity, neighbour blocks, optional rerank,
-   token-budget packing, citations.
+1. **Ingest.** Records come from the mail source (every email and attachment), from
+   `POST /rag/documents` (multipart upload into a knowledge base), and later from external
+   sources. Each one: real type checked from magic bytes, size caps, zip bombs and encrypted
+   files rejected or flagged; the original stored in the blob store; the record saved as
+   `queued`; a parse job enqueued.
+2. **Inspect and route.** A sandboxed worker inspects the file (page count, text layer, scanned
+   share of sampled pages) and picks one engine per revision, recorded so retries, replays and
+   re-indexes never re-decide.
+3. **Parse** (worker subprocess, time, memory and page caps per file):
+   - **PDF:** Docling layout for digital text (its own OCR off, TableFormer for tables, page
+     images kept); scanned pages through the OCR provider (default: a free local model, see
+     Choices); pdfplumber + OpenCV for tables Docling misses and for PDFs over Docling's limits
+     or while it is down; vision-model OCR for pages the rest cannot read.
+   - **DOCX, PPTX, HTML, Markdown:** Docling, with python-docx / BeautifulSoup fallbacks.
+   - **DOC, PPT:** converted by LibreOffice to DOCX / PPTX first.
+   - **EPUB:** unpacked to its HTML chapters, then the HTML path.
+   - **XLSX, XLS, CSV:** openpyxl / pandas into tables, header rows found, one block per row with
+     its headers.
+   - **Images (PNG, JPG, WEBP, TIFF, HEIC, SVG):** OCR text plus a vision-model description; SVG
+     rasterised first.
+   - **EML:** headers and body as text; its attachments become their own records.
+   - **TXT, JSON, YAML, code:** text blocks with format-aware splitting.
+4. **Enrich.** Image descriptions, table and sheet summaries, a sentence per spreadsheet row, a
+   short summary block per record, and the heading path stored on every block for context.
+5. **Chunk.** Structure-aware: by section, capped by tokens with overlap; tables as a summary
+   chunk plus row chunks; every chunk keeps the block ids it came from, for citations.
+6. **Embed and index.** Dense vectors through llm-proxy, BM25 sparse vectors locally; Qdrant
+   named vectors (`dense`, `sparse`) with payload `userId`, `sourceId`, `recordId` (and `kbId`
+   for uploads), `blockIds`, `page`. Chunks keyed by content hash, so re-ingesting only embeds
+   what changed; a re-index builds the new version, then swaps.
+7. **Retrieve.** Internal `/internal/rag/retrieve` for the reply drafter and `POST /rag/query`:
+   hybrid query (dense and sparse prefetch, RRF fusion in Qdrant), filters (user, source,
+   knowledge base, records), top-k, source diversity, optional rerank, neighbour-block
+   expansion, packing to a token budget, citations (record, page, block).
 
 Progress (`queued → parsing → indexing → ready | failed`) goes out on the realtime channel.
 
@@ -106,28 +124,30 @@ Every pluggable step sits behind one interface with several providers, picked in
 `rag_config` (UI later). PipesHub offers OCR provider, embedding provider and vector database
 choices; we offer those and a few more:
 
-| Step                           | Choices                                                                                                                                 | Default                             |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| Scanned pages and images (OCR) | Vision-model OCR (any multimodal model in llm-proxy), Azure Document Intelligence, Docling's local OCR (RapidOCR or Tesseract, offline) | Vision-model OCR                    |
-| Digital documents              | Docling, or pdfplumber + OpenCV only                                                                                                    | Docling, falling back automatically |
-| Image descriptions             | Any multimodal model in llm-proxy, or off                                                                                               | user's AI model                     |
-| Spreadsheet rows               | LLM row sentences, or plain "header: value" rows (no model calls)                                                                       | LLM row sentences                   |
-| Embedding model                | Any embedding model in llm-proxy (hosted, own key, or local through Ollama)                                                             | user's semantic-search model        |
-| Vector store                   | Qdrant, pgvector (both hybrid-capable); more later                                                                                      | OneBox Qdrant                       |
-| Chunking                       | Max tokens, overlap                                                                                                                     | 512, 64                             |
-| Retrieval                      | Top-k, hybrid on or off, fusion (RRF or weighted)                                                                                       | 8, on, RRF                          |
-| Reranker                       | Off, local cross-encoder (bge-reranker), Cohere, Voyage, Jina                                                                           | off                                 |
+| Step                           | Choices                                                                                                                                                                 | Default                             |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Scanned pages and images (OCR) | A free local model (a vision model served by Ollama, or RapidOCR through Docling), vision-model OCR with any multimodal model in llm-proxy, Azure Document Intelligence | A free local model                  |
+| Digital documents              | Docling, or pdfplumber + OpenCV only                                                                                                                                    | Docling, falling back automatically |
+| Image descriptions             | Any multimodal model in llm-proxy, or off                                                                                                                               | user's AI model                     |
+| Spreadsheet rows               | LLM row sentences, or plain "header: value" rows (no model calls)                                                                                                       | LLM row sentences                   |
+| Embedding model                | Any embedding model in llm-proxy (hosted, own key, or local through Ollama)                                                                                             | user's semantic-search model        |
+| Vector store                   | Qdrant, pgvector (both hybrid-capable); more later                                                                                                                      | OneBox Qdrant                       |
+| Chunking                       | Max tokens, overlap                                                                                                                                                     | 512, 64                             |
+| Retrieval                      | Top-k, hybrid on or off, fusion (RRF or weighted)                                                                                                                       | 8, on, RRF                          |
+| Reranker                       | Off, local cross-encoder (bge-reranker), Cohere, Voyage, Jina                                                                                                           | off                                 |
 
 ## Milestones (small commits, each with tests)
 
-1. Service skeleton: FastAPI, health, auth, config, Docker image (LibreOffice, Docling models),
-   turbo scripts, CI job, README crediting PipesHub as the reference.
+1. Service skeleton: FastAPI, health, auth, config, Docker image, turbo scripts, gateway route,
+   k8s deployment, CI job, README crediting PipesHub as the reference. **Done.**
 2. Block model and records in MongoDB; blob storage; ingest queue.
 3. Light parsers (text, HTML, Markdown, EML, JSON, YAML, CSV).
 4. Sandboxed parse pool, PDF inspection and engine routing.
-5. Docling service and the Docling path for PDF, DOCX and PPTX; LibreOffice conversion.
+5. Docling service and the Docling path for PDF, DOCX and PPTX; LibreOffice conversion (both
+   added to the image here).
 6. pdfplumber + OpenCV fallback.
-7. llm-proxy image input; VLM OCR for scans; image descriptions.
+7. OCR providers (free local model first, then llm-proxy image input for vision-model OCR and
+   Azure DI); image descriptions.
 8. Spreadsheets with header detection, summaries and row sentences.
 9. Chunking, dense and sparse embeddings, RAG vector store settings, hybrid indexing.
 10. Retrieval, packing, citations, optional reranker.
