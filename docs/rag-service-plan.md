@@ -155,7 +155,9 @@ choices; we offer those and a few more:
    in a separate Docling image, as PipesHub runs it). **Done.**
 6. pdfplumber + OpenCV fallback. **Done.**
 7. OCR providers (free local model first, then llm-proxy image input for vision-model OCR and
-   Azure DI); image descriptions.
+   Azure DI); image descriptions. **Done** with RapidOCR (default) and any OpenAI-compatible
+   vision model; Docling's own OCR behind a setting, off. Per-user provider settings and Azure
+   DI come later.
 8. Spreadsheets with header detection, summaries and row sentences.
 9. Chunking, dense and sparse embeddings, RAG vector store settings, hybrid indexing.
 10. Retrieval, packing, citations, optional reranker.

@@ -63,10 +63,11 @@ Following PipesHub's design:
   inspected first: scanned when at least half its pages have no text layer or fail
   pdfplumber's checks on a sample of up to 30 text pages (little text with big images, low
   text density, one dominant image, unmapped glyphs). Scanned PDFs go to OCR, those past
-  `RAG_DOCLING_MAX_PAGES` or `RAG_DOCLING_MAX_MB` to pdfplumber, the rest to Docling. Until
-  the OCR engine lands (milestone 7) a scanned PDF is recorded as waiting for it.
+  `RAG_DOCLING_MAX_PAGES` or `RAG_DOCLING_MAX_MB` to pdfplumber, the rest to Docling. Image
+  files (PNG, JPEG, WebP, TIFF, BMP, GIF) go to OCR too.
 - **Docling.** Digital PDFs, Word and PowerPoint go to the Docling service with these
-  options: no Docling OCR (scanned pages have their own engine), accurate tables, picture
+  options: no Docling OCR unless `DOCLING_OCR=rapidocr` (it then reads text inside pictures;
+  scanned pages have their own engine either way), accurate tables, picture
   images kept, and only PDF, DOCX and PPTX allowed whatever the bytes resemble. DOC, RTF, ODT,
   PPT and ODP are converted first by headless LibreOffice (a throwaway profile and process
   group per file). Conversions run in the same kind of worker pool, so timeouts and
@@ -82,6 +83,21 @@ Following PipesHub's design:
   of 3+ aligned columns over 3+ lines), and pictures cropped from the raster with their
   "Figure ..." captions. Running headers and footers repeated across pages are kept once and
   page numbers dropped. About 300 pages in 3 seconds.
+- **OCR.** Scanned PDFs and image files, by `RAG_OCR_PROVIDER`:
+  - `rapidocr` (default): free and local, PP-OCR models on ONNX Runtime. Pages render at
+    `RAG_OCR_DPI` (200) and their words go through the same layout pass as pdfplumber's, so
+    columns, headings (size from ink height, bold from stroke width), lists and tables come
+    out alike. Each image frame is a page, with the picture kept as an image block.
+  - `vision`: each page sent to a vision model (`RAG_VISION_MODEL` at `RAG_VISION_BASE_URL`,
+    any OpenAI-compatible API, a local Ollama by default) for Markdown, parsed per page;
+    `{{IMAGE: ...}}` becomes an image block with that description. Temperature 0, 2 retries, 10
+    calls at once; a cut-off answer or an unreachable model falls back to RapidOCR. Answers are
+    cached in the blob store per image, model and prompt.
+    The provider is recorded per revision; jobs get `RAG_OCR_SECONDS_PER_PAGE` per page on top
+    of the parse timeout, and files past `RAG_OCR_MAX_PAGES` (500) fail.
+- **Image descriptions.** With a vision model set, up to `RAG_DESCRIBE_MAX_IMAGES` (60)
+  pictures per file get a description (any text in them transcribed too), capped at 8,000
+  characters; tiny, thin or icon-sized ones are skipped, and one that fails keeps its caption.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
   JSON and JSON Lines, YAML, CSV and TSV, and other text.
 
