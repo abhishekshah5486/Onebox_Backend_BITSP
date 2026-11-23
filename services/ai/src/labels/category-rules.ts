@@ -1,17 +1,29 @@
-import { MAIL_CATEGORIES, MAIL_CATEGORY_DESCRIPTIONS, type MailCategory } from '@onebox/contracts';
+import {
+  MAIL_CATEGORIES,
+  MAIL_CATEGORY_DESCRIPTIONS,
+  MAIL_CATEGORY_NAMES,
+  type AiLabelMode,
+  type MailCategory,
+} from '@onebox/contracts';
 import { ValidationError } from '@onebox/errors';
-import type { AiCollections } from '../db/collections';
+import type { AiCollections, LabelResult } from '../db/collections';
 
 const MIN_DESCRIPTION = 10;
+
+// The categories a message ends up with: put on by AI, or suggested and accepted.
+export const categoriesIn = (results: LabelResult[]) =>
+  results
+    .filter((r) => r.kind === 'category' && (r.status === 'applied' || r.status === 'accepted'))
+    .map((r) => r.path as MailCategory);
 
 export interface CategoryRuleInput {
   // null puts the default description back.
   description?: string | null | undefined;
-  enabled?: boolean | undefined;
+  mode?: AiLabelMode | undefined;
 }
 
-// The built-in categories every user starts with: on, with OneBox's descriptions, which they can
-// reword or switch off.
+// The built-in categories every user starts with, applied by AI with OneBox's descriptions; they
+// can reword them, or have AI only suggest them, or leave them to Gmail and themselves.
 export function createCategoryRules({ categoryRules }: AiCollections) {
   const idOf = (userId: string, category: MailCategory) => `${userId}:${category}`;
 
@@ -24,10 +36,11 @@ export function createCategoryRules({ categoryRules }: AiCollections) {
       const defaultDescription = MAIL_CATEGORY_DESCRIPTIONS[category];
       return {
         category,
+        name: MAIL_CATEGORY_NAMES[category],
         description: rule?.description ?? defaultDescription,
         defaultDescription,
         customized: Boolean(rule?.description),
-        enabled: rule?.enabled ?? true,
+        mode: rule?.mode ?? 'auto',
       };
     });
   }
@@ -56,7 +69,7 @@ export function createCategoryRules({ categoryRules }: AiCollections) {
               : description === current.defaultDescription
                 ? null
                 : (description ?? null),
-          enabled: input.enabled ?? current.enabled,
+          mode: input.mode ?? current.mode,
           updatedAt: new Date(),
         },
         { upsert: true },
@@ -65,10 +78,8 @@ export function createCategoryRules({ categoryRules }: AiCollections) {
     },
 
     // What the classifier sorts into.
-    async enabled(userId: string) {
-      return (await list(userId))
-        .filter((rule) => rule.enabled)
-        .map(({ category, description }) => ({ category, description }));
+    async active(userId: string) {
+      return (await list(userId)).filter((rule) => rule.mode !== 'off');
     },
   };
 }

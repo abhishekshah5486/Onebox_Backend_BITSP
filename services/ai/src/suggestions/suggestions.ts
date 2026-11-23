@@ -4,6 +4,7 @@ import type { Logger } from '@onebox/logger';
 import type { Producer } from '@onebox/queue';
 import { randomUUID } from 'node:crypto';
 import type { AiCollections, ClassificationDoc, LabelResult } from '../db/collections';
+import { categoriesIn } from '../labels/category-rules';
 
 const PAGE_SIZE = 50;
 
@@ -43,6 +44,18 @@ export function createSuggestions({
         userId: doc.userId,
         accountId: doc.accountId,
         payload: { type: 'tagged', messageId: doc._id, add, remove },
+      }),
+    );
+  }
+
+  // A category's change sets the message's whole list, so it carries every one kept.
+  async function categorize(doc: ClassificationDoc, results: LabelResult[]) {
+    await changes.enqueue(
+      createJobEnvelope({
+        jobId: randomUUID(),
+        userId: doc.userId,
+        accountId: doc.accountId,
+        payload: { type: 'categorized', messageId: doc._id, categories: categoriesIn(results) },
       }),
     );
   }
@@ -102,11 +115,12 @@ export function createSuggestions({
       const result = doc.results.find((item) => item.path === path && item.status === 'pending');
       if (!result) throw new ValidationError('That suggestion was already handled');
       const verdict = accept ? 'accepted' : 'rejected';
-      const view = await save(
-        doc,
-        doc.results.map((item) => (item === result ? { ...item, status: verdict } : item)),
+      const results: LabelResult[] = doc.results.map((item) =>
+        item === result ? { ...item, status: verdict } : item,
       );
-      if (accept) await tag(doc, [path]);
+      const view = await save(doc, results);
+      if (accept && result.kind === 'category') await categorize(doc, results);
+      else if (accept) await tag(doc, [path]);
       await remember(doc, path, verdict);
       logger.info({ verdict }, 'suggestion decided');
       return view;
@@ -123,14 +137,20 @@ export function createSuggestions({
       );
     },
 
-    // The user files it under another label instead: open suggestions are declined.
+    // The user files it under another label instead: open label suggestions are declined;
+    // suggested categories still wait.
     async assign(userId: string, messageId: string, path: string, name: string) {
       const doc = await owned(userId, messageId);
+      const label = (item: LabelResult) => item.kind !== 'category';
       const results: LabelResult[] = [
         ...doc.results.map((item) =>
-          item.status === 'pending' ? { ...item, status: 'rejected' as const } : item,
+          label(item) && item.status === 'pending'
+            ? { ...item, status: 'rejected' as const }
+            : item,
         ),
-        ...(doc.results.some((item) => item.path === path && item.status !== 'rejected')
+        ...(doc.results.some(
+          (item) => label(item) && item.path === path && item.status !== 'rejected',
+        )
           ? []
           : [{ path, name, confidence: 1, reason: 'Chosen by you', status: 'assigned' as const }]),
       ];

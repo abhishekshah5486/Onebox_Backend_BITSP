@@ -176,13 +176,14 @@ describe('classification', () => {
     expect(llm).not.toHaveBeenCalled();
   });
 
-  it("fills in the user's categories where Gmail gave none, even with no labels", async () => {
+  it("applies, suggests or skips categories by each one's mode, where Gmail gave none", async () => {
     const userId = randomUUID();
     const categories = createCategoryRules(collections);
     await categories.save(userId, 'purchases', {
       description: 'Orders and receipts, including food delivery bills',
     });
-    await categories.save(userId, 'social', { enabled: false });
+    await categories.save(userId, 'social', { mode: 'off' });
+    await categories.save(userId, 'travel', { mode: 'suggest' });
     const llm = vi.fn<LlmClient>(async () => ({
       model: 'gemini-3.8-flash',
       output: {
@@ -191,6 +192,7 @@ describe('classification', () => {
           { id: 'purchases', confidence: 0.9, reason: 'An order receipt' },
           { id: 'updates', confidence: 0.3, reason: 'Unlikely' },
           { id: 'social', confidence: 0.95, reason: 'Switched off' },
+          { id: 'travel', confidence: 0.8, reason: 'Mentions a booking' },
         ],
       },
     }));
@@ -205,8 +207,22 @@ describe('classification', () => {
     expect(await changesFor(id)).toEqual([
       { type: 'categorized', messageId: id, categories: ['purchases'] },
     ]);
-    expect(await collections.classifications.findOne({ _id: id })).toMatchObject({
-      categories: ['purchases'],
+    const stored = await collections.classifications.findOne({ _id: id });
+    expect(stored).toMatchObject({ pending: true });
+    expect(stored!.results.map((r) => [r.kind, r.path, r.name, r.status])).toEqual([
+      ['category', 'purchases', 'Purchases', 'applied'],
+      ['category', 'travel', 'Travel', 'pending'],
+    ]);
+
+    // Accepting the suggested one sets both on the message; filing it under a label doesn't
+    // turn the category suggestion down.
+    const suggestions = createSuggestions({ collections, changes, logger });
+    await suggestions.assign(userId, id, 'Receipts', 'Receipts');
+    await suggestions.decide(userId, id, 'travel', true);
+    expect(await changesFor(id)).toContainEqual({
+      type: 'categorized',
+      messageId: id,
+      categories: ['purchases', 'travel'],
     });
 
     // Mail Gmail already sorted needs no model call for categories.
@@ -218,26 +234,27 @@ describe('classification', () => {
     expect(sorted).not.toHaveBeenCalled();
   });
 
-  it('starts every category on with its default description, and can reset one', async () => {
+  it('starts every category applied by AI with its default description, and can reset one', async () => {
     const userId = randomUUID();
     const categories = createCategoryRules(collections);
     expect((await categories.list(userId)).find((c) => c.category === 'travel')).toEqual({
       category: 'travel',
       description: MAIL_CATEGORY_DESCRIPTIONS.travel,
       defaultDescription: MAIL_CATEGORY_DESCRIPTIONS.travel,
+      name: 'Travel',
       customized: false,
-      enabled: true,
+      mode: 'auto',
     });
     await categories.save(userId, 'travel', { description: 'Trips and bookings for work' });
-    expect(await categories.save(userId, 'travel', { enabled: false })).toMatchObject({
+    expect(await categories.save(userId, 'travel', { mode: 'suggest' })).toMatchObject({
       description: 'Trips and bookings for work',
       customized: true,
-      enabled: false,
+      mode: 'suggest',
     });
     expect(await categories.save(userId, 'travel', { description: null })).toMatchObject({
       description: MAIL_CATEGORY_DESCRIPTIONS.travel,
       customized: false,
-      enabled: false,
+      mode: 'suggest',
     });
     await expect(categories.save(userId, 'travel', { description: 'trips' })).rejects.toThrow(
       /Describe what belongs/,

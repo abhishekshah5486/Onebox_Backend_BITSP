@@ -64,20 +64,20 @@ describe('category routes', () => {
       method: 'PUT',
       url: '/ai/categories/updates',
       headers,
-      payload: { description: 'Bank alerts and account notices', enabled: false },
+      payload: { description: 'Bank alerts and account notices', mode: 'off' },
     });
     expect(saved.json()).toMatchObject({
       category: 'updates',
       description: 'Bank alerts and account notices',
       customized: true,
-      enabled: false,
+      mode: 'off',
     });
 
     const unknown = await server.inject({
       method: 'PUT',
       url: '/ai/categories/receipts',
       headers,
-      payload: { enabled: true },
+      payload: { mode: 'auto' },
     });
     expect(unknown.statusCode).toBe(400);
   });

@@ -41,6 +41,15 @@ export type MailCategory = (typeof MAIL_CATEGORIES)[number];
 
 export const mailCategorySchema = z.enum(MAIL_CATEGORIES);
 
+export const MAIL_CATEGORY_NAMES: Record<MailCategory, string> = {
+  social: 'Social',
+  promotions: 'Promotions',
+  updates: 'Updates',
+  forums: 'Forums',
+  purchases: 'Purchases',
+  travel: 'Travel',
+};
+
 // What each category holds, as Gmail describes it; the AI fills categories in from these where
 // Gmail gives none (Gmail stopped tagging mail over IMAP in February 2026).
 export const MAIL_CATEGORY_DESCRIPTIONS: Record<MailCategory, string> = {

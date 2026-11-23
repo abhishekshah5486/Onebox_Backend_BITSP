@@ -8,7 +8,7 @@ import { createJobEnvelope } from '@onebox/contracts';
 import { PaymentRequiredError, ValidationError } from '@onebox/errors';
 import type { JobContext, Producer } from '@onebox/queue';
 import type { AiCollections, LabelResult, LabelRuleDoc } from '../db/collections';
-import { createCategoryRules } from '../labels/category-rules';
+import { categoriesIn, createCategoryRules } from '../labels/category-rules';
 import { DEFAULT_THRESHOLD } from '../labels/label-rules';
 import type { LlmClient } from './llm-client';
 
@@ -128,7 +128,7 @@ export function createClassifyHandler({
       .find({ userId, accountId, mode: { $ne: 'off' }, description: { $ne: '' } })
       .sort({ path: 1 })
       .toArray();
-    const categories = payload.categorize ? await categoryRules.enabled(userId) : [];
+    const categories = payload.categorize ? await categoryRules.active(userId) : [];
     // Nothing to sort into: no model call.
     if (rules.length === 0 && categories.length === 0) return;
 
@@ -158,14 +158,6 @@ export function createClassifyHandler({
 
     const output = reply.output as { labels: Match[]; categories?: Match[] };
     const matches = output.labels;
-    const allowed = new Set<string>(categories.map((c) => c.category));
-    const picked = [
-      ...new Set(
-        (output.categories ?? [])
-          .filter((match) => allowed.has(match.id) && match.confidence >= DEFAULT_THRESHOLD)
-          .map((match) => match.id as MailCategory),
-      ),
-    ];
     const seen = new Set<string>();
     const results: LabelResult[] = [];
     for (const match of matches) {
@@ -174,6 +166,21 @@ export function createClassifyHandler({
       seen.add(rule.path);
       results.push({
         path: rule.path,
+        name: rule.name,
+        confidence: Math.round(match.confidence * 100) / 100,
+        reason: match.reason,
+        status: rule.mode === 'auto' ? 'applied' : 'pending',
+      });
+    }
+    for (const match of output.categories ?? []) {
+      const rule = categories.find((c) => c.category === match.id);
+      if (!rule || seen.has(`category:${rule.category}`) || match.confidence < DEFAULT_THRESHOLD) {
+        continue;
+      }
+      seen.add(`category:${rule.category}`);
+      results.push({
+        kind: 'category',
+        path: rule.category,
         name: rule.name,
         confidence: Math.round(match.confidence * 100) / 100,
         reason: match.reason,
@@ -194,7 +201,6 @@ export function createClassifyHandler({
           receivedAt: new Date(payload.receivedAt),
           model: reply.model,
           results,
-          ...(picked.length && { categories: picked }),
           pending: results.some((result) => result.status === 'pending'),
           createdAt: now,
           updatedAt: now,
@@ -203,7 +209,10 @@ export function createClassifyHandler({
       { upsert: true },
     );
 
-    const applied = results.filter((result) => result.status === 'applied').map((r) => r.path);
+    const applied = results
+      .filter((result) => result.kind !== 'category' && result.status === 'applied')
+      .map((r) => r.path);
+    const picked = categoriesIn(results);
     if (applied.length > 0) {
       await changes.enqueue(
         createJobEnvelope({
@@ -230,7 +239,7 @@ export function createClassifyHandler({
         model: reply.model,
         categories: picked.length,
         applied: applied.length,
-        suggested: results.length - applied.length,
+        suggested: results.filter((result) => result.status === 'pending').length,
       },
       'email classified',
     );

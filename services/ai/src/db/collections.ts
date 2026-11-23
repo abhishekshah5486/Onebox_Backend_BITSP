@@ -23,7 +23,7 @@ export interface CategoryRuleDoc {
   category: MailCategory;
   // null keeps OneBox's default description.
   description: string | null;
-  enabled: boolean;
+  mode: AiLabelMode;
   updatedAt: Date;
 }
 
@@ -38,6 +38,8 @@ export const RESULT_STATUSES = [
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export interface LabelResult {
+  // A built-in category (path is its key) rather than one of the user's labels.
+  kind?: 'label' | 'category';
   path: string;
   name: string;
   confidence: number;
@@ -58,8 +60,6 @@ export interface ClassificationDoc {
   receivedAt: Date;
   model: string | null;
   results: LabelResult[];
-  // Categories the AI filled in, where the server gave none.
-  categories?: MailCategory[];
   // True while any suggestion still waits for the user.
   pending: boolean;
   createdAt: Date;

@@ -90,7 +90,7 @@ export function registerAiRoutes(
             params: z.object({ category: mailCategorySchema }),
             body: z.object({
               description: z.string().max(1000).nullable().optional(),
-              enabled: z.boolean().optional(),
+              mode: z.enum(AI_LABEL_MODES).optional(),
             }),
           },
         },
