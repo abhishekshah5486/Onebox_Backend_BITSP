@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     RAG_BLOB_BUCKET: str = Field(default="onebox-rag", min_length=3)
 
     RAG_INGEST_QUEUE: str = "rag-ingest"
+    # Index jobs (embedding and writing points) run apart from parsing: they wait on the network.
+    RAG_INDEX_QUEUE: str = "rag-index"
+    RAG_INDEX_CONCURRENCY: int = Field(default=4, ge=1)
     RAG_INGEST_ATTEMPTS: int = Field(default=5, ge=1)
     RAG_INGEST_BACKOFF_MS: int = Field(default=5_000, ge=0)
     # Runs the parse worker inside the API process; off where it runs as its own deployment.
@@ -100,6 +103,22 @@ class Settings(BaseSettings):
     RAG_TABLE_ROW_BATCH: int = Field(default=50, ge=1, le=200)
     RAG_TABLE_CONCURRENCY: int = Field(default=8, ge=1)
     RAG_TABLE_MAX_OUTPUT_TOKENS: int = Field(default=8192, ge=256, le=32000)
+
+    # Indexing: RAG's own collections on OneBox's Qdrant (an empty QDRANT_URL leaves parsed
+    # content waiting to be indexed). Vectors come from the user's embedding model through
+    # llm-proxy (RAG_LLM_PROXY_URL), BM25 sparse vectors from here.
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str | None = None
+    QDRANT_TIMEOUT_S: float = Field(default=60, gt=0)
+    RAG_EMBED_CONCURRENCY: int = Field(default=4, ge=1)
+    RAG_EMBED_TIMEOUT_S: float = Field(default=120, gt=0)
+    # A block longer than this is embedded as windows of RAG_INDEX_WINDOW_CHARS (overlapping
+    # by RAG_INDEX_WINDOW_OVERLAP); one with more than RAG_INDEX_SENTENCE_MIN_WORDS words also
+    # gets a point per sentence.
+    RAG_INDEX_MAX_BLOCK_CHARS: int = Field(default=8000, ge=500, le=30000)
+    RAG_INDEX_WINDOW_CHARS: int = Field(default=1500, ge=200)
+    RAG_INDEX_WINDOW_OVERLAP: int = Field(default=200, ge=0)
+    RAG_INDEX_SENTENCE_MIN_WORDS: int = Field(default=100, ge=1)
 
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked
     # size, compression ratio and entry count that mark a zip bomb.

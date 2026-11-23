@@ -11,16 +11,21 @@ from onebox_rag.auth import JwksVerifier, derive_internal_token
 from onebox_rag.config import Settings
 from onebox_rag.errors import register_error_handlers
 from onebox_rag.health import HealthCheck, health_router
+from onebox_rag.index.embed import DenseEmbedder
+from onebox_rag.index.points import SplitSettings
+from onebox_rag.index.qdrant_store import QdrantStore
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.logs import log_requests
+from onebox_rag.models import Content
 from onebox_rag.mongo import mongo_client
 from onebox_rag.parsers.ocr.rapid import OcrLimits
 from onebox_rag.pipeline.describe import ImageDescriber
 from onebox_rag.pipeline.docling_client import DoclingClient
+from onebox_rag.pipeline.index import IndexStage
 from onebox_rag.pipeline.llm import LlmClient
 from onebox_rag.pipeline.ocr import OcrConfig, OcrProvider, OcrRunner, VisionCache
 from onebox_rag.pipeline.parse import ParseStage, PdfInspection
@@ -28,7 +33,7 @@ from onebox_rag.pipeline.pool import ParsePool
 from onebox_rag.pipeline.routing import PdfLimits
 from onebox_rag.pipeline.tables import TableEnricher, TableSettings
 from onebox_rag.pipeline.vision import VisionClient, VisionSettings
-from onebox_rag.pipeline.worker import parse_worker
+from onebox_rag.pipeline.worker import parse_worker, stage_worker
 from onebox_rag.routes import rag_router
 
 logger = logging.getLogger("onebox_rag.app")
@@ -80,6 +85,15 @@ def ocr_config_from(settings: Settings) -> OcrConfig:
     )
 
 
+def split_settings_from(settings: Settings) -> SplitSettings:
+    return SplitSettings(
+        max_block_chars=settings.RAG_INDEX_MAX_BLOCK_CHARS,
+        window_chars=settings.RAG_INDEX_WINDOW_CHARS,
+        window_overlap=settings.RAG_INDEX_WINDOW_OVERLAP,
+        sentence_min_words=settings.RAG_INDEX_SENTENCE_MIN_WORDS,
+    )
+
+
 def limits_from(settings: Settings) -> Limits:
     return Limits(
         max_bytes=settings.RAG_MAX_FILE_MB * 2**20,
@@ -122,7 +136,27 @@ def create_app(
         contents = ContentStore(mongo[settings.MONGO_DB])
         blobs = BlobStore(settings)
         queue = IngestQueue(settings)
-        ingestor = Ingestor(records, contents, blobs, queue, limits_from(settings))
+        indexing = bool(settings.QDRANT_URL and settings.RAG_LLM_PROXY_URL)
+        store = (
+            QdrantStore(settings.QDRANT_URL, settings.QDRANT_API_KEY, settings.QDRANT_TIMEOUT_S)
+            if indexing
+            else None
+        )
+        index_queue = IngestQueue(settings, settings.RAG_INDEX_QUEUE) if indexing else None
+
+        async def forget(content: Content) -> None:
+            if store is not None and content.index_collection:
+                await store.delete_content(content.index_collection, content.id)
+
+        ingestor = Ingestor(
+            records,
+            contents,
+            blobs,
+            queue,
+            limits_from(settings),
+            index_queue=index_queue,
+            forget=forget,
+        )
         app.state.records, app.state.contents, app.state.blobs = records, contents, blobs
         app.state.ingestor = ingestor
 
@@ -133,6 +167,8 @@ def create_app(
             return await redis.ping()
 
         app.state.checks = {"mongodb": mongodb, "redis": redis_ping, "blobs": blobs.ping}
+        if store is not None:
+            app.state.checks["qdrant"] = store.ping
         prepare = asyncio.create_task(
             _prepare_until_done(
                 [records.ensure_indexes, contents.ensure_indexes, blobs.ensure_bucket]
@@ -194,9 +230,30 @@ def create_app(
                     ocr,
                     describer,
                     tables,
+                    index_queue,
                 ),
             )
             if pool is not None
+            else None
+        )
+        dense = (
+            DenseEmbedder(
+                settings.RAG_LLM_PROXY_URL,
+                app.state.internal_token,
+                settings.RAG_EMBED_TIMEOUT_S,
+                settings.RAG_EMBED_CONCURRENCY,
+            )
+            if store is not None and settings.RAG_RUN_WORKER
+            else None
+        )
+        indexer = (
+            stage_worker(
+                settings,
+                settings.RAG_INDEX_QUEUE,
+                IndexStage(contents, records, blobs, dense, store, split_settings_from(settings)),
+                settings.RAG_INDEX_CONCURRENCY,
+            )
+            if dense is not None and store is not None
             else None
         )
         try:
@@ -205,6 +262,14 @@ def create_app(
             prepare.cancel()
             if worker is not None:
                 await worker.close()
+            if indexer is not None:
+                await indexer.close()
+            if dense is not None:
+                await dense.close()
+            if store is not None:
+                await store.close()
+            if index_queue is not None:
+                await index_queue.close()
             if pool is not None:
                 pool.close()
             if docling is not None:

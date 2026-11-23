@@ -8,6 +8,7 @@ from typing import Any
 
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor
+from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import TERMINAL, Attachment, Content, Stage, Status
 from onebox_rag.models.blocks import BlocksContainer
@@ -67,12 +68,13 @@ class ParseStage:
         ocr: OcrRunner | None = None,
         describer: ImageDescriber | None = None,
         tables: TableEnricher | None = None,
+        index_queue: IngestQueue | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._contents, self._records, self._blobs = contents, records, blobs
         self._ingestor, self._pool, self._pdf, self._now = ingestor, pool, pdf, now
         self._docling, self._ocr, self._describer = docling, ocr, describer
-        self._tables = tables
+        self._tables, self._index_queue = tables, index_queue
 
     async def run(self, content_id: str, revision: int, *, final_attempt: bool) -> None:
         content = await self._contents.get(content_id)
@@ -306,6 +308,8 @@ class ParseStage:
             block_count=len(result.container.blocks),
             attachments=[a.model_dump(by_alias=True) for a in attachments],
         )
+        if settled is not None and self._index_queue is not None:
+            await self._index_queue.enqueue(content.user_id, content.id, revision)
         if settled is not None and settled.attachments:
             for record in await self._records.for_content(content.id):
                 await self._ingestor.link_attachments(record, settled)

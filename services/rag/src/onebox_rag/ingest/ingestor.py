@@ -3,7 +3,7 @@ import hashlib
 import io
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import BinaryIO
@@ -61,9 +61,13 @@ class Ingestor:
         queue: IngestQueue,
         limits: Limits,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        index_queue: IngestQueue | None = None,
+        forget: Callable[[Content], Awaitable[None]] | None = None,
     ) -> None:
         self._records, self._contents, self._blobs, self._queue = records, contents, blobs, queue
         self._limits, self._now = limits, now
+        # Index jobs and indexed points of content that is deleted.
+        self._index_queue, self._forget = index_queue, forget
 
     async def ingest(
         self,
@@ -214,6 +218,10 @@ class Ingestor:
         if content is None:
             return
         await self._queue.remove(cid, content.revision)
+        if self._index_queue is not None:
+            await self._index_queue.remove(cid, content.revision)
+        if self._forget is not None:
+            await self._forget(content)
         for key in (content.blob_key, content.blocks_key):
             if key:
                 await self._blobs.delete(key)

@@ -73,6 +73,10 @@ class Content(CamelModel):
     worker_deaths: int = 0
     # The OCR provider that read it (scans and images), kept for retries like the engine.
     ocr_provider: str | None = None
+    # Where it is indexed: the collection (one per embedding model) and how many points.
+    index_collection: str | None = None
+    embedding_model: str | None = None
+    point_count: int | None = None
     revision: int = 1
     status: Status
     stage: Stage | None = Stage.PARSE

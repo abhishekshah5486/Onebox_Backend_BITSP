@@ -16,10 +16,11 @@ def job_id(content_id: str, revision: int) -> str:
 
 
 class IngestQueue:
-    """Parse jobs, one per content revision; enqueuing the same revision twice is a no-op."""
+    """Jobs, one per content revision (parse jobs on rag-ingest, index jobs on rag-index);
+    enqueuing the same revision twice is a no-op."""
 
-    def __init__(self, settings: Settings) -> None:
-        self.name = settings.RAG_INGEST_QUEUE
+    def __init__(self, settings: Settings, name: str | None = None) -> None:
+        self.name = name or settings.RAG_INGEST_QUEUE
         self._queue = Queue(self.name, {"connection": settings.REDIS_URL})
         self._opts = {
             "attempts": settings.RAG_INGEST_ATTEMPTS,

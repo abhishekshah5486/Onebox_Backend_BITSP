@@ -1,4 +1,4 @@
-"""MongoDB, Redis and SeaweedFS in containers, shared by the integration tests."""
+"""MongoDB, Redis, SeaweedFS and Qdrant in containers, shared by the integration tests."""
 
 import time
 from collections.abc import Iterator
@@ -6,6 +6,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 
 import boto3
+import httpx
 from testcontainers.community.redis import RedisContainer
 from testcontainers.core.container import DockerContainer
 from testcontainers.mongodb import MongoDbContainer
@@ -18,12 +19,15 @@ class Stores:
     mongo_uri: str
     redis_url: str
     blob_endpoint: str
+    qdrant_url: str
 
     def settings(self) -> dict[str, str]:
+        # Indexing also needs RAG_LLM_PROXY_URL, which only the indexing tests set.
         return {
             "MONGO_URI": self.mongo_uri,
             "REDIS_URL": self.redis_url,
             "BLOB_ENDPOINT": self.blob_endpoint,
+            "QDRANT_URL": self.qdrant_url,
         }
 
 
@@ -44,6 +48,19 @@ def _wait_for_s3(endpoint: str, timeout_s: float = 120) -> None:
             if time.monotonic() > deadline:
                 raise
             time.sleep(0.5)
+
+
+def _wait_for_http(url: str, timeout_s: float = 60) -> None:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            if httpx.get(url).status_code == 200:
+                return
+        except httpx.TransportError:
+            pass
+        if time.monotonic() > deadline:
+            raise TimeoutError(url)
+        time.sleep(0.5)
 
 
 def _mapped_port(container: DockerContainer, port: int, timeout_s: float = 30) -> int:
@@ -73,8 +90,15 @@ def running_stores() -> Iterator[Stores]:
         )
         blob_endpoint = f"http://{seaweed.get_container_host_ip()}:{_mapped_port(seaweed, 8333)}"
         _wait_for_s3(blob_endpoint)
+        # The Qdrant version the dev stack runs.
+        qdrant = stack.enter_context(
+            DockerContainer("qdrant/qdrant:v1.19.2").with_exposed_ports(6333)
+        )
+        qdrant_url = f"http://{qdrant.get_container_host_ip()}:{_mapped_port(qdrant, 6333)}"
+        _wait_for_http(f"{qdrant_url}/readyz")
         yield Stores(
             mongo_uri=mongo.get_connection_url(),
             redis_url=f"redis://{redis.get_container_host_ip()}:{redis.get_exposed_port(6379)}",
             blob_endpoint=blob_endpoint,
+            qdrant_url=qdrant_url,
         )
