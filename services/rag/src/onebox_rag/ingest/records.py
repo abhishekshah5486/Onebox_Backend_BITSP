@@ -85,6 +85,7 @@ class RecordStore:
         await self._records.create_index([("contentId", ASCENDING)])
         await self._records.create_index([("parentId", ASCENDING)], sparse=True)
         await self._records.create_index([("mail.copyIds", ASCENDING)], sparse=True)
+        await self._records.create_index([("titled", ASCENDING)])
         # Records made before they had source dates take their own.
         await self._records.update_many(
             {"sourceCreatedAt": None},
@@ -174,6 +175,10 @@ class RecordStore:
     async def with_mail_copy(self, message_id: str) -> Record | None:
         doc = await self._records.find_one({"mail.copyIds": message_id})
         return Record.model_validate(doc) if doc else None
+
+    async def untitled(self, limit: int = 1000) -> list[Record]:
+        cursor = self._records.find({"titled": {"$ne": True}}).limit(limit)
+        return [Record.model_validate(doc) async for doc in cursor]
 
     async def holds_content(self, content_id: str) -> bool:
         return await self._records.count_documents({"contentId": content_id}, limit=1) > 0

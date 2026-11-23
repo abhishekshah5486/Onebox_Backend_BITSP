@@ -61,7 +61,7 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
         modified_before=body.modified_before,
     )
     try:
-        chunks = await retriever.retrieve(
+        found = await retriever.retrieve(
             user_id,
             body.query,
             limit=body.limit,
@@ -71,7 +71,7 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
         )
     except EmbeddingUnavailableError as err:
         raise UnavailableError("The embedding model is unavailable") from err
-    return {"chunks": chunks}
+    return {"chunks": found.chunks, "unindexed": found.unindexed}
 
 
 async def _read(

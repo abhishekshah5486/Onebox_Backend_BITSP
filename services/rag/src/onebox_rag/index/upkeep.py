@@ -1,5 +1,6 @@
-"""Keeps a content's points in step with the records holding it: the records' dates on every
-point (what date filters read), and a header point per email record."""
+"""Keeps points in step with the records they belong to: a title point per record, written as
+soon as the record is made (so it is found by name before its content is parsed), and the
+records' dates on their content's points (what date filters read)."""
 
 import asyncio
 import logging
@@ -7,20 +8,15 @@ import uuid
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 
-from onebox_rag.index.embed import DenseEmbedder, sparse_documents
-from onebox_rag.index.headers import header_text
+from onebox_rag.index.embed import DenseEmbedder, SparseVector, sparse_documents
 from onebox_rag.index.points import POINT_NAMESPACE, PointKind
-from onebox_rag.index.qdrant_store import (
-    CREATED,
-    MODIFIED,
-    QdrantStore,
-    StoredPoint,
-    collection_name,
-)
+from onebox_rag.index.qdrant_store import CREATED, MODIFIED, QdrantStore, StoredPoint
+from onebox_rag.index.titles import title_label, title_text
 from onebox_rag.ingest.records import ContentStore, RecordStore
-from onebox_rag.models import Content, Record, Status
+from onebox_rag.models import Record, Status
 
 logger = logging.getLogger("onebox_rag.index")
+TITLE_BATCH = 64
 
 
 def _iso(moment: datetime) -> str:
@@ -39,29 +35,74 @@ class PointUpkeep:
         self._contents, self._records, self._store, self._dense = contents, records, store, dense
         self._now = now
 
-    async def sync(self, content_id: str, removed: Iterable[str] = ()) -> None:
-        """After records holding the content were added, changed or `removed`."""
+    async def sync(
+        self,
+        content_id: str,
+        added: Iterable[str] = (),
+        removed: Iterable[str] = (),
+        *,
+        retitle: bool = False,
+    ) -> None:
+        """After records holding the content were `added` or `removed` (by id); `retitle`
+        writes every holder's title again (its user's embedding model changed)."""
         content = await self._contents.get(content_id)
-        if content is None or content.status != Status.COMPLETED or not content.index_collection:
-            return  # not indexed yet: the index step syncs it when it is
+        if content is None:
+            return
         holders = await self._records.for_content(content_id)
-        collection = content.index_collection
+        fresh = set(added)
+        await self.write_titles(
+            content.user_id, [r for r in holders if retitle or r.id in fresh], list(removed)
+        )
+        if content.status != Status.COMPLETED or not content.index_collection:
+            return  # not indexed yet: the index step syncs it when it is
         await self._store.set_dates(
-            collection,
+            content.index_collection,
             content_id,
             sorted({_iso(r.dates()[0]) for r in holders}),
             sorted({_iso(r.dates()[1]) for r in holders}),
         )
-        emails = [r for r in holders if r.mail is not None]
-        stale = [r.id for r in emails] + list(removed)
-        if stale:
-            points = await self._headers(content, collection, emails)
-            await self._store.replace_headers(collection, content_id, stale, points)
         await self._contents.update(content_id, self._now(), points_dated=True)
 
-    async def sync_undated(self) -> int:
-        """Contents indexed before their points carried dates (or whose sync failed)."""
+    async def write_titles(
+        self, user_id: str, records: list[Record], removed: list[str] | None = None
+    ) -> None:
+        """Each record's title point, replacing any it had; `removed` records lose theirs."""
+        stale = [r.id for r in records] + list(removed or [])
+        if not stale:
+            return
+        model = await self._dense.model_for(user_id)
+        collection = await self._store.ensure_collection(model)
+        points: list[StoredPoint] = []
+        if records:
+            texts = [title_text(r) for r in records]
+            dense, sparse = await asyncio.gather(
+                self._dense.embed(user_id, model, texts),
+                asyncio.to_thread(sparse_documents, texts),
+            )
+            points = [
+                _title_point(record, text, vector, terms)
+                for record, text, vector, terms in zip(records, texts, dense, sparse, strict=True)
+            ]
+        await self._store.replace_titles(collection, stale, points)
+        now = self._now()
+        for record in records:
+            await self._records.update(record.id, now, titled=True)
+
+    async def sweep(self) -> int:
+        """Records without a title point and contents whose points lack their records' dates:
+        made before these existed, or their upkeep failed."""
         done = 0
+        by_user: dict[str, list[Record]] = {}
+        for record in await self._records.untitled():
+            by_user.setdefault(record.user_id, []).append(record)
+        for user_id, records in by_user.items():
+            for start in range(0, len(records), TITLE_BATCH):
+                batch = records[start : start + TITLE_BATCH]
+                try:
+                    await self.write_titles(user_id, batch)
+                    done += len(batch)
+                except Exception:
+                    logger.warning("titles not written", extra={"userId": user_id}, exc_info=True)
         for content_id in await self._contents.undated():
             try:
                 await self.sync(content_id)
@@ -72,38 +113,25 @@ class PointUpkeep:
                 )
         return done
 
-    async def _headers(
-        self, content: Content, collection: str, emails: list[Record]
-    ) -> list[StoredPoint]:
-        model = await self._dense.model_for(content.user_id)
-        if not emails or collection_name(model) != collection:
-            return []  # the model changed: a re-index writes them in the new collection
-        texts = [header_text(r) for r in emails]
-        dense, sparse = await asyncio.gather(
-            self._dense.embed(content.user_id, model, texts),
-            asyncio.to_thread(sparse_documents, texts),
-        )
-        points = []
-        for record, text, vector, terms in zip(emails, texts, dense, sparse, strict=True):
-            created, modified = record.dates()
-            name = f"{content.id}|{content.revision}|header|{record.id}|{text}"
-            points.append(
-                StoredPoint(
-                    id=str(uuid.uuid5(POINT_NAMESPACE, name)),
-                    dense=vector,
-                    sparse=terms,
-                    payload={
-                        "userId": content.user_id,
-                        "contentId": content.id,
-                        "recordId": record.id,
-                        "revision": content.revision,
-                        "kind": PointKind.HEADER.value,
-                        "blockIndex": None,
-                        "groupIndex": None,
-                        "text": text,
-                        CREATED: [_iso(created)],
-                        MODIFIED: [_iso(modified)],
-                    },
-                )
-            )
-        return points
+
+def _title_point(
+    record: Record, text: str, vector: list[float], terms: SparseVector
+) -> StoredPoint:
+    created, modified = record.dates()
+    return StoredPoint(
+        id=str(uuid.uuid5(POINT_NAMESPACE, f"title|{record.id}|{text}")),
+        dense=vector,
+        sparse=terms,
+        payload={
+            "userId": record.user_id,
+            "contentId": record.content_id,
+            "recordId": record.id,
+            "kind": PointKind.TITLE.value,
+            "blockIndex": None,
+            "groupIndex": None,
+            "text": text,
+            "label": title_label(record),
+            CREATED: [_iso(created)],
+            MODIFIED: [_iso(modified)],
+        },
+    )

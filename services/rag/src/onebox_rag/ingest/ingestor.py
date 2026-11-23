@@ -74,13 +74,13 @@ class Ingestor:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         index_queue: IngestQueue | None = None,
         forget: Callable[[Content], Awaitable[None]] | None = None,
-        changed: Callable[[str, list[str]], Awaitable[None]] | None = None,
+        changed: Callable[[str, list[str], list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self._records, self._contents, self._blobs, self._queue = records, contents, blobs, queue
         self._limits, self._now = limits, now
         # Index jobs and indexed points of content that is deleted.
         self._index_queue, self._forget = index_queue, forget
-        # Told (content, removed record ids) when the records holding an indexed content change.
+        # Told (content, added record ids, removed record ids) when a content's records change.
         self._changed = changed
 
     async def ingest(
@@ -199,7 +199,7 @@ class Ingestor:
             if state != {"status": saved.status, "stage": saved.stage, "reason": saved.reason}:
                 saved = await self._records.update(saved.id, self._now(), **state) or saved
             await self.link_attachments(saved, latest)
-        await self._notify(content.id, [])
+        await self._notify(content.id, [saved.id], [])
         return Ingested(saved, duplicate=False)
 
     async def link_attachments(self, parent: Record, content: Content) -> None:
@@ -232,17 +232,16 @@ class Ingestor:
             pending += await self._records.children(user_id, item.id)
         await self._records.delete([item.id for item in doomed])
         for cid in dict.fromkeys(item.content_id for item in doomed):
-            if await self._records.holds_content(cid):
-                await self._notify(cid, [item.id for item in doomed if item.content_id == cid])
-            else:
-                await self.collect(cid)
+            # Their title points go first; the content goes too once nothing holds it.
+            await self._notify(cid, [], [item.id for item in doomed if item.content_id == cid])
+            await self.collect(cid)
         return True
 
-    async def _notify(self, content_id: str, removed: list[str]) -> None:
+    async def _notify(self, content_id: str, added: list[str], removed: list[str]) -> None:
         if self._changed is None:
             return
         try:
-            await self._changed(content_id, removed)
+            await self._changed(content_id, added, removed)
         except Exception:
             # The record change stands; the points catch up on the next sweep.
             logger.warning("point upkeep failed", extra={"contentId": content_id}, exc_info=True)

@@ -53,16 +53,16 @@ def test_hits_become_lists_tables_and_blocks() -> None:
     assert around[3].text == "After shipping." and around[3].neighbour_of == shipping
 
 
-def test_an_email_found_by_its_header_shows_whole_or_its_opening() -> None:
+def test_a_record_found_by_its_title_shows_whole_or_its_opening() -> None:
     email = parse_markdown(b"Parcelforce from Monday.\n\nRates are in the sheet.\n").container
     header = Hit(
-        "h", 0.6, {"contentId": "e", "kind": "header", "recordId": "r1", "text": "Subject: Ships"}
+        "h", 0.6, {"contentId": "e", "kind": "title", "recordId": "r1", "label": "Subject: Ships"}
     )
     hits = [hit("e", 0.8, 1), header]
     [unit] = build_units(hits, {"e": email}, UnitSettings())
-    # The body hit folds into the email it is part of.
-    assert (unit.kind, unit.score, unit.record_id, unit.blocks) == ("email", 0.8, "r1", [0, 1])
+    # The body hit folds into the record it is part of.
+    assert (unit.kind, unit.score, unit.record_id, unit.blocks) == ("record", 0.8, "r1", [0, 1])
     assert unit.text == "Subject: Ships\n\nParcelforce from Monday.\nRates are in the sheet."
 
-    [short] = build_units([header], {"e": email}, UnitSettings(email_words=4))
-    assert short.blocks == [0] and short.text.endswith("read the record for the rest.]")
+    [short] = build_units([header], {"e": email}, UnitSettings(title_hit_words=4))
+    assert short.blocks == [0] and short.text.endswith("read it for the rest.]")

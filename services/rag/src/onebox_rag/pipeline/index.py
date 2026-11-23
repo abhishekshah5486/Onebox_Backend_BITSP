@@ -47,6 +47,7 @@ class IndexStage:
         ):
             return
         await self._settle(content, Status.IN_PROGRESS, stage=Stage.INDEX)
+        moved = False
         try:
             container = decode_blocks(await self._blobs.get(content.blocks_key))
             texts = await asyncio.to_thread(point_texts, container, self._split)
@@ -56,8 +57,9 @@ class IndexStage:
             await self._store.upsert(collection, points)
             await self._store.delete_content(collection, content.id, keep_revision=revision)
             if content.index_collection and content.index_collection != collection:
-                # Indexed before with another embedding model.
+                # Indexed before with another embedding model: its records' titles move too.
                 await self._store.delete_content(content.index_collection, content.id)
+                moved = True
         except EmbeddingUnavailableError as err:
             logger.warning(
                 "embedding unavailable", extra={"contentId": content_id, "why": str(err)}
@@ -78,7 +80,7 @@ class IndexStage:
         )
         if self._upkeep is not None:
             try:
-                await self._upkeep.sync(content_id)
+                await self._upkeep.sync(content_id, retitle=moved)
             except Exception:
                 # Searchable already; its dates and header points follow on the next sweep.
                 logger.warning(

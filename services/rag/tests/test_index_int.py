@@ -187,3 +187,37 @@ def test_retrieves_cited_passages_and_reads_records_in_pages(client: TestClient)
     token = {INTERNAL_TOKEN_HEADER: client.app.state.internal_token}  # type: ignore[attr-defined]
     response = client.post("/internal/rag/retrieve", json=internal, headers=token)
     assert response.status_code == 200 and response.json()["chunks"]
+
+
+def test_finds_records_by_name_and_names_the_unreadable(
+    client: TestClient, live_settings: Settings
+) -> None:
+    [budget, minutes] = upload(
+        client,
+        ("Quarterly budget.md", b"Spend stays flat until spring."),
+        ("Board minutes.dat", bytes(range(256)) * 8),
+        kb="names",
+    )
+    wait_for(client, budget["id"], completed, timeout_s=120)
+    wait_for(client, minutes["id"], lambda r: r["status"] != "queued", timeout_s=60)
+
+    def ask(query: str) -> Json:
+        response = client.post("/rag/retrieve", json={"query": query}, headers=bearer("u1"))
+        return dict(response.json())
+
+    # Its name says what its text doesn't: found by name, short, so shown whole.
+    found = ask("quarterly budget")
+    record = next(c for c in found["chunks"] if c["record"]["recordId"] == budget["id"])
+    assert record["kind"] == "record"
+    assert record["text"] == "Name: Quarterly budget.md\n\nSpend stays flat until spring."
+    # A file that can't be read is still found by name, named apart from the passages.
+    [unread] = [u for u in ask("board minutes")["unindexed"] if u["recordId"] == minutes["id"]]
+    assert unread["name"] == "Board minutes.dat" and unread["status"] != "completed"
+
+    qdrant = QdrantClient(url=live_settings.QDRANT_URL)
+    title = models.Filter(
+        must=[models.FieldCondition(key="recordId", match=models.MatchValue(value=minutes["id"]))]
+    )
+    assert qdrant.count(COLLECTION, count_filter=title).count == 1
+    assert client.delete(f"/rag/records/{minutes['id']}", headers=bearer("u1")).status_code == 204
+    assert qdrant.count(COLLECTION, count_filter=title).count == 0

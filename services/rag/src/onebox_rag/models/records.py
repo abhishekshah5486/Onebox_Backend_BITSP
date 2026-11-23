@@ -141,6 +141,8 @@ class Record(CamelModel):
     # and last changed in its source. Set on every new record.
     source_created_at: datetime | None = None
     source_modified_at: datetime | None = None
+    # Its title point is written (cleared to have the sweep write it again).
+    titled: bool = False
 
     def dates(self) -> tuple[datetime, datetime]:
         created = self.source_created_at or self.created_at

@@ -132,10 +132,16 @@ class Settings(BaseSettings):
     RAG_SEARCH_HNSW_EF: int = Field(default=256, ge=0, le=4096)
     RAG_SEARCH_OVERSAMPLING: float = Field(default=1.5, ge=1, le=4)
     RAG_SEARCH_RECORD_CUT: bool = False
-    # An email found by its subject, people or date is shown whole up to this many words.
-    # How often contents whose points lack their records' dates are looked for.
+    # How often records without a title point, and contents whose points lack their records'
+    # dates, are looked for.
     RAG_UPKEEP_SWEEP_S: float = Field(default=300, gt=0)
-    RAG_EMAIL_WORDS: int = Field(default=700, ge=50)
+    # A record found by its title (its name, an email's subject, people or date) is shown whole
+    # up to this many words, else its opening.
+    RAG_TITLE_HIT_WORDS: int = Field(default=700, ge=50)
+    # Names found for records not indexed yet: cosine floor (measured with OpenAI's small
+    # embedding model; re-measure for others) and how many are listed.
+    RAG_TITLE_MIN_SCORE: float = Field(default=0.45, ge=0, le=1)
+    RAG_TITLE_UNINDEXED_MAX: int = Field(default=10, ge=0, le=50)
     RAG_SMALL_TABLE_CELLS: int = Field(default=250, ge=0)
     RAG_READ_MAX_BLOCKS: int = Field(default=200, ge=1, le=5000)
 

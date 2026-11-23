@@ -182,7 +182,7 @@ def test_keeps_emails_and_attachments_in_step_with_the_mailbox(
         chunks = client.post("/rag/retrieve", json=body, headers=bearer("u1")).json()["chunks"]
         return [c for c in chunks if c["record"]["recordId"] in {email["id"], rates["id"]}]
 
-    found = until(lambda: [c for c in ask() if c["kind"] == "email"])
+    found = until(lambda: [c for c in ask() if c["kind"] == "record"])
     assert found[0]["record"]["recordId"] == email["id"]
     assert "From: Ana <ana@acme.test>" in found[0]["text"]
     assert "Attachments: rates.csv" in found[0]["text"]

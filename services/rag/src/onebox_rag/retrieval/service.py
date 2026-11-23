@@ -2,16 +2,17 @@
 grouped into units, neighbouring paragraphs in the room left."""
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from onebox_rag.dates import DateBounds
-from onebox_rag.index.embed import DenseEmbedder, sparse_query
+from onebox_rag.index.embed import DenseEmbedder, SparseVector, sparse_query
 from onebox_rag.index.points import citation_of
-from onebox_rag.index.qdrant_store import Hit, QdrantStore, SearchTuning, collection_name
+from onebox_rag.index.qdrant_store import TITLE, Hit, QdrantStore, SearchTuning, collection_name
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.records import ContentStore, RecordStore
-from onebox_rag.models import Content, Record
+from onebox_rag.models import Content, Record, Status
 from onebox_rag.models.blocks import BlocksContainer
 from onebox_rag.pipeline.parse import decode_blocks
 from onebox_rag.retrieval.units import (
@@ -23,6 +24,7 @@ from onebox_rag.retrieval.units import (
     rank,
 )
 
+logger = logging.getLogger("onebox_rag.retrieval")
 # A search reads at most this many hits, however deep it is asked to go.
 MAX_FETCH = 300
 
@@ -66,6 +68,19 @@ class RetrieveSettings:
     units: UnitSettings = field(default_factory=UnitSettings)
     # With a per-record cap, read this many times deeper so capped records leave room.
     cap_overfetch: int = 3
+    # Records found by name whose content is not indexed yet: the title search reads this
+    # deep (indexed records share it), keeps those above the cosine floor, lists this many.
+    title_depth: int = 25
+    title_min_score: float = 0.45
+    unindexed_max: int = 10
+
+
+@dataclass
+class Retrieved:
+    chunks: list[dict[str, Any]] = field(default_factory=list)
+    # Records whose names match but whose content can't be searched yet (still being read,
+    # or failed): search can't see their text, so they are named apart.
+    unindexed: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Retriever:
@@ -90,20 +105,52 @@ class Retriever:
         scope: Scope,
         max_per_record: int | None = None,
         dates: DateBounds | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> Retrieved:
         dates = dates if dates is not None and dates.given() else None
         content_ids = None
         if scope.given():
             content_ids = await self._records.scoped_contents(user_id, **scope.fields())
             if not content_ids:
-                return []
+                return Retrieved()
         model = await self._dense.model_for(user_id)
         collection = collection_name(model)
         if not await self._store.exists(collection):
-            return []
+            return Retrieved()
         dense, sparse = await asyncio.gather(
             self._dense.embed(user_id, model, [query]), asyncio.to_thread(sparse_query, query)
         )
+        unindexed = asyncio.create_task(
+            self._unindexed(user_id, collection, dense[0], content_ids, scope, dates)
+        )
+        try:
+            chunks = await self._chunks(
+                user_id,
+                collection,
+                dense[0],
+                sparse,
+                content_ids,
+                scope,
+                dates,
+                limit,
+                max_per_record,
+            )
+        except BaseException:
+            unindexed.cancel()
+            raise
+        return Retrieved(chunks, await unindexed)
+
+    async def _chunks(
+        self,
+        user_id: str,
+        collection: str,
+        dense: list[float],
+        sparse: SparseVector,
+        content_ids: list[str] | None,
+        scope: Scope,
+        dates: DateBounds | None,
+        limit: int,
+        max_per_record: int | None,
+    ) -> list[dict[str, Any]]:
         cut = self._settings.record_cut
         fetch = limit
         if cut.enabled:
@@ -112,7 +159,7 @@ class Retriever:
             fetch = max(fetch, min(limit * self._settings.cap_overfetch, MAX_FETCH))
         hits = await self._store.search(
             collection,
-            dense[0],
+            dense,
             sparse,
             user_id=user_id,
             content_ids=content_ids,
@@ -148,6 +195,54 @@ class Retriever:
             for unit, record in cited
         ]
 
+    async def _unindexed(
+        self,
+        user_id: str,
+        collection: str,
+        dense: list[float],
+        content_ids: list[str] | None,
+        scope: Scope,
+        dates: DateBounds | None,
+    ) -> list[dict[str, Any]]:
+        settings = self._settings
+        if settings.unindexed_max == 0:
+            return []
+        try:
+            hits = await self._store.search_titles(
+                collection,
+                dense,
+                user_id=user_id,
+                content_ids=content_ids,
+                limit=settings.title_depth,
+                min_score=settings.title_min_score,
+                dates=dates,
+            )
+            ids = list({str(h.payload.get("contentId")) for h in hits})
+            contents = await self._contents.get_many(ids) if ids else {}
+            waiting = {c.id for c in contents.values() if c.status != Status.COMPLETED}
+            held = await self._records.holding(user_id, list(waiting), dates, **scope.fields())
+        except Exception:
+            # The passages stand without it.
+            logger.warning("title search failed", exc_info=True)
+            return []
+        by_id = {r.id: r for records in held.values() for r in records}
+        found: list[dict[str, Any]] = []
+        for hit in hits:
+            record = by_id.pop(str(hit.payload.get("recordId")), None)
+            if record is None:
+                continue
+            content = contents[record.content_id]
+            found.append(
+                {
+                    "recordId": record.id,
+                    "name": record.name,
+                    "status": content.status,
+                    **({"reason": content.reason} if content.reason else {}),
+                    "score": hit.score,
+                }
+            )
+        return found[: settings.unindexed_max]
+
     async def _load(self, hits: list[Hit]) -> tuple[dict[str, Content], dict[str, BlocksContainer]]:
         ids = list({str(h.payload.get("contentId")) for h in hits})
         contents = await self._contents.get_many(ids) if ids else {}
@@ -162,8 +257,8 @@ class Retriever:
 
 
 def _record_for(unit: Unit, held: dict[str, list[Record]]) -> Record | None:
-    """The newest record holding the unit's content, or for an email's header that email's
-    own record (left out when the scope or dates leave it out)."""
+    """The newest record holding the unit's content, or for a title hit that title's own
+    record (left out when the scope or dates leave it out)."""
     records = held.get(unit.content_id) or []
     if unit.record_id is None:
         return records[0] if records else None
@@ -171,6 +266,8 @@ def _record_for(unit: Unit, held: dict[str, list[Record]]) -> Record | None:
 
 
 def _current(hit: Hit, contents: dict[str, Content]) -> bool:
+    if hit.payload.get("kind") == TITLE:
+        return hit.payload.get("contentId") in contents  # belongs to its record, not a revision
     content = contents.get(str(hit.payload.get("contentId")))
     return content is not None and content.revision == hit.payload.get("revision")
 
@@ -185,7 +282,7 @@ def _chunk(
         if group_cite is not None:
             cite = {"page": group_cite.page_number, "sheet": group_cite.sheet_name}
     where = unit.group_index if unit.kind in {"table", "list"} else unit.block_index
-    if unit.kind == "email":
+    if unit.kind == "record":
         where = 0
     return {
         # The same for the same passage across calls, so callers can dedupe and cache.

@@ -12,9 +12,10 @@ from onebox_rag.dates import DateBounds
 from onebox_rag.index.embed import EmbeddingModel, SparseVector
 
 DENSE, SPARSE = "dense", "sparse"
-# Payload fields date filters read, and the kind of an email's header point.
+# Payload fields date filters read, and the kind of a record's title point (it belongs to the
+# record, not to a revision of its content).
 CREATED, MODIFIED = "createdAt", "modifiedAt"
-HEADER = "header"
+TITLE = "title"
 UPSERT_BATCH = 256
 # RRF ties hits of equal rank, which Qdrant returns in any order; a few more are fetched and
 # ties broken by id, so the same query always ranks the same.
@@ -127,8 +128,12 @@ class QdrantStore:
         self, collection: str, content_id: str, keep_revision: int | None = None
     ) -> None:
         """A content's points, or with `keep_revision` those of its older revisions."""
+        # A re-index keeps the record's title points, which belong to no revision.
         must_not = (
-            [models.FieldCondition(key="revision", match=models.MatchValue(value=keep_revision))]
+            [
+                models.FieldCondition(key="revision", match=models.MatchValue(value=keep_revision)),
+                _match("kind", TITLE),
+            ]
             if keep_revision is not None
             else None
         )
@@ -152,38 +157,65 @@ class QdrantStore:
     async def set_dates(
         self, collection: str, content_id: str, created: list[str], modified: list[str]
     ) -> None:
-        """The dates of the records holding a content, on its points (header points carry
-        their own email's)."""
+        """The dates of the records holding a content, on its points (title points carry
+        their own record's)."""
         await self._client.set_payload(
             collection,
             {CREATED: created, MODIFIED: modified},
             points=models.Filter(
-                must=[_match("contentId", content_id)], must_not=[_match("kind", HEADER)]
+                must=[_match("contentId", content_id)], must_not=[_match("kind", TITLE)]
             ),
             wait=True,
         )
 
-    async def replace_headers(
-        self, collection: str, content_id: str, record_ids: list[str], points: list[StoredPoint]
+    async def replace_titles(
+        self, collection: str, record_ids: list[str], points: list[StoredPoint]
     ) -> None:
-        """Drops these records' header points, then writes the given ones."""
-        if record_ids:
-            await self._client.delete(
-                collection,
-                models.FilterSelector(
-                    filter=models.Filter(
-                        must=[
-                            _match("contentId", content_id),
-                            _match("kind", HEADER),
-                            models.FieldCondition(
-                                key="recordId", match=models.MatchAny(any=record_ids)
-                            ),
-                        ]
-                    )
-                ),
-                wait=True,
-            )
+        """Drops these records' title points, then writes the given ones."""
+        await self._client.delete(
+            collection,
+            models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        _match("kind", TITLE),
+                        models.FieldCondition(
+                            key="recordId", match=models.MatchAny(any=record_ids)
+                        ),
+                    ]
+                )
+            ),
+            wait=True,
+        )
         await self.upsert(collection, points)
+
+    async def search_titles(
+        self,
+        collection: str,
+        dense: list[float],
+        *,
+        user_id: str,
+        content_ids: list[str] | None,
+        limit: int,
+        min_score: float,
+        dates: DateBounds | None = None,
+    ) -> list[Hit]:
+        """Title points by meaning alone, above a cosine floor: names are a few words, and
+        a near miss of a name is no match."""
+        must = [*_scope(user_id, content_ids), _match("kind", TITLE)]
+        if dates is not None:
+            must += _date_conditions(dates)
+        response = await self._client.query_points(
+            collection,
+            query=dense,
+            using=DENSE,
+            query_filter=models.Filter(must=must),
+            limit=limit,
+            score_threshold=min_score,
+            with_payload=True,
+        )
+        return [
+            Hit(str(p.id), float(p.score or 0.0), dict(p.payload or {})) for p in response.points
+        ]
 
     async def count(self, collection: str, content_id: str) -> int:
         result = await self._client.count(
@@ -213,13 +245,7 @@ class QdrantStore:
     ) -> list[Hit]:
         """Dense and BM25 legs, each twice the limit deep and filtered where it searches, fused by
         reciprocal rank."""
-        must: list[models.Condition] = [
-            models.FieldCondition(key="userId", match=models.MatchValue(value=user_id))
-        ]
-        if content_ids is not None:
-            must.append(
-                models.FieldCondition(key="contentId", match=models.MatchAny(any=content_ids))
-            )
+        must = _scope(user_id, content_ids)
         if dates is not None:
             must += _date_conditions(dates)
         where = models.Filter(must=must)
@@ -261,6 +287,13 @@ class QdrantStore:
 
     async def close(self) -> None:
         await self._client.close()
+
+
+def _scope(user_id: str, content_ids: list[str] | None) -> list[models.Condition]:
+    must: list[models.Condition] = [_match("userId", user_id)]
+    if content_ids is not None:
+        must.append(models.FieldCondition(key="contentId", match=models.MatchAny(any=content_ids)))
+    return must
 
 
 def _match(key: str, value: str) -> models.FieldCondition:

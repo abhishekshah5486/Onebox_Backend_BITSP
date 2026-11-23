@@ -1,5 +1,6 @@
-"""An email's header point: subject, people, date and attachment names, so an email is found by
-who sent it or what it is called, which its body rarely says."""
+"""A record's title point, written when the record is made, before its content is parsed: an
+email's header (subject, people, date, attachment names), else the record's name. A record is
+then found by what it is called or who sent it, which its content rarely says."""
 
 from onebox_rag.models import Record
 from onebox_rag.models.records import Address
@@ -7,6 +8,20 @@ from onebox_rag.models.records import Address
 
 def _person(address: Address) -> str:
     return f"{address.name} <{address.address}>" if address.name else address.address
+
+
+# Embedded as given up to this length; a name is a few words, not a document.
+MAX_NAME_CHARS = 512
+
+
+def title_text(record: Record) -> str:
+    """What is embedded: the email's header, or the name alone."""
+    return header_text(record) if record.mail is not None else record.name[:MAX_NAME_CHARS]
+
+
+def title_label(record: Record) -> str:
+    """What a passage found by its title opens with."""
+    return header_text(record) if record.mail is not None else f"Name: {record.name}"
 
 
 def header_text(record: Record) -> str:

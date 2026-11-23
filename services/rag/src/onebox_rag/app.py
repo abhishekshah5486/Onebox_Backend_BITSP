@@ -94,8 +94,11 @@ def retrieve_settings_from(settings: Settings) -> RetrieveSettings:
     return RetrieveSettings(
         tuning=SearchTuning(settings.RAG_SEARCH_HNSW_EF, settings.RAG_SEARCH_OVERSAMPLING),
         record_cut=RecordCut(enabled=settings.RAG_SEARCH_RECORD_CUT),
+        title_min_score=settings.RAG_TITLE_MIN_SCORE,
+        unindexed_max=settings.RAG_TITLE_UNINDEXED_MAX,
         units=UnitSettings(
-            small_table_cells=settings.RAG_SMALL_TABLE_CELLS, email_words=settings.RAG_EMAIL_WORDS
+            small_table_cells=settings.RAG_SMALL_TABLE_CELLS,
+            title_hit_words=settings.RAG_TITLE_HIT_WORDS,
         ),
     )
 
@@ -133,9 +136,9 @@ async def _prepare_until_done(steps: list[Callable[[], Awaitable[None]]]) -> Non
 async def _sweep_undated(upkeep: PointUpkeep, every_s: float) -> None:
     while True:
         try:
-            done = await upkeep.sync_undated()
+            done = await upkeep.sweep()
             if done:
-                logger.info("point dates synced", extra={"contents": done})
+                logger.info("points caught up", extra={"items": done})
         except Exception:
             logger.warning("point upkeep sweep failed", exc_info=True)
         await asyncio.sleep(every_s)
@@ -176,9 +179,9 @@ def create_app(
 
         upkeep: PointUpkeep | None = None
 
-        async def changed(content_id: str, removed: list[str]) -> None:
+        async def changed(content_id: str, added: list[str], removed: list[str]) -> None:
             if upkeep is not None:
-                await upkeep.sync(content_id, removed)
+                await upkeep.sync(content_id, added, removed)
 
         ingestor = Ingestor(
             records,
