@@ -26,6 +26,8 @@ def settings() -> Settings:
         CREDENTIALS_ENCRYPTION_KEY=base64.b64encode(KEY).decode(),
         BLOB_ACCESS_KEY="testaccesskey",
         BLOB_SECRET_KEY="testsecretkey",
+        # Docling tests start their own; never reach one running in dev.
+        RAG_DOCLING_URL="",
     )
 
 

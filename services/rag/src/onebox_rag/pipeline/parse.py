@@ -1,7 +1,7 @@
 import dataclasses
 import gzip
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -12,10 +12,20 @@ from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import TERMINAL, Attachment, Content, Stage, Status
 from onebox_rag.models.blocks import BlocksContainer
 from onebox_rag.parsers.base import ParseResult, UnreadableFileError
+from onebox_rag.parsers.docling_blocks import parse_docling_document
+from onebox_rag.parsers.office import office_format
 from onebox_rag.parsers.pdf.inspection import PdfFacts, inspect_pdf
 from onebox_rag.parsers.registry import parser_for
+from onebox_rag.pipeline.docling_client import DoclingClient, DoclingUnavailableError
 from onebox_rag.pipeline.pool import ParsePool, ParseWorkerError
-from onebox_rag.pipeline.routing import PDF, PdfLimits, Route, parser_for_engine, route_pdf
+from onebox_rag.pipeline.routing import (
+    PDF,
+    PdfEngine,
+    PdfLimits,
+    Route,
+    parser_for_engine,
+    route_pdf,
+)
 
 logger = logging.getLogger("onebox_rag.parse")
 
@@ -47,10 +57,12 @@ class ParseStage:
         ingestor: Ingestor,
         pool: ParsePool,
         pdf: PdfInspection,
+        docling: DoclingClient | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._contents, self._records, self._blobs = contents, records, blobs
         self._ingestor, self._pool, self._pdf, self._now = ingestor, pool, pdf, now
+        self._docling = docling
 
     async def run(self, content_id: str, revision: int, *, final_attempt: bool) -> None:
         content = await self._contents.get(content_id)
@@ -72,23 +84,26 @@ class ParseStage:
                 reason=f"{content.mime_type} can't be read yet",
             )
             return
-        parser = parser_for_engine(content.mime_type, route.engine)
-        if parser is None:
+        parse = self._parser(content, data, route.engine)
+        if parse is None:
             reason = f"waiting for the {route.engine} engine"
             await self._settle(content, Status.FILE_TYPE_NOT_SUPPORTED, reason=reason)
             return
         await self._settle(content, Status.IN_PROGRESS, stage=Stage.PARSE)
-        label = f"content {content.id}"
         try:
-            result: ParseResult = await self._pool.run(parser.parse, data, label=label)
+            result = await parse()
             problems = result.container.problems()
             if problems:
-                raise ValueError(f"{parser.engine} built a broken container: {problems[:3]}")
+                raise ValueError(f"{route.engine} built a broken container: {problems[:3]}")
         except UnreadableFileError as err:
             await self._settle(content, Status.FAILED, reason=str(err) or "unreadable")
             return
         except ParseWorkerError as err:
             await self._worker_failed(content, err, final_attempt)
+            raise
+        except DoclingUnavailableError as err:
+            logger.warning("docling unavailable", extra={"contentId": content_id, "why": str(err)})
+            await self._retry_or_fail(content, final_attempt, "the Docling service is unavailable")
             raise
         except Exception:
             logger.exception(
@@ -96,7 +111,41 @@ class ParseStage:
             )
             await self._retry_or_fail(content, final_attempt, "could not be parsed")
             raise
-        await self._store(content, revision, result, parser.engine)
+        await self._store(content, revision, result, route.engine)
+
+    def _parser(
+        self, content: Content, data: bytes, engine: str
+    ) -> Callable[[], Awaitable[ParseResult]] | None:
+        """How the engine parses this content, or None while that engine isn't available."""
+        label = f"content {content.id}"
+        office = office_format(content.mime_type)
+        if engine == PdfEngine.DOCLING and office is not None:
+            docling = self._docling
+            if docling is None:
+                return None
+
+            async def with_docling() -> ParseResult:
+                assert docling is not None and office is not None
+                document = await docling.convert(data, office, name=content.id)
+                slides = office.docling == "pptx"
+                result: ParseResult = await self._pool.run(
+                    parse_docling_document, document, slides, label=label
+                )
+                return result
+
+            return with_docling
+        parser = parser_for_engine(content.mime_type, engine)
+        if parser is None:
+            return None
+
+        async def locally() -> ParseResult:
+            assert parser is not None
+            result: ParseResult = await self._pool.run(
+                parser.parse, data, content.mime_type, label=label
+            )
+            return result
+
+        return locally
 
     async def _route(self, content: Content, data: bytes) -> Route | None:
         """The recorded route, or a new one recorded now."""
@@ -116,6 +165,8 @@ class ParseStage:
                     "pdf inspection failed", extra={"contentId": content.id}, exc_info=True
                 )
             route = route_pdf(facts, content.size_bytes, self._pdf.limits)
+        elif office_format(content.mime_type) is not None:
+            route = Route(PdfEngine.DOCLING, "format")
         else:
             parser = parser_for(content.mime_type)
             if parser is None:

@@ -29,6 +29,10 @@ dependencies = [
   "uvicorn==0.54.0",
 ]
 
+[project.optional-dependencies]
+# Only the Docling service's image installs these (PyTorch and layout models are heavy).
+docling = ["docling==2.149.0", "torch==2.15.0", "torchvision==0.29.2"]
+
 [dependency-groups]
 dev = [
   "boto3-stubs[s3]==1.43.126",
@@ -57,8 +61,11 @@ exclude-newer = "2026-11-09T00:00:00Z"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-markers = ["integration: needs Docker (Testcontainers)"]
-addopts = "-m 'not integration'"
+markers = [
+  "integration: needs Docker (Testcontainers)",
+  "docling: needs the docling extra and its models (uv sync --extra docling)",
+]
+addopts = "-m 'not integration and not docling'"
 
 [tool.ruff]
 line-length = 100
@@ -78,5 +85,15 @@ files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*"]
+module = ["testcontainers.*", "bullmq.*", "msoffcrypto.*", "pdfplumber.*", "reportlab.*", "pypdfium2.*", "docling.*", "docling_core.*", "docx.*", "pptx.*"]
 ignore_missing_imports = true
+
+# CPU-only PyTorch on Linux (the cluster has no GPU); macOS wheels are CPU/MPS already.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]

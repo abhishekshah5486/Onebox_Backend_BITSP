@@ -43,9 +43,13 @@ def upload(client: TestClient, *files: tuple[str, bytes], kb: str, user: str = "
 
 
 def wait_for(
-    client: TestClient, record_id: str, done: Callable[[Json], bool], user: str = "u1"
+    client: TestClient,
+    record_id: str,
+    done: Callable[[Json], bool],
+    user: str = "u1",
+    timeout_s: float = 30,
 ) -> Json:
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + timeout_s
     while True:
         record: Json = client.get(f"/rag/records/{record_id}", headers=bearer(user)).json()
         if done(record):

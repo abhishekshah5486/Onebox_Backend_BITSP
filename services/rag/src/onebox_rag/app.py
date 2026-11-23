@@ -17,6 +17,7 @@ from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.logs import log_requests
 from onebox_rag.mongo import mongo_client
+from onebox_rag.pipeline.docling_client import DoclingClient
 from onebox_rag.pipeline.parse import ParseStage, PdfInspection
 from onebox_rag.pipeline.pool import ParsePool
 from onebox_rag.pipeline.routing import PdfLimits
@@ -106,10 +107,25 @@ def create_app(
             )
         )
         pool = pool_from(settings) if settings.RAG_RUN_WORKER else None
+        docling = (
+            DoclingClient(
+                settings.RAG_DOCLING_URL, app.state.internal_token, settings.RAG_DOCLING_TIMEOUT_S
+            )
+            if settings.RAG_DOCLING_URL
+            else None
+        )
         worker = (
             parse_worker(
                 settings,
-                ParseStage(contents, records, blobs, ingestor, pool, pdf_inspection_from(settings)),
+                ParseStage(
+                    contents,
+                    records,
+                    blobs,
+                    ingestor,
+                    pool,
+                    pdf_inspection_from(settings),
+                    docling,
+                ),
             )
             if pool is not None
             else None
@@ -122,6 +138,8 @@ def create_app(
                 await worker.close()
             if pool is not None:
                 pool.close()
+            if docling is not None:
+                await docling.close()
             await queue.close()
             await redis.aclose()
             await mongo.close()

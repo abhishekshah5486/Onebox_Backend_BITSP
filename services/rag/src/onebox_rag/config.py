@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     RAG_PDF_OCR_PAGE_SHARE: float = Field(default=0.5, gt=0, le=1)
     RAG_DOCLING_MAX_PAGES: int = Field(default=30, ge=1)
     RAG_DOCLING_MAX_MB: int = Field(default=100, ge=1)
+    # The Docling service (PDF, Word, PowerPoint); empty leaves those files waiting for it.
+    RAG_DOCLING_URL: str = "http://localhost:4013"
+    RAG_DOCLING_TIMEOUT_S: float = Field(default=900, gt=0)
 
     # Upload guards: per-file size, and for ZIP-based files (Office, EPUB, ODF) the unpacked
     # size, compression ratio and entry count that mark a zip bomb.
