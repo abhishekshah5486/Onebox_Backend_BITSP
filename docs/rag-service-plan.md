@@ -216,7 +216,8 @@ choices; we offer those and a few more:
    embedding model through llm-proxy plus BM25, RAG's own `rag_<model>_<dims>` Qdrant
    collections. Per-user store and model choices come with the settings UI.
 10. Retrieval: hybrid search, units (lists, tables, small tables whole), neighbours,
-    citations, paged record reads.
+    citations, paged record reads. **Done**: `POST /rag/retrieve`, `/internal/rag/retrieve`, and
+    `/rag/records/{id}/read` (plus its internal twin) for the agent service's tools.
 11. Mail source: backfill and live feed of all mail and attachments.
 12. Evaluation corpus (every format, questions with expected passages, recall@k and MRR in CI)
     and hardening (retries, dead letters, metrics).
