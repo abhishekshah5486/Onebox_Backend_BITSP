@@ -1,0 +1,49 @@
+# Keyword search index; rebuilt from MongoDB if lost, so a single node is enough.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: { storage: 2Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: elasticsearch }
+  template:
+    metadata:
+      labels: { app: elasticsearch }
+    spec:
+      enableServiceLinks: false
+      securityContext: { fsGroup: 1000 }
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:9.5.3
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: xpack.security.enabled, value: 'false' }
+            - { name: ES_JAVA_OPTS, value: '-Xms256m -Xmx256m' }
+          ports: [{ containerPort: 9200 }]
+          readinessProbe:
+            httpGet: { path: '/_cluster/health?local=true', port: 9200 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 768Mi }
+          volumeMounts: [{ name: data, mountPath: /usr/share/elasticsearch/data }]
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: elasticsearch-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+spec:
+  selector: { app: elasticsearch }
+  ports: [{ port: 9200 }]

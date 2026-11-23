@@ -1,0 +1,2 @@
+ALTER TABLE "payments"."subscriptions" ADD COLUMN "checkout_id" text;--> statement-breakpoint
+ALTER TABLE "payments"."subscriptions" ADD CONSTRAINT "subscriptions_checkout_id_unique" UNIQUE("checkout_id");

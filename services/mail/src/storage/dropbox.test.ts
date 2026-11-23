@@ -32,4 +32,25 @@ describe('dropboxUploader', () => {
     expect(request!.headers.get('authorization')).toBe('Bearer t');
     expect(file.link).toBe('https://www.dropbox.com/home/OneBox/Jobs?preview=r%C3%A9sum%C3%A9.pdf');
   });
+
+  it('shares by a public link, reusing one that already exists', async () => {
+    const answers = [
+      new Response(JSON.stringify({ url: 'https://www.dropbox.com/s/new' })),
+      new Response(
+        JSON.stringify({
+          error: {
+            '.tag': 'shared_link_already_exists',
+            shared_link_already_exists: { metadata: { url: 'https://www.dropbox.com/s/old' } },
+          },
+        }),
+        { status: 409 },
+      ),
+      new Response(JSON.stringify({ error: { '.tag': 'missing_scope' } }), { status: 401 }),
+    ];
+    const uploader = dropboxUploader(logger, async () => answers.shift()!);
+    const file = { id: '/OneBox/a.zip', link: 'x' };
+    expect(await uploader.share('t', file)).toBe('https://www.dropbox.com/s/new');
+    expect(await uploader.share('t', file)).toBe('https://www.dropbox.com/s/old');
+    await expect(uploader.share('t', file)).rejects.toThrow(/Reconnect Dropbox/);
+  });
 });

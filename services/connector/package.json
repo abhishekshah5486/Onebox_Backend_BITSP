@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@onebox/testing": "*",
-    "@types/nodemailer": "^8.0.2",
-    "nodemailer": "^8.0.11"
+    "@types/nodemailer": "^7.0.2",
+    "nodemailer": "^7.0.9"
   }
 }

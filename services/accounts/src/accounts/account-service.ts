@@ -239,10 +239,25 @@ export function createAccountService({
     async getCredentials(accountId: string) {
       const [row] = await db.select().from(emailAccounts).where(eq(emailAccounts.id, accountId));
       if (!row) throw new NotFoundError('Account not found');
+      const password = decrypt(row.credentialsEncrypted, encryptionKey, aadFor(row.id));
       return {
-        ...imapOf(row, decrypt(row.credentialsEncrypted, encryptionKey, aadFor(row.id))),
+        ...imapOf(row, password),
         userId: row.userId,
+        // Sending signs in to the provider's SMTP server with the same login, as this address.
+        emailAddress: row.emailAddress,
+        displayName: row.displayName,
+        smtp:
+          row.smtpHost && row.smtpPort !== null && row.smtpTls !== null
+            ? { host: row.smtpHost, port: row.smtpPort, tls: row.smtpTls }
+            : null,
       };
+    },
+
+    // An account's details for another service, without its secrets.
+    async getSummary(accountId: string) {
+      const [row] = await db.select().from(emailAccounts).where(eq(emailAccounts.id, accountId));
+      if (!row) throw new NotFoundError('Account not found');
+      return { ...toView(row), userId: row.userId };
     },
 
     async saveSyncState(accountId: string, folder: string, state: Record<string, unknown>) {

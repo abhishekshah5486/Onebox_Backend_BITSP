@@ -25,7 +25,11 @@ spec:
             - { name: SETTINGS_SERVICE_URL, value: 'http://settings:4004' }
             - { name: LLM_PROXY_SERVICE_URL, value: 'http://llm-proxy:4006' }
             - { name: AI_SERVICE_URL, value: 'http://ai:4007' }
+            - { name: PAYMENTS_SERVICE_URL, value: 'http://payments:4008' }
+            - { name: BILLING_SERVICE_URL, value: 'http://billing:4009' }
             - { name: MAIL_SERVICE_URL, value: 'http://mail:4003' }
+            - { name: REALTIME_SERVICE_URL, value: 'http://realtime:4010' }
+            - { name: SEARCH_SERVICE_URL, value: 'http://search:4011' }
           readinessProbe:
             httpGet: { path: /health/ready, port: 4000 }
             periodSeconds: 10

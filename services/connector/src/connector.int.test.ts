@@ -60,6 +60,9 @@ function fakeInternal(password = user.password, accounts = [account]): InternalC
       username: user.email,
       password,
       userId: account.userId,
+      emailAddress: user.email,
+      displayName: 'Me',
+      smtp: { host: mail.host, port: mail.smtpPort, tls: false },
     }),
     saveSyncState: async (accountId, folder, state) => {
       const target = accounts.find((a) => a.id === accountId)!;
@@ -429,7 +432,16 @@ describe('imap connector', () => {
       expect(flags.has('\\Flagged')).toBe(true);
       expect(flags.has('\\Seen')).toBe(false);
     });
-    expect(changes).toContainEqual({ type: 'settled', ...base, uids: [fresh] });
+    await vi.waitFor(() =>
+      expect(changes).toContainEqual({ type: 'settled', ...base, uids: [fresh] }),
+    );
+
+    // Plain IMAP has no labels apart from folders: the message stays put, the op settles.
+    await runOp({ ...base, uids: [fresh], op: { type: 'labels', add: ['Leads'], remove: [] } });
+    await vi.waitFor(() =>
+      expect(changes.filter((c) => c.type === 'settled' && c.uids.includes(fresh))).toHaveLength(2),
+    );
+    expect((await serverState('INBOX')).messages['Fresh news']).toBeDefined();
 
     await runOp({ ...base, uids: [old], op: { type: 'move', to: { role: 'archive' } } });
     await vi.waitFor(async () => {

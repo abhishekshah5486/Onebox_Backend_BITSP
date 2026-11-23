@@ -12,6 +12,7 @@ export type Preferences = Pick<
   | 'sidebarHidden'
   | 'chipsHidden'
   | 'inboxTabs'
+  | 'setupDone'
 >;
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -23,6 +24,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   sidebarHidden: ['category:social', 'category:updates', 'category:forums', 'category:promotions'],
   chipsHidden: [],
   inboxTabs: ['promotions', 'social', 'updates', 'forums'],
+  setupDone: false,
 };
 
 const toView = (row: PreferencesRow | undefined) => ({
@@ -33,6 +35,7 @@ const toView = (row: PreferencesRow | undefined) => ({
   sidebarHidden: row?.sidebarHidden ?? DEFAULT_PREFERENCES.sidebarHidden,
   chipsHidden: row?.chipsHidden ?? DEFAULT_PREFERENCES.chipsHidden,
   inboxTabs: row?.inboxTabs ?? DEFAULT_PREFERENCES.inboxTabs,
+  setupDone: row?.setupDone ?? DEFAULT_PREFERENCES.setupDone,
   updatedAt: row?.updatedAt.toISOString() ?? null,
 });
 

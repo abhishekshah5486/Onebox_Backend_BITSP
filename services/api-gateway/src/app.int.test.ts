@@ -26,6 +26,13 @@ beforeAll(async () => {
   redis = new Redis(redisContainer.url, { maxRetriesPerRequest: 1 });
 
   upstream = Fastify();
+  // A live stream that only finishes after a while; its first event must not wait for that.
+  upstream.get('/events', (_request, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+    reply.raw.write('data: first\n\n');
+    setTimeout(() => reply.raw.end('data: last\n\n'), 3_000);
+  });
   upstream.all('/*', async (request) => ({
     url: request.url,
     requestId: request.headers['x-request-id'],
@@ -47,6 +54,12 @@ beforeAll(async () => {
         rateLimit: { max: 3, timeWindow: '1 minute' },
       },
       { prefix: '/api/v1/mail', url: upstreamUrl, rewritePrefix: '/mail', access: 'authenticated' },
+      {
+        prefix: '/api/v1/events',
+        url: upstreamUrl,
+        rewritePrefix: '/events',
+        access: 'authenticated',
+      },
       { prefix: '/api/v1/down', url: 'http://127.0.0.1:1', rewritePrefix: '/', access: 'public' },
     ],
   });
@@ -120,5 +133,19 @@ describe('api gateway', () => {
     for (let i = 0; i < 3; i++) await gateway.inject({ url: '/health/ready' });
     const res = await gateway.inject({ url: '/health/ready' });
     expect(res.json()).toEqual({ status: 'ok', checks: { redis: 'up' } });
+  });
+
+  it('passes a live event stream through as it arrives', async () => {
+    const address = await gateway.listen({ port: 0, host: '127.0.0.1' });
+    const started = Date.now();
+    const response = await fetch(`${address}/api/v1/events`, {
+      headers: { authorization: 'Bearer valid' },
+    });
+    expect(response.headers.get('content-type')).toBe('text/event-stream');
+    const reader = response.body!.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    const { value } = await reader.read();
+    expect(new TextDecoder().decode(value)).toContain('data: first');
+    expect(Date.now() - started).toBeLessThan(2_000);
+    await reader.cancel();
   });
 });

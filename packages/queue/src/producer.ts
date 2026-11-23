@@ -12,6 +12,8 @@ export interface ProducerOptions {
 export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }: ProducerOptions) {
   const { attempts, backoffMs } = policy ?? RETRY_POLICIES[queue];
   const bull = new Queue(queue, { connection: { url: redisUrl } });
+  // BullMQ refuses ids with ':' (its key separator), e.g. one naming a store "own:id:hash".
+  const bullId = (jobId: string) => jobId.replaceAll(':', '_');
 
   return {
     // The jobId is deterministic, so enqueuing the same work twice is a no-op; consumers
@@ -22,7 +24,7 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
       envelope: JobEnvelope<P>,
       { retryFailed = false, delayMs }: { retryFailed?: boolean; delayMs?: number } = {},
     ): Promise<{ jobId: string; duplicate: boolean }> {
-      const existing = await bull.getJob(envelope.jobId);
+      const existing = await bull.getJob(bullId(envelope.jobId));
       if (existing && retryFailed && (await existing.isFailed())) {
         await existing.remove();
       } else if (existing) {
@@ -30,7 +32,7 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
         return { jobId: envelope.jobId, duplicate: true };
       }
       await bull.add(queue, envelope, {
-        jobId: envelope.jobId,
+        jobId: bullId(envelope.jobId),
         ...(delayMs && { delay: delayMs }),
         attempts,
         backoff: { type: 'exponential', delay: backoffMs },
@@ -44,7 +46,7 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
     async waitUntilProcessed(jobIds: string[], { timeoutMs = 120_000, intervalMs = 300 } = {}) {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
-        const states = await Promise.all(jobIds.map((id) => bull.getJobState(id)));
+        const states = await Promise.all(jobIds.map((id) => bull.getJobState(bullId(id))));
         if (states.every((state) => ['completed', 'failed', 'unknown'].includes(state)))
           return true;
         if (Date.now() >= deadline) return false;
@@ -56,7 +58,7 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
     async outcome(jobId: string, { timeoutMs = 20_000, intervalMs = 200 } = {}) {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
-        const job = await bull.getJob(jobId);
+        const job = await bull.getJob(bullId(jobId));
         const state = job ? await job.getState() : 'unknown';
         if (state === 'completed') return { status: 'completed' as const };
         if (state === 'failed') {
@@ -74,7 +76,7 @@ export function createProducer<P>(queue: QueueName, { redisUrl, logger, policy }
       jobIds: string[],
       accept: (envelope: JobEnvelope<P>) => boolean = () => true,
     ): Promise<JobEnvelope<P>[] | null> {
-      const jobs = await Promise.all(jobIds.map((id) => bull.getJob(id)));
+      const jobs = await Promise.all(jobIds.map((id) => bull.getJob(bullId(id))));
       const states = await Promise.all(
         jobs.map((job) => (job ? job.getState() : Promise.resolve('missing'))),
       );

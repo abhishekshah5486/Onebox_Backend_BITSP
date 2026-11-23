@@ -1,4 +1,4 @@
-import type { AiLabelMode } from '@onebox/contracts';
+import type { AiLabelMode, MailCategory } from '@onebox/contracts';
 import type { Collection, Db } from 'mongodb';
 
 // How one label takes part in AI sorting. _id is `${userId}:${accountId}:${path}`.
@@ -16,6 +16,17 @@ export interface LabelRuleDoc {
   updatedAt: Date;
 }
 
+// A user's own take on a built-in category. _id is `${userId}:${category}`.
+export interface CategoryRuleDoc {
+  _id: string;
+  userId: string;
+  category: MailCategory;
+  // null keeps OneBox's default description.
+  description: string | null;
+  mode: AiLabelMode;
+  updatedAt: Date;
+}
+
 export const RESULT_STATUSES = [
   'applied',
   'pending',
@@ -27,6 +38,8 @@ export const RESULT_STATUSES = [
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export interface LabelResult {
+  // A built-in category (path is its key) rather than one of the user's labels.
+  kind?: 'label' | 'category';
   path: string;
   name: string;
   confidence: number;
@@ -66,6 +79,7 @@ export interface FeedbackDoc {
 
 export interface AiCollections {
   labelRules: Collection<LabelRuleDoc>;
+  categoryRules: Collection<CategoryRuleDoc>;
   classifications: Collection<ClassificationDoc>;
   feedback: Collection<FeedbackDoc>;
 }
@@ -73,6 +87,7 @@ export interface AiCollections {
 export function aiCollections(db: Db): AiCollections {
   return {
     labelRules: db.collection<LabelRuleDoc>('label_rules'),
+    categoryRules: db.collection<CategoryRuleDoc>('category_rules'),
     classifications: db.collection<ClassificationDoc>('classifications'),
     feedback: db.collection<FeedbackDoc>('feedback'),
   };

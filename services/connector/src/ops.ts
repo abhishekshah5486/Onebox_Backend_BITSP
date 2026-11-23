@@ -13,6 +13,7 @@ import type { JobContext, Producer } from '@onebox/queue';
 import type { ImapFlow, ListResponse } from 'imapflow';
 import { changeEnvelope } from './folder-sync';
 import { discoverFolders } from './folders';
+import { setGmailLabels } from './gmail';
 import { AuthenticationFailedError, openImapClient } from './imap-client';
 import type { InternalClient } from './internal-client';
 import { runLabelOp } from './label-ops';
@@ -117,6 +118,9 @@ export function createOpsHandler(deps: OpsDeps) {
         if (op.type === 'flags') {
           if (op.add.length) await client.messageFlagsAdd(set, op.add, { uid: true });
           if (op.remove.length) await client.messageFlagsRemove(set, op.remove, { uid: true });
+          await settle();
+        } else if (op.type === 'labels') {
+          await setGmailLabels(client, set, op);
           await settle();
         } else if (op.type === 'expunge') {
           await client.messageDelete(set, { uid: true });

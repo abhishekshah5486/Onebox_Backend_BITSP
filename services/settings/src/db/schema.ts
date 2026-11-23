@@ -1,5 +1,14 @@
-import { boolean, index, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
-import { STORAGE_PROVIDERS } from '@onebox/contracts';
+import {
+  boolean,
+  index,
+  jsonb,
+  pgSchema,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
+import { STORAGE_PROVIDERS, VECTOR_STORE_IDS } from '@onebox/contracts';
 import { sql } from 'drizzle-orm';
 
 export const settingsSchema = pgSchema('settings');
@@ -48,6 +57,8 @@ export const userPreferences = settingsSchema.table('user_preferences', {
     .array()
     .notNull()
     .default(sql`ARRAY['promotions','social','updates','forums']::text[]`),
+  // The first-run setup (own models, storage) was finished or skipped.
+  setupDone: boolean('setup_done').notNull().default(false),
   ...timestamps,
 });
 
@@ -98,6 +109,35 @@ export const storageAccounts = settingsSchema.table(
   ],
 );
 
+// Vector databases of a user's own that search keeps their vectors in, besides OneBox's Qdrant;
+// any number, several of one kind too.
+export const indexingStores = settingsSchema.table(
+  'indexing_stores',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull(),
+    name: text('name').notNull(),
+    // A paused store gets no new mail until it's resumed.
+    paused: boolean('paused').notNull().default(false),
+    provider: text('provider', { enum: VECTOR_STORE_IDS }).notNull(),
+    // The fields that aren't secret, e.g. the address; secrets are kept encrypted as JSON.
+    settings: jsonb('settings').$type<Record<string, string>>().notNull().default({}),
+    secretsEncrypted: text('secrets_encrypted'),
+    keyHint: text('key_hint'),
+    ...timestamps,
+  },
+  (table) => [index('indexing_stores_user_idx').on(table.userId)],
+);
+
+// Per user: the store searches go to (OneBox's or one of theirs), and whether OneBox's is paused.
+export const indexingPreferences = settingsSchema.table('indexing_preferences', {
+  userId: uuid('user_id').primaryKey(),
+  searchStoreId: text('search_store_id').notNull().default('onebox'),
+  oneboxPaused: boolean('onebox_paused').notNull().default(false),
+  ...timestamps,
+});
+
+export type IndexingStoreRow = typeof indexingStores.$inferSelect;
 export type IntegrationRow = typeof integrations.$inferSelect;
 export type PreferencesRow = typeof userPreferences.$inferSelect;
 export type StorageAccountRow = typeof storageAccounts.$inferSelect;

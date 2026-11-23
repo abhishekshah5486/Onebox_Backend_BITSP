@@ -23,6 +23,7 @@ import { createMemoryBlobStore } from '@onebox/blob-store';
 import { createAttachmentService } from '../attachments/attachments';
 import { googleDriveUploader } from '../storage/google-drive';
 import { dropboxUploader } from '../storage/dropbox';
+import { azureBlobUploader, s3Uploader } from '../storage/object-store';
 import { oneDriveUploader } from '../storage/onedrive';
 import { createStorageService } from '../storage/storage';
 import { createIngestHandler } from '../ingest/ingest-message';
@@ -101,6 +102,8 @@ beforeAll(async () => {
           GOOGLE_DRIVE: googleDriveUploader(logger, driveFetch),
           ONEDRIVE: oneDriveUploader(logger, driveFetch),
           DROPBOX: dropboxUploader(logger, driveFetch),
+          S3: s3Uploader(logger),
+          AZURE_BLOB: azureBlobUploader(logger),
         },
         fetch: driveFetch,
       }),

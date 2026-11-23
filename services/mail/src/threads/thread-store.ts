@@ -1,4 +1,4 @@
-import { FOLDER_ROLES, type FolderRole, type MailboxRole } from '@onebox/contracts';
+import { categoriesOf, FOLDER_ROLES, type FolderRole, type MailboxRole } from '@onebox/contracts';
 import type { Address, MailCollections, MessageDoc } from '../db/collections';
 import { findUnsubscribe } from '../ingest/unsubscribe';
 import { isReplySubject, normalizeSubject } from './subject';
@@ -135,6 +135,7 @@ type ThreadMessage = Pick<
   | 'folder'
   | 'category'
   | 'categories'
+  | 'aiCategories'
   | 'aiLabels'
   | 'unsubscribe'
   | 'movingTo'
@@ -194,6 +195,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
       folder: 1,
       category: 1,
       categories: 1,
+      aiCategories: 1,
       aiLabels: 1,
       unsubscribe: 1,
       movingTo: 1,
@@ -259,7 +261,7 @@ export async function refreshThread({ messages, threads }: MailCollections, thre
           ...new Set(
             visible
               .filter((doc) => !['spam', 'trash'].includes(locationOf(doc).role))
-              .flatMap((doc) => doc.categories ?? []),
+              .flatMap(categoriesOf),
           ),
         ].sort(),
         canUnsubscribe: docs.some((doc) => doc.unsubscribe),

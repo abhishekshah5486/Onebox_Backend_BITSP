@@ -9,8 +9,13 @@ export const QUEUES = {
   ai: 'ai',
   index: 'index',
   embed: 'embed',
+  // A user picked another embedding model: their mail is embedded again with it.
+  reembed: 'reembed',
   rules: 'rules',
   action: 'action',
+  payments: 'payments',
+  usage: 'usage',
+  send: 'send',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

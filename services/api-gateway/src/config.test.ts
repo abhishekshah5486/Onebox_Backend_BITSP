@@ -12,6 +12,10 @@ describe('loadGatewayConfig', () => {
       MAIL_SERVICE_URL: 'http://localhost:4003',
       LLM_PROXY_SERVICE_URL: 'http://localhost:4006',
       AI_SERVICE_URL: 'http://localhost:4007',
+      PAYMENTS_SERVICE_URL: 'http://localhost:4008',
+      BILLING_SERVICE_URL: 'http://localhost:4009',
+      REALTIME_SERVICE_URL: 'http://localhost:4010',
+      SEARCH_SERVICE_URL: 'http://localhost:4011',
     });
   });
 

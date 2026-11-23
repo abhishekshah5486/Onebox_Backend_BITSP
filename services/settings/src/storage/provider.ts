@@ -1,6 +1,6 @@
-import type { StorageProviderId } from '@onebox/contracts';
+import type { OAuthStorageProviderId, StorageProviderId } from '@onebox/contracts';
 
-export type { StorageProviderId };
+export type { OAuthStorageProviderId, StorageProviderId };
 
 export interface AccessToken {
   token: string;
@@ -26,7 +26,7 @@ export interface StorageProvider {
 export class ExpiredGrantError extends Error {}
 
 // The path segment in a provider's OAuth callback URL, e.g. /integrations/google/callback.
-export const CALLBACK_SLUGS: Record<StorageProviderId, string> = {
+export const CALLBACK_SLUGS: Record<OAuthStorageProviderId, string> = {
   GOOGLE_DRIVE: 'google',
   ONEDRIVE: 'microsoft',
   DROPBOX: 'dropbox',
@@ -36,6 +36,8 @@ export const PROVIDER_NAMES: Record<StorageProviderId, string> = {
   GOOGLE_DRIVE: 'Google Drive',
   ONEDRIVE: 'OneDrive',
   DROPBOX: 'Dropbox',
+  S3: 'S3 storage',
+  AZURE_BLOB: 'Azure Blob Storage',
 };
 
 // The error code for a sign-in where the person did not give OneBox the access it needs.

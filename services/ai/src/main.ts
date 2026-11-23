@@ -10,6 +10,7 @@ import { createClassifyHandler } from './classify/classify';
 import { createLlmClient } from './classify/llm-client';
 import { loadAiConfig } from './config';
 import { aiCollections, ensureIndexes } from './db/collections';
+import { createCategoryRules } from './labels/category-rules';
 import { createLabelRules } from './labels/label-rules';
 import { createSuggestions } from './suggestions/suggestions';
 
@@ -50,6 +51,7 @@ const app = buildApp({
   checks: { mongodb: mongo.ping, redis: () => redis.ping() },
   routes: {
     labels: createLabelRules(collections),
+    categories: createCategoryRules(collections),
     suggestions: createSuggestions({ collections, changes, logger }),
     verifyToken: createRemoteTokenVerifier(config.AUTH_SERVICE_URL),
   },

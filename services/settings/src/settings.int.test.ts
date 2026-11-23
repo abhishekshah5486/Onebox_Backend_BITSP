@@ -78,6 +78,7 @@ beforeAll(async () => {
               ? slackSend(url, init)
               : import('@onebox/net-guard').then((m) => m.safeFetch(url, init)),
         }),
+        indexing: {} as never,
         storage: createStorageService({
           db: client.db,
           encryptionKey: randomBytes(32),
@@ -172,6 +173,7 @@ describe('preferences', () => {
       ],
       chipsHidden: [],
       inboxTabs: ['promotions', 'social', 'updates', 'forums'],
+      setupDone: false,
       updatedAt: null,
     });
   });
@@ -182,12 +184,13 @@ describe('preferences', () => {
       app.inject({ method: 'PATCH', url: '/settings/preferences', headers: as(userId), payload });
 
     await patch({ markSeenOnFetch: false, timezone: 'Asia/Kolkata' });
-    await patch({ sidebarHidden: ['spam'], inboxTabs: ['promotions'] });
+    await patch({ sidebarHidden: ['spam'], inboxTabs: ['promotions'], setupDone: true });
     const res = await patch({ autonomyMode: 'SEMI', signature: '— Abhishek' });
 
     expect(res.json()).toMatchObject({
       sidebarHidden: ['spam'],
       inboxTabs: ['promotions'],
+      setupDone: true,
       markSeenOnFetch: false,
       autonomyMode: 'SEMI',
       signature: '— Abhishek',
@@ -488,7 +491,7 @@ describe('cloud storage', () => {
     await connect('me@gmail.com', 'at-3');
 
     const listed = await accounts();
-    expect(listed.providers).toEqual(['GOOGLE_DRIVE', 'ONEDRIVE', 'DROPBOX']);
+    expect(listed.providers).toEqual(['GOOGLE_DRIVE', 'ONEDRIVE', 'DROPBOX', 'S3', 'AZURE_BLOB']);
     expect(listed.accounts.every((a) => a.provider === 'GOOGLE_DRIVE')).toBe(true);
     expect(listed.accounts.map((a) => a.email)).toEqual(['me@gmail.com', 'work@gmail.com']);
     const [me, work] = listed.accounts;

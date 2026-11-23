@@ -43,6 +43,41 @@
       "when": 1791499149205,
       "tag": "0005_claude_models",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795363449323,
+      "tag": "0006_embedding_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795364738723,
+      "tag": "0007_embedding_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795368380701,
+      "tag": "0008_provider_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795368900861,
+      "tag": "0009_user_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795369669873,
+      "tag": "0010_own_model_choices",
+      "breakpoints": true
     }
   ]
 }
