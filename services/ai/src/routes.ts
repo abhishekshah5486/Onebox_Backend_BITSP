@@ -1,8 +1,9 @@
 import { currentUser, requireUser, type TokenVerifier } from '@onebox/auth-kit';
-import { AI_LABEL_MODES } from '@onebox/contracts';
+import { AI_LABEL_MODES, mailCategorySchema } from '@onebox/contracts';
 import type { HttpServer } from '@onebox/http';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import type { CategoryRules } from './labels/category-rules';
 import type { LabelRules } from './labels/label-rules';
 import type { Suggestions } from './suggestions/suggestions';
 
@@ -10,9 +11,14 @@ const path = z.string().min(1).max(500);
 
 export function registerAiRoutes(
   app: HttpServer,
-  deps: { labels: LabelRules; suggestions: Suggestions; verifyToken: TokenVerifier },
+  deps: {
+    labels: LabelRules;
+    categories: CategoryRules;
+    suggestions: Suggestions;
+    verifyToken: TokenVerifier;
+  },
 ) {
-  const { labels, suggestions } = deps;
+  const { labels, categories, suggestions } = deps;
   app.decorateRequest('user', null);
 
   void app.register(
@@ -70,6 +76,25 @@ export function registerAiRoutes(
           await labels.remove(userId(request), request.body.accountId, request.body.path);
           return reply.status(204).send();
         },
+      );
+
+      // Built-in categories: the AI fills them in where Gmail gives none.
+      routes.get('/categories', async (request) => ({
+        items: await categories.list(userId(request)),
+      }));
+
+      routes.put(
+        '/categories/:category',
+        {
+          schema: {
+            params: z.object({ category: mailCategorySchema }),
+            body: z.object({
+              description: z.string().max(1000).nullable().optional(),
+              enabled: z.boolean().optional(),
+            }),
+          },
+        },
+        async (request) => categories.save(userId(request), request.params.category, request.body),
       );
 
       routes.get(

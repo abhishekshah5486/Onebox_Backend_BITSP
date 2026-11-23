@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { createJobEnvelope, QUEUES, type MailboxChangePayload } from '@onebox/contracts';
+import {
+  createJobEnvelope,
+  MAIL_CATEGORY_DESCRIPTIONS,
+  QUEUES,
+  type MailboxChangePayload,
+} from '@onebox/contracts';
 import { connectMongo, type MongoHandle } from '@onebox/db-mongo';
 import { PaymentRequiredError } from '@onebox/errors';
 import { createLogger } from '@onebox/logger';
@@ -8,6 +13,7 @@ import { startMongo, startRedis, type TestMongo, type TestRedis } from '@onebox/
 import { Queue } from 'bullmq';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { aiCollections, ensureIndexes, type AiCollections } from '../db/collections';
+import { createCategoryRules } from '../labels/category-rules';
 import { createLabelRules } from '../labels/label-rules';
 import { createSuggestions } from '../suggestions/suggestions';
 import { createClassifyHandler } from './classify';
@@ -43,6 +49,7 @@ const job = (
   userId: string,
   accountId: string,
   messageId = randomUUID().replace(/-/g, '').padEnd(64, '0'),
+  categorize = false,
 ) =>
   createJobEnvelope({
     jobId: `classify-${messageId}`,
@@ -57,8 +64,14 @@ const job = (
       body: 'Hi, could you send pricing for 20 seats and a demo slot next week?',
       snippet: 'Hi, could you send pricing',
       receivedAt: '2026-10-08T10:00:00.000Z',
+      categorize,
     },
   });
+
+const changesFor = async (messageId: string) =>
+  (await changeQueue.getJobs(['waiting']))
+    .map((j) => (j.data as { payload: MailboxChangePayload }).payload)
+    .filter((p) => 'messageId' in p && p.messageId === messageId);
 
 const taggedFor = async (messageId: string) =>
   (await changeQueue.getJobs(['waiting']))
@@ -161,6 +174,74 @@ describe('classification', () => {
       context,
     );
     expect(llm).not.toHaveBeenCalled();
+  });
+
+  it("fills in the user's categories where Gmail gave none, even with no labels", async () => {
+    const userId = randomUUID();
+    const categories = createCategoryRules(collections);
+    await categories.save(userId, 'purchases', {
+      description: 'Orders and receipts, including food delivery bills',
+    });
+    await categories.save(userId, 'social', { enabled: false });
+    const llm = vi.fn<LlmClient>(async () => ({
+      model: 'gemini-3.8-flash',
+      output: {
+        labels: [],
+        categories: [
+          { id: 'purchases', confidence: 0.9, reason: 'An order receipt' },
+          { id: 'updates', confidence: 0.3, reason: 'Unlikely' },
+          { id: 'social', confidence: 0.95, reason: 'Switched off' },
+        ],
+      },
+    }));
+    const envelope = job(userId, randomUUID(), undefined, true);
+    await createClassifyHandler({ collections, llm, changes })(envelope, context);
+
+    const system = llm.mock.calls[0]![0].messages[0]!.content;
+    expect(system).toContain('- purchases: Orders and receipts, including food delivery bills');
+    expect(system).toContain(`- travel: ${MAIL_CATEGORY_DESCRIPTIONS.travel}`);
+    expect(system).not.toContain('- social:');
+    const id = envelope.payload.messageId;
+    expect(await changesFor(id)).toEqual([
+      { type: 'categorized', messageId: id, categories: ['purchases'] },
+    ]);
+    expect(await collections.classifications.findOne({ _id: id })).toMatchObject({
+      categories: ['purchases'],
+    });
+
+    // Mail Gmail already sorted needs no model call for categories.
+    const sorted = vi.fn<LlmClient>();
+    await createClassifyHandler({ collections, llm: sorted, changes })(
+      job(userId, randomUUID()),
+      context,
+    );
+    expect(sorted).not.toHaveBeenCalled();
+  });
+
+  it('starts every category on with its default description, and can reset one', async () => {
+    const userId = randomUUID();
+    const categories = createCategoryRules(collections);
+    expect((await categories.list(userId)).find((c) => c.category === 'travel')).toEqual({
+      category: 'travel',
+      description: MAIL_CATEGORY_DESCRIPTIONS.travel,
+      defaultDescription: MAIL_CATEGORY_DESCRIPTIONS.travel,
+      customized: false,
+      enabled: true,
+    });
+    await categories.save(userId, 'travel', { description: 'Trips and bookings for work' });
+    expect(await categories.save(userId, 'travel', { enabled: false })).toMatchObject({
+      description: 'Trips and bookings for work',
+      customized: true,
+      enabled: false,
+    });
+    expect(await categories.save(userId, 'travel', { description: null })).toMatchObject({
+      description: MAIL_CATEGORY_DESCRIPTIONS.travel,
+      customized: false,
+      enabled: false,
+    });
+    await expect(categories.save(userId, 'travel', { description: 'trips' })).rejects.toThrow(
+      /Describe what belongs/,
+    );
   });
 
   it('needs a description before a label can be used by AI', async () => {
