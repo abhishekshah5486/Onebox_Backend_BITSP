@@ -58,7 +58,7 @@ def point_texts(container: BlocksContainer, settings: SplitSettings) -> list[Poi
         text = embed_text(block).strip()
         if not text:
             continue
-        payload = _citation(block)
+        payload = citation_of(block)
         table = block.parent_index if block.type == BlockType.TABLE_ROW else None
         if table is not None:
             text = with_title(titles.get(table), text)
@@ -108,7 +108,7 @@ def _skipped(block: Block) -> bool:
     return False
 
 
-def _citation(block: Block) -> dict[str, Any]:
+def citation_of(block: Block) -> dict[str, Any]:
     """Where the block is, kept on its points so a hit can be cited without reading blocks."""
     cite = block.citation_metadata
     if cite is None:

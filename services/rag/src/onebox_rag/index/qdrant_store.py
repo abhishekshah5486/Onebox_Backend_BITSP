@@ -12,6 +12,24 @@ from onebox_rag.index.embed import EmbeddingModel, SparseVector
 
 DENSE, SPARSE = "dense", "sparse"
 UPSERT_BATCH = 256
+# RRF ties hits of equal rank, which Qdrant returns in any order; a few more are fetched and
+# ties broken by id, so the same query always ranks the same.
+TIE_MARGIN = 2
+
+
+@dataclass(frozen=True)
+class Hit:
+    id: str
+    score: float
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SearchTuning:
+    # The dense leg's search beam, and how many times the depth the int8 scan hands to the
+    # full-precision rescore.
+    hnsw_ef: int = 256
+    oversampling: float = 1.5
 
 
 @dataclass(frozen=True)
@@ -135,6 +153,60 @@ class QdrantStore:
             exact=True,
         )
         return int(result.count)
+
+    async def search(
+        self,
+        collection: str,
+        dense: list[float],
+        sparse: SparseVector,
+        *,
+        user_id: str,
+        content_ids: list[str] | None,
+        limit: int,
+        tuning: SearchTuning,
+    ) -> list[Hit]:
+        """Dense and BM25 legs, each twice the limit deep and filtered where it searches, fused by
+        reciprocal rank."""
+        must: list[models.Condition] = [
+            models.FieldCondition(key="userId", match=models.MatchValue(value=user_id))
+        ]
+        if content_ids is not None:
+            must.append(
+                models.FieldCondition(key="contentId", match=models.MatchAny(any=content_ids))
+            )
+        where = models.Filter(must=must)
+        response = await self._client.query_points(
+            collection,
+            prefetch=[
+                models.Prefetch(
+                    query=dense,
+                    using=DENSE,
+                    limit=limit * 2,
+                    filter=where,
+                    params=models.SearchParams(
+                        hnsw_ef=tuning.hnsw_ef or None,
+                        quantization=models.QuantizationSearchParams(
+                            rescore=True, oversampling=tuning.oversampling
+                        ),
+                    ),
+                ),
+                models.Prefetch(
+                    query=models.SparseVector(indices=sparse.indices, values=sparse.values),
+                    using=SPARSE,
+                    limit=limit * 2,
+                    filter=where,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            query_filter=where,
+            limit=limit + TIE_MARGIN,
+            with_payload=True,
+        )
+        points = sorted(response.points, key=lambda p: (-(p.score or 0.0), str(p.id)))[:limit]
+        return [Hit(str(p.id), float(p.score or 0.0), dict(p.payload or {})) for p in points]
+
+    async def exists(self, collection: str) -> bool:
+        return bool(await self._client.collection_exists(collection))
 
     async def ping(self) -> None:
         await self._client.get_collections()
