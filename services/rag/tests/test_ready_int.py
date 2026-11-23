@@ -1,3 +1,4 @@
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -21,8 +22,13 @@ def infra() -> Iterator[tuple[str, str]]:
 def test_ready_once_mongodb_and_redis_answer(settings: Settings, infra: tuple[str, str]) -> None:
     mongo_uri, redis_url = infra
     app = create_app(settings.model_copy(update={"MONGO_URI": mongo_uri, "REDIS_URL": redis_url}))
+    # A fresh container's first ping can outlast one check, so wait as a load balancer would.
     with TestClient(app) as client:
+        deadline = time.monotonic() + 30
         ready = client.get("/health/ready")
+        while ready.status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.5)
+            ready = client.get("/health/ready")
     assert ready.json() == {"status": "ok", "checks": {"mongodb": "up", "redis": "up"}}
 
 
