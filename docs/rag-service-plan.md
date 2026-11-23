@@ -147,7 +147,9 @@ choices; we offer those and a few more:
    k8s deployment, CI job, README crediting PipesHub as the reference. **Done.**
 2. Block model and records in MongoDB; blob storage; ingest queue; upload and record routes.
    **Done.**
-3. Light parsers (text, HTML, Markdown, EML, JSON, YAML, CSV).
+3. PipesHub's block model (blocks, block groups, citation metadata), status set and shared
+   content per set of bytes; OpenDocument and OOXML password detection; light parsers (text,
+   HTML, Markdown, EML, JSON, YAML, CSV) and the parse worker. **Done.**
 4. Sandboxed parse pool, PDF inspection and engine routing.
 5. Docling service and the Docling path for PDF, DOCX and PPTX; LibreOffice conversion (both
    added to the image here).

@@ -23,14 +23,29 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
 ## API
 
 - `POST /rag/documents`: multipart `files` (one or more) and an optional `knowledgeBase`. Each
-  file's real type is read from its bytes; files too big, zip bombs and encrypted files are
-  recorded as `rejected` with a reason; the rest are stored and queued for parsing.
-  Re-uploading the same content returns the existing record (`duplicate: true`).
+  file's real type is read from its bytes. Re-uploading it to the same place returns the
+  existing record (`duplicate: true`).
 - `GET /rag/records` (`limit`, `before`, `status`, `sourceType`, `sourceId`),
-  `GET /rag/records/{id}`, `DELETE /rag/records/{id}`.
+  `GET /rag/records/{id}`, `GET /rag/records/{id}/blocks` (the parsed blocks),
+  `DELETE /rag/records/{id}` (with its attachments' records).
 
-Parse jobs go to the `rag-ingest` BullMQ queue with the same envelope as the TypeScript
-services' jobs, so they can enqueue into it too.
+## How it works
+
+Following PipesHub's design:
+
+- **Records and contents.** A record is an item in a source (an uploaded file, an email, an
+  attachment). Identical bytes for one user share one content (PipesHub's virtual record), which
+  is stored, parsed and indexed once; every record holding it mirrors its status.
+- **Statuses.** `queued` / `in_progress` (with `stage` `parse` or `index`), then `completed`,
+  `empty`, `file_type_not_supported`, `password_protected` or `failed` (with a `reason`: too
+  big, a zip bomb, unreadable). The same bytes always give the same outcome.
+- **Blocks.** Parsers produce a container of blocks and block groups linked by index: tables
+  are groups of row blocks, lists groups of items, and each block carries citation metadata
+  (heading path, line, page, row, sheet, cell, slide). Stored gzipped in the blob store.
+- **Parsing.** Jobs on the `rag-ingest` BullMQ queue (the TypeScript job envelope, one per
+  content revision), consumed in-process unless `RAG_RUN_WORKER=false`. Formats so far: plain
+  text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
+  JSON and JSON Lines, YAML, CSV and TSV, and other text.
 
 ## Check
 
