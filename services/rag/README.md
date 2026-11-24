@@ -36,12 +36,26 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
 
 ## API
 
-- `POST /rag/documents`: multipart `files` (one or more) and an optional `knowledgeBase`. Each
-  file's real type is read from its bytes. Re-uploading it to the same place returns the
-  existing record (`duplicate: true`).
-- `GET /rag/records` (`limit`, `before`, `status`, `sourceType`, `sourceId`),
-  `GET /rag/records/{id}`, `GET /rag/records/{id}/blocks` (the parsed blocks),
-  `DELETE /rag/records/{id}` (with its attachments' records).
+- `POST /rag/documents`: multipart `files` (one or more), a collection id `knowledgeBase`, an
+  optional `folderId`, and for a folder upload each file's relative `paths` (its folders are
+  made inside the target). Each file's real type is read from its bytes. Re-uploading it to
+  the same collection returns the existing record (`duplicate: true`), out of the trash if it
+  was there.
+- **Collections and folders.** `GET/POST /rag/collections`, `PATCH/DELETE
+/rag/collections/{id}` (deleting removes its records for good), `POST
+/rag/collections/{id}/folders` (`name`, `parentId`), `PATCH/DELETE
+/rag/collections/{id}/folders/{folderId}` (deleting moves its files to the trash). Collection
+  names are unique per user and folder names per parent, trimmed and in any case; folder names
+  have no `/` or `\`, and folders nest at most 20 deep. Uploading to an id with no collection
+  (e.g. `default`) makes one, as uploads did before collections.
+- **Records.** `GET /rag/records` (filters below, `folderId` with `root` for a collection's
+  top, `trashed`), `GET /rag/records/{id}`, `GET /rag/records/{id}/blocks` (the parsed blocks),
+  `PATCH /rag/records/{id}` (`name`, unique in its folder), `POST /rag/records/{id}/move`
+  (`collectionId`, `folderId`), `DELETE /rag/records/{id}` (to the trash, or `?permanent=true`
+  for good, its attachments' records included), `POST /rag/records/trash` and
+  `POST /rag/records/restore` (`ids`; one whose folder went comes back to the top). Trashed
+  records are left out of lists and searches. Each record says its `recordType` (`FILE` or
+  `MAIL`) and `origin` (`UPLOAD` or `CONNECTOR`).
 
 ## How it works
 

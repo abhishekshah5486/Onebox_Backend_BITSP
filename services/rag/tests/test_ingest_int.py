@@ -142,7 +142,7 @@ def test_users_only_see_their_records_and_deleting_frees_unshared_content(
     wait_for(client, mine["id"], parsed, user="owner")
 
     assert client.get(path, headers=bearer("intruder")).status_code == 404
-    assert client.delete(path, headers=bearer("intruder")).status_code == 404
+    assert client.delete(f"{path}?permanent=true", headers=bearer("intruder")).status_code == 404
     assert client.get("/rag/records", headers=bearer("intruder")).json()["total"] == 0
 
     blob_key = f"owner/contents/{mine['contentId']}/original"
@@ -154,10 +154,15 @@ def test_users_only_see_their_records_and_deleting_frees_unshared_content(
             return False
         return True
 
-    assert client.delete(path, headers=bearer("owner")).status_code == 204
+    assert client.delete(f"{path}?permanent=true", headers=bearer("owner")).status_code == 204
     assert client.get(path, headers=bearer("owner")).status_code == 404
     assert stored(), "the other record still holds this content"
-    assert client.delete(f"/rag/records/{shared['id']}", headers=bearer("owner")).status_code == 204
+    assert (
+        client.delete(
+            f"/rag/records/{shared['id']}?permanent=true", headers=bearer("owner")
+        ).status_code
+        == 204
+    )
     assert not stored()
 
 

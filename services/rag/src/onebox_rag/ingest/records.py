@@ -1,7 +1,7 @@
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic.alias_generators import to_camel
@@ -38,9 +38,15 @@ class RecordFilter:
     max_size: int | None = None
     # The record's own dates, as a search's date bounds read them.
     dates: DateBounds | None = None
+    # Folders it sits in; None in the list for the top of a collection.
+    folder_ids: Sequence[str | None] | None = None
+    # The trash instead of the records in use.
+    trashed: bool = False
 
     def query(self) -> Doc:
-        query: Doc = {}
+        query: Doc = _trash(self.trashed)
+        if self.folder_ids is not None:
+            query["folderId"] = {"$in": list(self.folder_ids)}
         if self.name:
             query["name"] = {"$regex": re.escape(self.name), "$options": "i"}
         for field, values in (
@@ -192,14 +198,19 @@ class RecordStore:
             return Record.model_validate(existing), False
         return record, True
 
-    async def get(self, user_id: str, record_id: str) -> Record | None:
-        doc = await self._records.find_one({"_id": record_id, "userId": user_id})
+    async def get(
+        self, user_id: str, record_id: str, *, trashed: bool | None = False
+    ) -> Record | None:
+        """False: only one not in the trash; True: only one in it; None: either."""
+        query: Doc = {"_id": record_id, "userId": user_id, **_trash(trashed)}
+        doc = await self._records.find_one(query)
         return Record.model_validate(doc) if doc else None
 
     async def find(
         self, user_id: str, *, limit: int, before: datetime | None = None, **filters: Any
     ) -> list[Record]:
-        query: Doc = {"userId": user_id, **{k: v for k, v in filters.items() if v is not None}}
+        query: Doc = {"userId": user_id, "deletedAt": None}
+        query.update({k: v for k, v in filters.items() if v is not None})
         if before is not None:
             query["createdAt"] = {"$lt": before}
         cursor = self._records.find(query).sort("createdAt", DESCENDING).limit(limit)
@@ -247,7 +258,7 @@ class RecordStore:
         """How many of the user's records are in each status and of each file type."""
         cursor = await self._records.aggregate(
             [
-                {"$match": {"userId": user_id}},
+                {"$match": {"userId": user_id, "deletedAt": None}},
                 {
                     "$facet": {
                         "statuses": [{"$group": {"_id": "$status", "n": {"$sum": 1}}}],
@@ -287,7 +298,7 @@ class RecordStore:
         in each status, and when the last one arrived, newest first."""
         cursor = await self._records.aggregate(
             [
-                {"$match": {"userId": user_id}},
+                {"$match": {"userId": user_id, "deletedAt": None}},
                 {
                     "$group": {
                         "_id": {"type": "$sourceType", "id": "$sourceId", "status": "$status"},
@@ -383,6 +394,43 @@ class RecordStore:
         cursor = self._records.find({"userId": user_id, "parentId": parent_id})
         return [Record.model_validate(doc) async for doc in cursor]
 
+    async def set_children(self, parent_id: str, now: datetime, **fields: Any) -> None:
+        await self._records.update_many({"parentId": parent_id}, _set(fields, now))
+
+    async def name_taken(
+        self, user_id: str, kb_id: str, folder_id: str | None, name: str, exclude: str
+    ) -> bool:
+        query: Doc = {
+            "userId": user_id,
+            "sourceType": "upload",
+            "sourceId": kb_id,
+            "folderId": folder_id,
+            "parentId": None,
+            "deletedAt": None,
+            "_id": {"$ne": exclude},
+            "name": {"$regex": f"^{re.escape(name.strip())}$", "$options": "i"},
+        }
+        return await self._records.count_documents(query, limit=1) > 0
+
+    async def in_folders(self, user_id: str, folder_ids: list[str]) -> list[Record]:
+        cursor = self._records.find({"userId": user_id, "folderId": {"$in": folder_ids}})
+        return [Record.model_validate(d) async for d in cursor]
+
+    async def ids_in_source(self, user_id: str, source_type: str, source_id: str) -> list[str]:
+        query = {
+            "userId": user_id,
+            "sourceType": source_type,
+            "sourceId": source_id,
+            "parentId": None,
+        }
+        return [str(i) for i in await self._records.distinct("_id", query)]
+
+    async def trash(self, record_ids: list[str], now: datetime | None) -> None:
+        """Into the trash (now) or out of it (None), with their attachments."""
+        ids = {"$in": record_ids}
+        update = _set({"deleted_at": now}, now or datetime.now(UTC))
+        await self._records.update_many({"$or": [{"_id": ids}, {"parentId": ids}]}, update)
+
     async def delete(self, record_ids: list[str]) -> None:
         await self._records.delete_many({"_id": {"$in": record_ids}})
 
@@ -390,8 +438,14 @@ class RecordStore:
 SCOPE_FIELDS = {"source_ids": "sourceId", "source_types": "sourceType", "record_ids": "_id"}
 
 
+def _trash(trashed: bool | None) -> Doc:
+    if trashed is None:
+        return {}
+    return {"deletedAt": {"$ne": None}} if trashed else {"deletedAt": None}
+
+
 def _scope(user_id: str, scope: dict[str, list[str] | None]) -> Doc:
-    query: Doc = {"userId": user_id}
+    query: Doc = {"userId": user_id, "deletedAt": None}
     for name, values in scope.items():
         if values is not None:
             query[SCOPE_FIELDS[name]] = {"$in": values}

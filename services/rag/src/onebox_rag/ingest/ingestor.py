@@ -95,6 +95,7 @@ class Ingestor:
         external_id: str | None = None,
         parent_id: str | None = None,
         info: ItemInfo | None = None,
+        folder_id: str | None = None,
     ) -> Ingested:
         content = await self.store(user_id, stream, name, declared_mime_type)
         return await self.add_record(
@@ -106,6 +107,7 @@ class Ingestor:
             external_id=external_id or content.sha256,
             parent_id=parent_id,
             info=info,
+            folder_id=folder_id,
         )
 
     async def store_extracted(self, user_id: str, file: ExtractedFile) -> Content:
@@ -162,6 +164,7 @@ class Ingestor:
         external_id: str,
         parent_id: str | None = None,
         info: ItemInfo | None = None,
+        folder_id: str | None = None,
     ) -> Ingested:
         now = self._now()
         info = info or ItemInfo()
@@ -189,9 +192,19 @@ class Ingestor:
             source_created_at=created,
             source_modified_at=info.modified_at or created,
             date_origin=origin,
+            folder_id=folder_id,
         )
         saved, inserted = await self._records.insert(record)
         if not inserted:
+            if saved.deleted_at is not None:
+                # Added again while in the trash: it comes back, where it was added this time.
+                restored = await self._records.update(
+                    saved.id, now, deleted_at=None, folder_id=folder_id
+                )
+                await self._records.set_children(
+                    saved.id, now, deleted_at=None, folder_id=folder_id
+                )
+                return Ingested(restored or saved, duplicate=True)
             return Ingested(saved, duplicate=True)
         # The parse may have finished between reading the content and saving this record;
         # the worker only updates records that existed when it finished.
@@ -254,6 +267,7 @@ class Ingestor:
                 external_id=f"{parent.external_id}/attachments/{number}",
                 parent_id=parent.id,
                 info=ItemInfo(created, modified),
+                folder_id=parent.folder_id,
             )
 
     async def reindex(
@@ -297,7 +311,7 @@ class Ingestor:
 
     async def delete(self, user_id: str, record_id: str) -> bool:
         """Removes a record and its attachments' records; content nothing else holds goes too."""
-        record = await self._records.get(user_id, record_id)
+        record = await self._records.get(user_id, record_id, trashed=None)
         if record is None:
             return False
         doomed, pending = [], [record]
@@ -311,6 +325,10 @@ class Ingestor:
             await self._notify(cid, [], [item.id for item in doomed if item.content_id == cid])
             await self.collect(cid)
         return True
+
+    async def renamed(self, record: Record) -> None:
+        """Writes its title point again, now (the sweep would, later)."""
+        await self._notify(record.content_id, [record.id], [])
 
     async def _notify(self, content_id: str, added: list[str], removed: list[str]) -> None:
         if self._changed is None:

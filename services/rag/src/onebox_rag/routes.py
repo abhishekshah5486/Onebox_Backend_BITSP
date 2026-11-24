@@ -160,6 +160,7 @@ def _upload_info(last_modified_ms: float | None) -> ItemInfo | None:
 def record_json(record: Record, **extra: Any) -> dict[str, Any]:
     body = record.model_dump(by_alias=True, mode="json")
     body["id"] = body.pop("_id")
+    body["recordType"], body["origin"] = record.record_type, record.origin
     return {**body, **extra}
 
 
@@ -171,7 +172,11 @@ def rag_router() -> APIRouter:
         request: Request,
         user: CurrentUser,
         files: Annotated[list[UploadFile], File(min_length=1)],
-        knowledge_base: Annotated[str, Form(alias="knowledgeBase", pattern=SOURCE_ID)] = "default",
+        knowledge_base: Annotated[str, Form(alias="knowledgeBase", max_length=64)] = "default",
+        folder_id: Annotated[str | None, Form(alias="folderId", max_length=64)] = None,
+        # A folder upload's relative paths ("Reports/2024/q1.pdf"), in the files' order: the
+        # folders in them are made inside the target folder.
+        paths: Annotated[list[str] | None, Form(alias="paths")] = None,
         # Each file's last-modified time (ms since 1970, the browser's File.lastModified), in
         # the order of the files; missing or not positive, the upload time stands in.
         last_modified: Annotated[list[float] | None, Form(alias="lastModified")] = None,
@@ -179,12 +184,21 @@ def rag_router() -> APIRouter:
         ingestor: Ingestor = request.app.state.ingestor
         if last_modified is not None and len(last_modified) != len(files):
             raise ValidationError("lastModified needs one value per file, in the files' order")
+        if paths is not None and len(paths) != len(files):
+            raise ValidationError("paths needs one value per file, in the files' order")
+        organizer = request.app.state.organizer
+        kb, base = await organizer.upload_target(user.user_id, knowledge_base, folder_id)
         results = []
         for position, upload in enumerate(files):
+            path = paths[position] if paths else None
+            folder = await organizer.folder_for_path(user.user_id, kb, base, path)
             done = await ingestor.ingest(
                 user_id=user.user_id,
-                source=Source(SourceType.UPLOAD, knowledge_base),
-                name=upload.filename or "untitled",
+                source=Source(SourceType.UPLOAD, kb.id),
+                folder_id=folder.id if folder else None,
+                name=(path.replace("\\", "/").rsplit("/", 1)[-1] if path else None)
+                or upload.filename
+                or "untitled",
                 declared_mime_type=upload.content_type,
                 stream=upload.file,
                 info=_upload_info(last_modified[position] if last_modified else None),
@@ -241,6 +255,9 @@ def rag_router() -> APIRouter:
         modified_before: Annotated[str | None, Query(alias="modifiedBefore")] = None,
         sort: RecordSort = "createdAt",
         order: Literal["asc", "desc"] = "desc",
+        # "root" for the top of a collection.
+        folder_id: Annotated[list[str] | None, Query(alias="folderId")] = None,
+        trashed: bool = False,
     ) -> dict[str, Any]:
         """A page of the user's records with filters, how many pass them, and the statuses and
         file types the user has (for the filter menus)."""
@@ -263,6 +280,8 @@ def rag_router() -> APIRouter:
                 min_size=min_size,
                 max_size=max_size,
                 dates=dates if dates.given() else None,
+                folder_ids=[None if f == "root" else f for f in folder_id] if folder_id else None,
+                trashed=trashed,
             ),
             sort=sort,
             descending=order == "desc",
@@ -359,13 +378,6 @@ def rag_router() -> APIRouter:
         `query`, a record too long to read whole gives the part that answers it, `gaps` naming
         what was left out."""
         return await _read(request, user.user_id, record_id, start, max_blocks, query)
-
-    @router.delete("/records/{record_id}", status_code=204)
-    async def delete_record(request: Request, user: CurrentUser, record_id: str) -> Response:
-        ingestor: Ingestor = request.app.state.ingestor
-        if not await ingestor.delete(user.user_id, record_id):
-            raise NotFoundError("Record not found")
-        return Response(status_code=204)
 
     return router
 

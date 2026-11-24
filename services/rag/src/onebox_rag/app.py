@@ -11,13 +11,16 @@ from onebox_rag.auth import JwksVerifier, derive_internal_token
 from onebox_rag.config import Settings
 from onebox_rag.errors import register_error_handlers
 from onebox_rag.health import HealthCheck, health_router
+from onebox_rag.hub_routes import hub_router
 from onebox_rag.index.embed import DenseEmbedder
 from onebox_rag.index.points import SplitSettings
 from onebox_rag.index.qdrant_store import QdrantStore, SearchTuning
 from onebox_rag.index.upkeep import PointUpkeep
 from onebox_rag.ingest.blobs import BlobStore
+from onebox_rag.ingest.hub import FolderStore, KnowledgeBaseStore
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
+from onebox_rag.ingest.organize import Organizer
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.ingest.repair import repair_orphans, requeue_stalled
@@ -238,6 +241,11 @@ def create_app(
         )
         app.state.records, app.state.contents, app.state.blobs = records, contents, blobs
         app.state.ingestor = ingestor
+        kbs, folders = (
+            KnowledgeBaseStore(mongo[settings.MONGO_DB]),
+            FolderStore(mongo[settings.MONGO_DB]),
+        )
+        app.state.organizer = Organizer(kbs, folders, records, ingestor, lambda: datetime.now(UTC))
         preferences = PreferenceStore(mongo[settings.MONGO_DB], server_defaults(settings))
         app.state.preferences = preferences
 
@@ -252,7 +260,13 @@ def create_app(
             app.state.checks["qdrant"] = store.ping
         prepare = asyncio.create_task(
             _prepare_until_done(
-                [records.ensure_indexes, contents.ensure_indexes, blobs.ensure_bucket]
+                [
+                    records.ensure_indexes,
+                    contents.ensure_indexes,
+                    blobs.ensure_bucket,
+                    kbs.ensure_indexes,
+                    folders.ensure_indexes,
+                ]
             )
         )
         pool = pool_from(settings) if settings.RAG_RUN_WORKER else None
@@ -480,5 +494,6 @@ def create_app(
     register_error_handlers(app)
     app.include_router(health_router())
     app.include_router(rag_router())
+    app.include_router(hub_router())
     app.include_router(internal_router())
     return app

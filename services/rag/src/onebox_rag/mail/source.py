@@ -108,7 +108,7 @@ class MailSource:
         return False
 
     async def _repair_attachment(self, record: Record) -> bool:
-        parent = await self._records.get(record.user_id, record.parent_id or "")
+        parent = await self._records.get(record.user_id, record.parent_id or "", trashed=None)
         index = record.external_id.rsplit("/", 1)[-1]
         if parent is None or parent.mail is None or not index.isdigit():
             return False

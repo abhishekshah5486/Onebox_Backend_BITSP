@@ -58,7 +58,8 @@ class IngestQueue:
 
     async def remove(self, content_id: str, revision: int) -> None:
         job = await self._queue.getJob(job_id(content_id, revision))
-        if job is not None:
+        if job is not None and await job.getState() != "active":
+            # A running job is left to finish: it stops on finding its content gone.
             await job.remove()
 
     async def close(self) -> None:

@@ -208,6 +208,20 @@ class Record(CamelModel):
     upload_date_origin: DateOrigin | None = None
     # Its title point is written (cleared to have the sweep write it again).
     titled: bool = False
+    # The folder of its collection it sits in; None at the collection's top.
+    folder_id: str | None = None
+    # When it went to the trash; it is left out of lists and searches until restored.
+    deleted_at: datetime | None = None
+    # Bumped when its file is replaced.
+    version: int = 1
+
+    @property
+    def record_type(self) -> str:
+        return "MAIL" if self.source_type == SourceType.MAIL and self.parent_id is None else "FILE"
+
+    @property
+    def origin(self) -> str:
+        return "UPLOAD" if self.source_type == SourceType.UPLOAD else "CONNECTOR"
 
     def dates(self) -> tuple[datetime, datetime]:
         created = self.source_created_at or self.created_at

@@ -168,7 +168,10 @@ def test_indexes_blocks_as_hybrid_points_and_forgets_deleted_content(
     ).points
     assert hits[0].payload is not None and "Parcelforce" in hits[0].payload["text"]
 
-    assert client.delete(f"/rag/records/{doc['id']}", headers=bearer("u1")).status_code == 204
+    assert (
+        client.delete(f"/rag/records/{doc['id']}?permanent=true", headers=bearer("u1")).status_code
+        == 204
+    )
     left, _ = qdrant.scroll(COLLECTION, scroll_filter=models.Filter(**content), limit=50)
     assert left == []
 
@@ -260,7 +263,12 @@ def test_finds_records_by_name_and_names_the_unreadable(
         must=[models.FieldCondition(key="recordId", match=models.MatchValue(value=minutes["id"]))]
     )
     assert qdrant.count(COLLECTION, count_filter=title).count == 1
-    assert client.delete(f"/rag/records/{minutes['id']}", headers=bearer("u1")).status_code == 204
+    assert (
+        client.delete(
+            f"/rag/records/{minutes['id']}?permanent=true", headers=bearer("u1")
+        ).status_code
+        == 204
+    )
     assert qdrant.count(COLLECTION, count_filter=title).count == 0
 
 
@@ -577,3 +585,30 @@ def test_records_are_listed_with_filters_and_read_again_on_reindex(client: TestC
     wait_for(client, policy["id"], completed, user="u2c", timeout_s=120)
     found = client.post("/rag/retrieve", json={"query": "refunds parcels"}, headers=user).json()
     assert policy["id"] in {c["record"]["recordId"] for c in found["chunks"]}
+
+
+def test_trashed_records_leave_search_and_renamed_ones_are_found_by_their_name(
+    client: TestClient,
+) -> None:
+    [plan] = upload(client, ("Harbour plan.md", b"Ferries dock at pier four."), kb="trash")
+    wait_for(client, plan["id"], completed, timeout_s=120)
+
+    def found(query: str) -> bool:
+        chunks = client.post("/rag/retrieve", json={"query": query}, headers=bearer("u1")).json()
+        return any(c["record"]["recordId"] == plan["id"] for c in chunks["chunks"])
+
+    assert found("ferries pier")
+    client.delete(f"/rag/records/{plan['id']}", headers=bearer("u1"))
+    assert not found("ferries pier")
+    client.post("/rag/records/restore", json={"ids": [plan["id"]]}, headers=bearer("u1"))
+    assert found("ferries pier")
+
+    renamed = client.patch(
+        f"/rag/records/{plan['id']}", json={"name": "Lighthouse rota.md"}, headers=bearer("u1")
+    )
+    assert renamed.status_code == 200
+    chunks = client.post(
+        "/rag/retrieve", json={"query": "lighthouse rota"}, headers=bearer("u1")
+    ).json()["chunks"]
+    titles = [c["text"] for c in chunks if c["record"]["recordId"] == plan["id"]]
+    assert any("Lighthouse rota.md" in t for t in titles)

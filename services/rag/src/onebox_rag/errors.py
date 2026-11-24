@@ -37,6 +37,11 @@ class NotFoundError(AppError):
     default_code = "NOT_FOUND"
 
 
+class ConflictError(AppError):
+    status_code = 409
+    default_code = "CONFLICT"
+
+
 class UnavailableError(AppError):
     status_code = 503
     default_code = "UNAVAILABLE"
