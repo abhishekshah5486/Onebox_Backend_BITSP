@@ -289,3 +289,49 @@ def test_an_upload_is_dated_by_its_files_last_modified_time(client: TestClient) 
         headers=bearer("u7"),
     ).json()
     assert {c["record"]["recordId"] for c in found["chunks"]} == {invoice["id"]}
+
+
+def test_an_upload_takes_the_date_its_header_states(
+    live_settings: Settings, proxy_url: str
+) -> None:
+    settings = live_settings.model_copy(
+        update={
+            "RAG_LLM_PROXY_URL": proxy_url,
+            "RAG_TABLE_ENRICHMENT": False,
+            "RAG_CONTENT_DOCUMENT_DATES": "true",
+        }
+    )
+    with TestClient(create_app(settings, verifier=fake_verifier())) as client:
+        while client.get("/health/ready").status_code != 200:
+            time.sleep(0.5)
+        memo, kept = upload(
+            client,
+            ("memo.md", b"Date: March 3, 2025\n\nThe lighthouse budget is approved."),
+            ("plain.md", b"Lighthouse keeper rota."),
+            kb="memos",
+            user="u8",
+        )
+        memo = wait_for(
+            client, memo["id"], lambda r: r.get("dateOrigin") == "content", user="u8", timeout_s=120
+        )
+        assert memo["sourceCreatedAt"].startswith("2025-03-03")
+        assert memo["uploadDateOrigin"] == "upload"
+        kept = wait_for(client, kept["id"], completed, user="u8", timeout_s=120)
+        assert kept["dateOrigin"] == "upload"
+
+        def dated(record_id: str) -> bool:
+            found = client.post(
+                "/rag/retrieve",
+                json={
+                    "query": "lighthouse",
+                    "createdAfter": "2025-03-01",
+                    "createdBefore": "2025-03-31",
+                },
+                headers=bearer("u8"),
+            ).json()
+            return {c["record"]["recordId"] for c in found["chunks"]} == {record_id}
+
+        deadline = time.monotonic() + 30
+        while not dated(memo["id"]):
+            assert time.monotonic() < deadline
+            time.sleep(0.5)

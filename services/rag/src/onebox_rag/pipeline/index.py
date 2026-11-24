@@ -10,8 +10,11 @@ from onebox_rag.index.qdrant_store import QdrantStore, StoredPoint
 from onebox_rag.index.tokens import TokenLimitError
 from onebox_rag.index.upkeep import PointUpkeep
 from onebox_rag.ingest.blobs import BlobStore
+from onebox_rag.ingest.content_dates import find_document_dates, plan_dates
 from onebox_rag.ingest.records import ContentStore, RecordStore
-from onebox_rag.models import TERMINAL, Content, Stage, Status
+from onebox_rag.models import TERMINAL, Content, SourceType, Stage, Status
+from onebox_rag.models.blocks import BlocksContainer
+from onebox_rag.models.records import DateOrigin
 from onebox_rag.pipeline.parse import decode_blocks
 
 logger = logging.getLogger("onebox_rag.index")
@@ -32,8 +35,11 @@ class IndexStage:
         split: SplitSettings,
         upkeep: PointUpkeep | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        # The upload dates a date its content states may replace (none: off).
+        content_dates: frozenset[DateOrigin] = frozenset(),
     ) -> None:
         self._contents, self._records, self._blobs = contents, records, blobs
+        self._content_dates = content_dates
         self._upkeep = upkeep
         self._dense, self._store, self._split, self._now = dense, store, split, now
 
@@ -85,9 +91,14 @@ class IndexStage:
             point_count=len(points),
             points_dated=False,
         )
+        redated: list[str] = []
+        try:
+            redated = await self._date_uploads(content_id, container)
+        except Exception:
+            logger.warning("content dates failed", extra={"contentId": content_id}, exc_info=True)
         if self._upkeep is not None:
             try:
-                await self._upkeep.sync(content_id, retitle=moved)
+                await self._upkeep.sync(content_id, redated, retitle=moved)
             except Exception:
                 # Searchable already; its dates and header points follow on the next sweep.
                 logger.warning(
@@ -126,6 +137,24 @@ class IndexStage:
             )
             for t, vector, terms in zip(texts, dense, sparse, strict=True)
         ]
+
+    async def _date_uploads(self, content_id: str, container: BlocksContainer) -> list[str]:
+        """Uploads of this content take the dates its header states, or get their own back;
+        returns the records whose dates changed."""
+        uploads = [
+            r
+            for r in await self._records.for_content(content_id)
+            if r.source_type == SourceType.UPLOAD
+        ]
+        if not self._content_dates and all(r.date_origin != DateOrigin.CONTENT for r in uploads):
+            return []
+        changed = []
+        for record in uploads:
+            stated = find_document_dates(container, uploaded_at=record.created_at)
+            fields = plan_dates(record, stated, self._content_dates)
+            if fields is not None and await self._records.update(record.id, self._now(), **fields):
+                changed.append(record.id)
+        return changed
 
     async def _retry_or_fail(self, content: Content, final: bool, reason: str) -> None:
         if final:

@@ -156,11 +156,22 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   `DATES_PENDING`: records not yet searchable by date). Qdrant down or too slow is a 503
   (`SEARCH_INDEX_UNREACHABLE` / `SEARCH_INDEX_TIMEOUT`), never an empty result.
 - **Dates.** Every record has a created and a modified date (an email's: when it was received;
-  an attachment's: its email's; an upload's: when it was uploaded), and every point carries
+  an attachment's: its email's; an upload's: the file's last-modified time the uploader sends
+  as `lastModified`, one per file in ms, else when it was uploaded), and every point carries
   the dates of the records holding its content, so date bounds filter inside Qdrant's search.
   A bound is `YYYY-MM-DD` (the whole day, UTC) or a datetime with its zone; a reversed range
   or an "after" in the future is a 400. Records' changes reach their points at once, and a
-  sweep (`RAG_UPKEEP_SWEEP_S`) catches up any that failed.
+  sweep (`RAG_UPKEEP_SWEEP_S`) catches up any that failed. Each record says where its dates
+  came from (`dateOrigin`: source, lastModified, upload or content).
+- **Dates an upload states.** With `RAG_CONTENT_DOCUMENT_DATES` (`off` by default; `true`
+  replaces only the upload time, `all` the file's last-modified time too), an upload takes the
+  dates its header states once indexed: labelled lines ("Date:", "Sent:", "Created:",
+  "Last updated:") in its first 8 prose blocks or 1,500 characters, plus a thread's later
+  "From:" headers for when it last changed. A date the text only mentions, a label for another
+  event ("Due date:"), a range, a slashed date that reads two ways, a date after the upload,
+  a header giving two days, and a file last modified before the stated day all leave the
+  upload's dates alone. Those are kept beside it and put back when the header no longer
+  dates it or the setting is turned off.
 - **Titles.** Every record gets a title point the moment it is made, before its content is
   read: an email's header (subject, sender, recipients, date, attachment names), else its name.
   "The email from Ana" or "the budget sheet" then finds it though its text never says so. A

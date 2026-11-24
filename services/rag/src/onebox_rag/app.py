@@ -24,6 +24,7 @@ from onebox_rag.logs import log_requests
 from onebox_rag.mail.client import MailClient
 from onebox_rag.mail.source import MailSource
 from onebox_rag.models import Content
+from onebox_rag.models.records import DateOrigin
 from onebox_rag.mongo import mongo_client
 from onebox_rag.parsers.ocr.rapid import OcrLimits
 from onebox_rag.pipeline.describe import ImageDescriber
@@ -101,6 +102,14 @@ def retrieve_settings_from(settings: Settings) -> RetrieveSettings:
             title_hit_words=settings.RAG_TITLE_HIT_WORDS,
         ),
     )
+
+
+def content_dates_from(settings: Settings) -> frozenset[DateOrigin]:
+    return {
+        "off": frozenset(),
+        "true": frozenset({DateOrigin.UPLOAD}),
+        "all": frozenset({DateOrigin.UPLOAD, DateOrigin.LAST_MODIFIED}),
+    }[settings.RAG_CONTENT_DOCUMENT_DATES]
 
 
 def split_settings_from(settings: Settings) -> SplitSettings:
@@ -307,7 +316,14 @@ def create_app(
                 settings,
                 settings.RAG_INDEX_QUEUE,
                 IndexStage(
-                    contents, records, blobs, dense, store, split_settings_from(settings), upkeep
+                    contents,
+                    records,
+                    blobs,
+                    dense,
+                    store,
+                    split_settings_from(settings),
+                    upkeep,
+                    content_dates=content_dates_from(settings),
                 ),
                 settings.RAG_INDEX_CONCURRENCY,
             )

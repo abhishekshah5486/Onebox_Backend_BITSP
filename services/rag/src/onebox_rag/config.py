@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     # pieces that fit. Counted with cl100k, times the ratio for models with another tokenizer.
     RAG_EMBED_TOKEN_CEILING: int = Field(default=8191, ge=64)
     RAG_EMBED_TOKEN_RATIO: float = Field(default=2.13, ge=1, le=8)
+    # An upload takes the dates its header states ("Date:", "Sent:", "Last updated:"):
+    # "off"; "true" in place of its upload time only; "all" also in place of the file's own
+    # last-modified time. Switched off, uploads get their own dates back on their next index.
+    RAG_CONTENT_DOCUMENT_DATES: Literal["off", "true", "all"] = "off"
 
     # Retrieval: the dense leg's search beam and int8 rescore oversampling; the record cut
     # (spread a page across records, off by default); tables shown whole up to this many
