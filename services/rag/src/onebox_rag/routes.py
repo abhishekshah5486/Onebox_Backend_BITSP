@@ -203,7 +203,20 @@ def rag_router() -> APIRouter:
         record = await records.get(user.user_id, record_id)
         if record is None:
             raise NotFoundError("Record not found")
-        return record_json(record)
+        contents: ContentStore = request.app.state.contents
+        content = await contents.get(record.content_id)
+        # What a model says the content is about, once it has read it.
+        classified = (
+            {
+                "classifyStatus": content.classify_status,
+                "classification": content.classification.model_dump(by_alias=True, mode="json")
+                if content.classification is not None
+                else None,
+            }
+            if content is not None
+            else {}
+        )
+        return record_json(record, **classified)
 
     @router.get("/records/{record_id}/blocks")
     async def get_blocks(request: Request, user: CurrentUser, record_id: str) -> dict[str, Any]:

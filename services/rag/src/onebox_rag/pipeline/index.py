@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -37,9 +37,12 @@ class IndexStage:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         # The upload dates a date its content states may replace (none: off).
         content_dates: frozenset[DateOrigin] = frozenset(),
+        # Classify (and summarize) once searchable: queues it, or waits for its first search.
+        classify: Callable[[Content], Awaitable[None]] | None = None,
     ) -> None:
         self._contents, self._records, self._blobs = contents, records, blobs
         self._content_dates = content_dates
+        self._classify = classify
         self._upkeep = upkeep
         self._dense, self._store, self._split, self._now = dense, store, split, now
 
@@ -96,6 +99,13 @@ class IndexStage:
             redated = await self._date_uploads(content_id, container)
         except Exception:
             logger.warning("content dates failed", extra={"contentId": content_id}, exc_info=True)
+        if self._classify is not None:
+            try:
+                await self._classify(content)
+            except Exception:
+                logger.warning(
+                    "classify not queued", extra={"contentId": content_id}, exc_info=True
+                )
         if self._upkeep is not None:
             try:
                 await self._upkeep.sync(content_id, redated, retitle=moved)

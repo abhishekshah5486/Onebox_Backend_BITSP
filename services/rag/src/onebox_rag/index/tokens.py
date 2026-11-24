@@ -35,6 +35,14 @@ def _encoder() -> Any:
         return None
 
 
+def count_tokens(text: str) -> int:
+    """cl100k tokens in `text`; without the vocabulary, its bytes (never fewer)."""
+    encoder = _encoder()
+    if encoder is None:
+        return len(text.encode("utf-8"))
+    return len(encoder.encode(text, disallowed_special=()))
+
+
 @dataclass(frozen=True)
 class TokenWindow:
     # Tokens one input may hold.
@@ -50,11 +58,9 @@ class TokenWindow:
             )
 
     def count(self, text: str) -> int:
-        encoder = _encoder()
-        if encoder is None:
+        if _encoder() is None:
             return len(text.encode("utf-8")) + _MARKERS
-        tokens = len(encoder.encode(text, disallowed_special=()))
-        return math.ceil(tokens * self.ratio) + _MARKERS
+        return math.ceil(count_tokens(text) * self.ratio) + _MARKERS
 
     def fits(self, text: str) -> bool:
         # Every token covers at least one byte, so short text never needs counting.

@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     # Index jobs (embedding and writing points) run apart from parsing: they wait on the network.
     RAG_INDEX_QUEUE: str = "rag-index"
     RAG_INDEX_CONCURRENCY: int = Field(default=4, ge=1)
+    # Once searchable, every content is classified and summarized by the user's model (its
+    # summary becomes a point found as the whole record): right away, or with
+    # RAG_CLASSIFY_ON_FIRST_USE when a search first returns it. A .log or .cfg is not.
+    RAG_CLASSIFY: bool = True
+    RAG_CLASSIFY_ON_FIRST_USE: bool = False
+    RAG_CLASSIFY_QUEUE: str = "rag-classify"
+    RAG_CLASSIFY_CONCURRENCY: int = Field(default=2, ge=1)
+    # The model reads up to 85% of this many tokens of the content, from its start.
+    RAG_CLASSIFY_CONTEXT_TOKENS: int = Field(default=128_000, ge=1000)
+    RAG_CLASSIFY_MAX_OUTPUT_TOKENS: int = Field(default=2000, ge=256, le=32_000)
     # The mail source: the mail service feeds stored mail on rag-mail, and RAG reads each email
     # and its attachments back from it. An empty RAG_MAIL_URL leaves the queue unread.
     RAG_MAIL_URL: str = "http://localhost:4003"

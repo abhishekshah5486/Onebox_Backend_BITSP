@@ -45,6 +45,35 @@ class Stage(StrEnum):
     INDEX = "index"
 
 
+class ClassifyStatus(StrEnum):
+    """Where a content's summary and classification stand (after it is searchable)."""
+
+    QUEUED = "queued"
+    # Waits until a search first returns it.
+    DEFERRED = "deferred"
+    COMPLETED = "completed"
+    # Not asked: switched off, a .log or .cfg file, or no text to read.
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class Subcategories(CamelModel):
+    level1: str = ""
+    level2: str = ""
+    level3: str = ""
+
+
+class Classification(CamelModel):
+    """What a model says a content is; None lists mean unknown (only a summary came back)."""
+
+    summary: str
+    category: str | None = None
+    subcategories: Subcategories | None = None
+    languages: list[str] | None = None
+    topics: list[str] | None = None
+    organizations: list[str] | None = None
+
+
 class Attachment(CamelModel):
     name: str
     mime_type: str
@@ -79,6 +108,11 @@ class Content(CamelModel):
     point_count: int | None = None
     # Its points carry its records' dates (and emails' header points are written).
     points_dated: bool = False
+    classification: Classification | None = None
+    classify_status: ClassifyStatus | None = None
+    classify_reason: str | None = None
+    # The revision the classification was made from.
+    classified_revision: int | None = None
     revision: int = 1
     status: Status
     stage: Stage | None = Stage.PARSE

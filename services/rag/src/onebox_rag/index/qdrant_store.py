@@ -143,6 +143,19 @@ class QdrantStore:
                 wait=True,
             )
 
+    async def replace_kind(
+        self, collection: str, content_id: str, kind: str, points: list[StoredPoint]
+    ) -> None:
+        """A content's points of one kind become `points`."""
+        await self._client.delete(
+            collection,
+            models.FilterSelector(
+                filter=models.Filter(must=[_match("contentId", content_id), _match("kind", kind)])
+            ),
+            wait=True,
+        )
+        await self.upsert(collection, points)
+
     async def delete_content(
         self, collection: str, content_id: str, keep_revision: int | None = None
     ) -> None:

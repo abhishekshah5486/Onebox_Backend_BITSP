@@ -17,7 +17,7 @@ LIST_GROUPS = {GroupType.LIST, GroupType.ORDERED_LIST}
 @dataclass
 class Unit:
     content_id: str
-    kind: str  # "block", "list", "table", "record" or "neighbour"
+    kind: str  # "block", "list", "table", "record", "summary" or "neighbour"
     block_index: int  # the first block it renders
     score: float
     text: str = ""
@@ -50,6 +50,14 @@ def build_units(
         if container is None:
             continue
         block_index, group_index = hit.payload.get("blockIndex"), hit.payload.get("groupIndex")
+        if hit.payload.get("kind") == "summary":
+            # What the whole record is about: no block of it to cite.
+            summary: Hashable = (content_id, "summary")
+            if summary in units:
+                _raise(units[summary], hit.score)
+            else:
+                units[summary] = Unit(content_id, "summary", 0, hit.score, str(hit.payload["text"]))
+            continue
         if hit.payload.get("kind") == "title":
             key: Hashable = (content_id, "record")
             if key in units:

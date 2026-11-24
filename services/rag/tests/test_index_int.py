@@ -50,6 +50,22 @@ def fake_proxy() -> FastAPI:
             "vectors": [vector(t) for t in body["texts"]],
         }
 
+    @app.post("/internal/complete")
+    def complete(body: dict[str, Any]) -> dict[str, Any]:
+        assert body["subject"] == "rag-classify" and body["messages"][0]["role"] == "system"
+        document = body["messages"][1]["content"]
+        assert "File name: census.md" in document and "File type: FILE" in document
+        return {
+            "output": {
+                "summary": "Field report on the albatross colony census for March 2026.",
+                "category": "Research",
+                "subcategories": {"level1": "Field report", "level2": "", "level3": ""},
+                "languages": ["English"],
+                "topics": ["wildlife census"],
+                "organizations": ["Island Trust"],
+            }
+        }
+
     return app
 
 
@@ -73,7 +89,11 @@ def proxy_url() -> Iterator[str]:
 @pytest.fixture
 def client(live_settings: Settings, proxy_url: str) -> Iterator[TestClient]:
     settings = live_settings.model_copy(
-        update={"RAG_LLM_PROXY_URL": proxy_url, "RAG_TABLE_ENRICHMENT": False}
+        update={
+            "RAG_LLM_PROXY_URL": proxy_url,
+            "RAG_TABLE_ENRICHMENT": False,
+            "RAG_CLASSIFY": False,
+        }
     )
     with TestClient(create_app(settings, verifier=fake_verifier())) as test_client:
         while test_client.get("/health/ready").status_code != 200:
@@ -232,7 +252,7 @@ def test_finds_records_by_name_and_names_the_unreadable(
 
 
 def test_says_what_a_search_could_not_see(live_settings: Settings, proxy_url: str) -> None:
-    base = {"RAG_LLM_PROXY_URL": proxy_url, "RAG_TABLE_ENRICHMENT": False}
+    base = {"RAG_LLM_PROXY_URL": proxy_url, "RAG_TABLE_ENRICHMENT": False, "RAG_CLASSIFY": False}
     # Nothing reads uploads: they stay waiting, named by title, counted as unread.
     idle = live_settings.model_copy(update={**base, "RAG_RUN_WORKER": False})
     with TestClient(create_app(idle, verifier=fake_verifier())) as client:
@@ -301,6 +321,7 @@ def test_an_upload_takes_the_date_its_header_states(
             "RAG_LLM_PROXY_URL": proxy_url,
             "RAG_TABLE_ENRICHMENT": False,
             "RAG_CONTENT_DOCUMENT_DATES": "true",
+            "RAG_CLASSIFY": False,
         }
     )
     with TestClient(create_app(settings, verifier=fake_verifier())) as client:
@@ -369,3 +390,34 @@ def test_a_dated_search_lists_matches_its_dates_left_out(client: TestClient) -> 
     assert outside["chunks"][0]["record"]["dates"]["created"].startswith("2024-04-03")
     assert outside["chunks"][0]["record"]["dates"]["origin"] == "lastModified"
     assert "outsideDates" not in search()
+
+
+def test_a_record_is_summarized_and_found_by_its_summary(
+    live_settings: Settings, proxy_url: str
+) -> None:
+    settings = live_settings.model_copy(
+        update={"RAG_LLM_PROXY_URL": proxy_url, "RAG_TABLE_ENRICHMENT": False}
+    )
+    with TestClient(create_app(settings, verifier=fake_verifier())) as client:
+        while client.get("/health/ready").status_code != 200:
+            time.sleep(0.5)
+        [census] = upload(
+            client, ("census.md", b"Nests counted on the north cliffs: 412."), kb="birds", user="u5"
+        )
+
+        def classified(record: Json) -> bool:
+            detail = client.get(f"/rag/records/{record['id']}", headers=bearer("u5")).json()
+            return bool(detail.get("classifyStatus") == "completed")
+
+        wait_for(client, census["id"], classified, user="u5", timeout_s=120)
+        detail = client.get(f"/rag/records/{census['id']}", headers=bearer("u5")).json()
+        assert detail["classification"]["topics"] == ["wildlife census"]
+        assert detail["classification"]["organizations"] == ["Island Trust"]
+
+        # Its text never says "albatross"; its summary does.
+        found = client.post(
+            "/rag/retrieve", json={"query": "albatross"}, headers=bearer("u5")
+        ).json()
+        summary = next(c for c in found["chunks"] if c["kind"] == "summary")
+        assert summary["record"]["recordId"] == census["id"]
+        assert summary["text"].startswith("Field report on the albatross colony census")

@@ -27,6 +27,12 @@ from onebox_rag.models import Content
 from onebox_rag.models.records import DateOrigin
 from onebox_rag.mongo import mongo_client
 from onebox_rag.parsers.ocr.rapid import OcrLimits
+from onebox_rag.pipeline.classify import (
+    ClassifyScheduler,
+    ClassifySettings,
+    ClassifyStage,
+    SummaryPoint,
+)
 from onebox_rag.pipeline.describe import ImageDescriber
 from onebox_rag.pipeline.docling_client import DoclingClient
 from onebox_rag.pipeline.index import IndexStage
@@ -103,6 +109,15 @@ def retrieve_settings_from(settings: Settings) -> RetrieveSettings:
             small_table_cells=settings.RAG_SMALL_TABLE_CELLS,
             title_hit_words=settings.RAG_TITLE_HIT_WORDS,
         ),
+    )
+
+
+def classify_settings_from(settings: Settings) -> ClassifySettings:
+    return ClassifySettings(
+        enabled=settings.RAG_CLASSIFY,
+        on_first_use=settings.RAG_CLASSIFY_ON_FIRST_USE,
+        context_tokens=settings.RAG_CLASSIFY_CONTEXT_TOKENS,
+        max_output_tokens=settings.RAG_CLASSIFY_MAX_OUTPUT_TOKENS,
     )
 
 
@@ -295,10 +310,38 @@ def create_app(
             if store is not None
             else None
         )
+        classify_settings = classify_settings_from(settings)
+        classify_queue = (
+            IngestQueue(settings, settings.RAG_CLASSIFY_QUEUE)
+            if dense is not None and store is not None and settings.RAG_CLASSIFY
+            else None
+        )
+        classify_llm = (
+            LlmClient(
+                settings.RAG_LLM_PROXY_URL, app.state.internal_token, settings.RAG_LLM_TIMEOUT_S
+            )
+            if classify_queue is not None
+            else None
+        )
+        scheduler: ClassifyScheduler | None = None
+        summary_point: SummaryPoint | None = None
         if dense is not None and store is not None:
             upkeep = PointUpkeep(contents, records, store, dense)
+            summary_point = SummaryPoint(dense, store, split_settings_from(settings))
+            if classify_queue is not None:
+                scheduler = ClassifyScheduler(
+                    contents, classify_queue, summary_point, classify_settings
+                )
             app.state.retriever = Retriever(
-                records, contents, blobs, dense, store, retrieve_settings_from(settings)
+                records,
+                contents,
+                blobs,
+                dense,
+                store,
+                retrieve_settings_from(settings),
+                returned=scheduler.first_use
+                if scheduler is not None and classify_settings.on_first_use
+                else None,
             )
         mail = (
             MailSource(
@@ -326,10 +369,29 @@ def create_app(
                     split_settings_from(settings),
                     upkeep,
                     content_dates=content_dates_from(settings),
+                    classify=scheduler.after_index if scheduler is not None else None,
                 ),
                 settings.RAG_INDEX_CONCURRENCY,
             )
             if dense is not None and store is not None and settings.RAG_RUN_WORKER
+            else None
+        )
+        classifier = (
+            stage_worker(
+                settings,
+                settings.RAG_CLASSIFY_QUEUE,
+                ClassifyStage(
+                    contents,
+                    records,
+                    blobs,
+                    classify_llm,
+                    summary_point,
+                    classify_settings,
+                    dated=upkeep.sync if upkeep is not None else None,
+                ),
+                settings.RAG_CLASSIFY_CONCURRENCY,
+            )
+            if classify_llm is not None and summary_point is not None and settings.RAG_RUN_WORKER
             else None
         )
         # Points indexed before they carried dates, or whose upkeep failed, catch up.
@@ -348,6 +410,12 @@ def create_app(
                 await worker.close()
             if indexer is not None:
                 await indexer.close()
+            if classifier is not None:
+                await classifier.close()
+            if classify_queue is not None:
+                await classify_queue.close()
+            if classify_llm is not None:
+                await classify_llm.close()
             if mail_reader is not None:
                 await mail_reader.close()
             if mail is not None:

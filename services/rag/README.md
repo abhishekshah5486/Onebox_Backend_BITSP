@@ -189,6 +189,20 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   its opening and a note to read the rest; body hits inside what it shows fold into it. A
   name search above a cosine floor (`RAG_TITLE_MIN_SCORE`, 0.45) lists records whose content
   isn't searchable yet under `unindexed`.
+- **Summaries.** Once a content is searchable, its `rag-classify` job sends it to the user's
+  model through llm-proxy (`summarize`, cached and billed): a header with the record's name and
+  type (`FILE` or `MAIL`), then its text blocks, table-row sentences and code in order, up to
+  85% of `RAG_CLASSIFY_CONTEXT_TOKENS` (128,000) counted with cl100k. The instructions go
+  alone as the system message, so every call shares a cached prefix. The answer is a
+  category, subcategories, languages, topics, organizations and a retrieval-facing summary
+  whose first sentence states the document's type, subject, parties and period (under 400
+  words). When no answer fits that schema, a plain summary is asked for instead; when the model
+  is down the job retries, and out of credits it gives up. The summary becomes a `summary`
+  point of the content (found as `kind: "summary"`, cited as the whole record); the rest is
+  shown on `GET /rag/records/{id}` with `classifyStatus`. Every content is handled the same
+  way, mail or file; a .log or .cfg is not sent, nor content with no text.
+  `RAG_CLASSIFY=false` turns it off; `RAG_CLASSIFY_ON_FIRST_USE` waits until a search first
+  returns the content. A failure never touches the record's own status.
 - **Mail.** The mail service follows its stored mail (a MongoDB change stream: every email
   once, then each change) and puts a job per email on `rag-mail`; RAG reads the email and its
   attachments back from mail's `/internal` routes. An email is one record whichever folders

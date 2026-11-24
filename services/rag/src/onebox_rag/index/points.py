@@ -22,6 +22,7 @@ class PointKind(StrEnum):
     WINDOW = "window"  # part of a block too long to embed whole
     TABLE = "table"  # a table's summary and columns
     TITLE = "title"  # a record's name, or an email's header
+    SUMMARY = "summary"  # what a model says the whole content is about
 
 
 @dataclass(frozen=True)

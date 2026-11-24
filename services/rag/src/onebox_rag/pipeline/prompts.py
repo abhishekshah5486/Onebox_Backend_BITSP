@@ -185,3 +185,76 @@ Respond with ONLY a JSON object with one entry per row, with each key copied fro
         {{"key": "<key of the next row>", "description": "Description of that row"}}
     ]
 }}"""
+
+
+DOCUMENT_CLASSIFY_PROMPT = """
+# Task:
+You are processing a document of an individual or an enterprise. Your task is to classify the document categories, subcategories, languages, and topics, to list the organizations it names, and to write a summary that a retrieval system will use to decide whether this document is relevant to a user's query.
+Instructions must be strictly followed.
+
+# File Metadata:
+The file name and type are given with the document content. Use the file metadata as supporting evidence — a name like "invoice_2024_ACME.pdf" or a type of "spreadsheet" can help disambiguate an otherwise ambiguous category. The document content is still the primary source of truth: never infer content, topics, or summary details from the filename alone.
+
+# Analysis Guidelines:
+1. Document Type Categories & Subcategories:
+   - `category`: Broad classification such as "Security", "Compliance", or "Technical Documentation".
+   - `subcategories`:
+     - `level1`: General sub-area under the main category.
+     - `level2`: A more specific focus within level 1.
+     - `level3`: The most detailed classification (if available).
+   - Leave levels blank (`""`) if no further depth exists.
+   - Do not provide comma-separated values for subcategories
+
+   Example:
+      Category: "Legal"
+      Sub-category Level 1: "Contract"
+      Sub-category Level 2: "Non Disclosure Agreement"
+      Sub-category Level 3: "Confidentiality Agreement"
+
+2. Languages:
+   - List the natural (human) languages the document is written in
+   - Programming languages, markup and data formats (Python, SQL, HTML, JSON, YAML) are not languages here
+   - Use full ISO language names (e.g., "English", "French", "German").
+
+3. **Topics**:
+   - A topic is a **reusable subject** a reader would look for across many documents ("payment terms", "access reviews", "data retention", "GDPR", "SLA"): a short noun phrase, lowercase except acronyms.
+   - **Never** a person, company or other organization, document title, date, amount, or ticket, invoice or contract number: names belong in the summary. Standards, regulations, technologies and methods are fine.
+   - Prefer the general term over a phrase only this document uses, and avoid duplicates or near-duplicates.
+   - Provide **2 to 5** topics: as few as cover the document, usually 2 or 3.
+
+4. **Organizations**:
+   - List the organizations the document names: companies, customers, vendors, partners, employers, investors, regulators, government bodies, universities, non-profits.
+   - Copy each name as written ("Acme Corp", "University of Oxford"). List each organization once, even if it appears under several spellings; prefer its fullest name.
+   - Do NOT list people, products or services (a product named after its maker counts as the product, e.g. "Jira" is not "Atlassian"), teams or departments, locations, generic words ("the client", "the vendor"), or the application the document came from (an email is not about "Gmail").
+   - Include the author's own organization only if the document names it explicitly.
+   - At most 10. Leave the list empty if the document names none.
+
+5. **Summary**:
+   - This is the single most important field. A retrieval system shows only the FIRST ~600 CHARACTERS of this summary to a model deciding whether to fetch the full document — everything after that point is a bonus, not a guarantee it will be read.
+   - **Sentence 1 is load-bearing.** It must state, in this order: document type, primary subject, principal parties or owning team, and time period or effective date. It must stand alone as a complete relevance judgment, since a reader may see nothing else.
+   - **Length is tiered to document depth, not fixed:**
+     - Thin or sparse documents (a short note, a single form, a fragment): 3 to 5 sentences is enough. Do not pad.
+     - Typical documents: aim for no more than 300 words.
+     - Never exceed 400 words, regardless of document length.
+   - **Density over prose.** After sentence 1, prioritize concrete, searchable facts over connective narration:
+     - Named entities verbatim: people, organizations, teams, products, systems, projects, vendors, locations. Do not paraphrase proper nouns. When the document gives both an acronym and its expansion, keep both.
+     - Concrete identifiers and figures: amounts with currency, dates, version numbers, ticket/contract/invoice numbers, percentages, quantities.
+     - The specific questions this document can answer, and — when evident — the scope it does NOT cover.
+   - Write in English; keep proper nouns in their original language and script.
+   - **Forbidden:** opening filler ("This document provides...", "The purpose of this document is..."), meta commentary about the document or your own analysis, recommendations, opinions, and any claim not directly supported by the content shown.
+   - If the content is too sparse or fragmentary to say anything substantive, write a short, honest summary of only what is verifiably present rather than inventing detail to hit a length target.
+
+# Output:
+Return a single structured object matching the required schema. Do not include any additional commentary outside the schema fields.
+"""
+
+DOCUMENT_RECORD_HEADER = """# File Metadata:
+File name: {record_name}
+File type: {record_type}
+"""
+
+# Asked when the structured answer never fit its schema; the instructions above follow it.
+FALLBACK_SUMMARY_PROMPT = (
+    "Provide a concise summary of the following document/record. "
+    "Return only the summary text, nothing else."
+)

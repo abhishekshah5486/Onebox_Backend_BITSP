@@ -3,7 +3,7 @@ grouped into units, neighbouring paragraphs in the room left."""
 
 import asyncio
 import logging
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -124,7 +124,10 @@ class Retriever:
         dense: DenseEmbedder,
         store: QdrantStore,
         settings: RetrieveSettings,
+        # Contents a search returned, for those waiting on their first use to be classified.
+        returned: Callable[[list[Content]], Awaitable[None]] | None = None,
     ) -> None:
+        self._returned = returned
         self._records, self._contents, self._blobs = records, contents, blobs
         self._dense, self._store, self._settings = dense, store, settings
 
@@ -283,6 +286,11 @@ class Retriever:
             dates=dates,
         )
         contents, containers = await self._load(hits)
+        if self._returned is not None:
+            try:
+                await self._returned(list(contents.values()))
+            except Exception:
+                logger.warning("first-use classify not queued", exc_info=True)
         # Points of a revision being replaced are skipped: their block indices are its own.
         hits = [h for h in hits if _current(h, contents)]
         if cut.enabled:
@@ -426,13 +434,13 @@ def _chunk(
     unit: Unit, record: Record, container: BlocksContainer, parent: Record | None = None
 ) -> dict[str, Any]:
     block = container.blocks[unit.block_index] if unit.block_index < len(container.blocks) else None
-    cite = citation_of(block) if block is not None else {}
+    cite = citation_of(block) if block is not None and unit.kind != "summary" else {}
     if unit.kind == "table" and unit.group_index is not None and not cite:
         group_cite = container.block_groups[unit.group_index].citation_metadata
         if group_cite is not None:
             cite = {"page": group_cite.page_number, "sheet": group_cite.sheet_name}
     where = unit.group_index if unit.kind in {"table", "list"} else unit.block_index
-    if unit.kind == "record":
+    if unit.kind in {"record", "summary"}:
         where = 0
     return {
         # The same for the same passage across calls, so callers can dedupe and cache.
