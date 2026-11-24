@@ -48,6 +48,13 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
   names are unique per user and folder names per parent, trimmed and in any case; folder names
   have no `/` or `\`, and folders nest at most 20 deep. Uploading to an id with no collection
   (e.g. `default`) makes one, as uploads did before collections.
+- **Versions, details and stats.** `POST /rag/records/{id}/replace` (multipart `file`, optional
+  `lastModified`) reads a new version of an uploaded file into the same record (`version` + 1;
+  the same bytes change nothing, bytes another record of the collection holds are refused).
+  `GET /rag/records/{id}` adds its `collection`, `folderPath`, `permissions` and `stageStates`
+  (parse, index, classify). `GET /rag/collections/{id}/stats` counts its records per status,
+  type and summary state with their size; `POST /rag/collections/{id}/reindex` (`statuses`,
+  `folderId`) reads them again. `GET /rag/limits` gives the largest file accepted.
 - **Knowledge hub.** `GET /rag/hub/nodes` lists the collections and mailboxes;
   `GET /rag/hub/nodes/{collection|folder|mailbox|record}/{id}` lists what is in one (folders
   first, then its files, or an email's attachments). With any filter (`q`, `recordTypes`

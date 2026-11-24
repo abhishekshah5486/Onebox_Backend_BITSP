@@ -93,7 +93,7 @@ class Organizer:
         await self.folders.delete_kb(user_id, kb.id)
         await self.kbs.delete(user_id, kb.id)
 
-    async def _upload(self, user_id: str, record_id: str) -> Record:
+    async def uploaded(self, user_id: str, record_id: str) -> Record:
         record = await self._records.get(user_id, record_id)
         if record is None:
             raise NotFoundError("Record not found")
@@ -109,7 +109,7 @@ class Organizer:
             raise ConflictError(f"A file named '{name}' already exists in {where}")
 
     async def rename_record(self, user_id: str, record_id: str, name: str) -> Record:
-        record = await self._upload(user_id, record_id)
+        record = await self.uploaded(user_id, record_id)
         name = clean_name(name, folder=True)
         await self._clash(record, record.folder_id, name)
         # Its title point carries the name, so it is written again.
@@ -120,7 +120,7 @@ class Organizer:
     async def move_record(
         self, user_id: str, kb_id: str, record_id: str, folder_id: str | None
     ) -> Record:
-        record = await self._upload(user_id, record_id)
+        record = await self.uploaded(user_id, record_id)
         if record.source_id != kb_id:
             raise NotFoundError("Record not found")
         if folder_id is not None:

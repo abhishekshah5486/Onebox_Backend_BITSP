@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, BinaryIO
 
+from onebox_rag.errors import ConflictError
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.inspect import Inspection, Limits, inspect_file
 from onebox_rag.ingest.queue import IngestQueue
@@ -325,6 +326,57 @@ class Ingestor:
             await self._notify(cid, [], [item.id for item in doomed if item.content_id == cid])
             await self.collect(cid)
         return True
+
+    async def replace(
+        self,
+        record: Record,
+        stream: BinaryIO,
+        declared_mime_type: str | None,
+        modified_at: datetime | None = None,
+    ) -> Record:
+        """A new version of an uploaded file: the record keeps its id, name and place and reads
+        the new bytes; the old content goes once nothing else holds it."""
+        content = await self.store(record.user_id, stream, record.name, declared_mime_type)
+        if content.id == record.content_id:
+            return record
+        holder = await self._records.by_external_id(
+            record.user_id, record.source_type, record.source_id, content.sha256
+        )
+        if holder is not None and holder.id != record.id:
+            await self.collect(content.id)
+            raise ConflictError(f"That file is already in this collection as '{holder.name}'")
+        now = self._now()
+        old = record.content_id
+        for child in await self._records.children(record.user_id, record.id):
+            await self.delete(record.user_id, child.id)
+        updated = await self._records.update(
+            record.id,
+            now,
+            content_id=content.id,
+            external_id=content.sha256,
+            sha256=content.sha256,
+            mime_type=content.mime_type,
+            declared_mime_type=declared_mime_type,
+            size_bytes=content.size_bytes,
+            status=content.status,
+            stage=content.stage,
+            reason=content.reason,
+            version=record.version + 1,
+            titled=False,
+            source_modified_at=modified_at or now,
+        )
+        saved = updated or record
+        await self._notify(old, [], [record.id])
+        await self.collect(old)
+        latest = await self._contents.get(content.id)
+        if latest is not None:
+            # It may have been read meanwhile; the worker only updates records it saw.
+            state = {"status": latest.status, "stage": latest.stage, "reason": latest.reason}
+            if state != {"status": saved.status, "stage": saved.stage, "reason": saved.reason}:
+                saved = await self._records.update(saved.id, self._now(), **state) or saved
+            await self.link_attachments(saved, latest)
+        await self._notify(content.id, [saved.id], [])
+        return saved
 
     async def renamed(self, record: Record) -> None:
         """Writes its title point again, now (the sweep would, later)."""

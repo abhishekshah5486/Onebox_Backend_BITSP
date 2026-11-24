@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from pydantic import Field
 
 from onebox_rag.auth import CurrentUser
@@ -10,9 +10,10 @@ from onebox_rag.errors import NotFoundError
 from onebox_rag.ingest.hub_listing import HubLister, HubQuery
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.organize import Organizer
+from onebox_rag.ingest.records import RecordStore
 from onebox_rag.models.base import CamelModel
 from onebox_rag.models.hub import Folder, KnowledgeBase
-from onebox_rag.routes import record_json
+from onebox_rag.routes import record_json, upload_info
 
 
 class NameBody(CamelModel):
@@ -26,6 +27,12 @@ class FolderBody(NameBody):
 class MoveBody(CamelModel):
     collection_id: str
     # None: the top of the collection.
+    folder_id: str | None = None
+
+
+class ReindexScope(CamelModel):
+    # Only records in these states (e.g. FAILED); none: every record.
+    statuses: list[str] | None = Field(default=None, max_length=20)
     folder_id: str | None = None
 
 
@@ -177,6 +184,62 @@ def hub_router() -> APIRouter:
             user.user_id, body.collection_id, record_id, body.folder_id
         )
         return record_json(record)
+
+    @router.get("/limits")
+    async def limits(request: Request, user: CurrentUser) -> dict[str, Any]:
+        settings = request.app.state.settings
+        return {
+            "maxFileSizeBytes": settings.RAG_MAX_FILE_MB * 1024 * 1024,
+            "maxFilesPerUpload": 100,
+        }
+
+    @router.post("/records/{record_id}/replace")
+    async def replace_record(
+        request: Request,
+        user: CurrentUser,
+        record_id: str,
+        file: Annotated[UploadFile, File()],
+        last_modified: Annotated[float | None, Form(alias="lastModified")] = None,
+    ) -> dict[str, Any]:
+        """A new version of an uploaded file, read again from the start."""
+        record = await _organizer(request).uploaded(user.user_id, record_id)
+        ingestor: Ingestor = request.app.state.ingestor
+        info = upload_info(last_modified)
+        replaced = await ingestor.replace(
+            record, file.file, file.content_type, info.modified_at if info else None
+        )
+        return record_json(replaced)
+
+    @router.get("/collections/{kb_id}/stats")
+    async def collection_stats(request: Request, user: CurrentUser, kb_id: str) -> dict[str, Any]:
+        """How its records stand: per state, per type, summaries, and their size."""
+        organizer = _organizer(request)
+        kb = await organizer.kbs.require(user.user_id, kb_id)
+        records: RecordStore = request.app.state.records
+        stats = await records.stats(user.user_id, {"sourceType": "upload", "sourceId": kb.id})
+        return {"collection": kb_json(kb), **stats}
+
+    @router.post("/collections/{kb_id}/reindex")
+    async def reindex_collection(
+        request: Request, user: CurrentUser, kb_id: str, body: ReindexScope
+    ) -> dict[str, Any]:
+        """Reads again the records of a collection (or a folder and those below it), optionally
+        only those in some states, e.g. the failed ones."""
+        organizer = _organizer(request)
+        kb = await organizer.kbs.require(user.user_id, kb_id)
+        query: dict[str, Any] = {"sourceType": "upload", "sourceId": kb.id}
+        if body.statuses:
+            query["status"] = {"$in": [s.lower() for s in body.statuses]}
+        if body.folder_id:
+            folder = await organizer.folders.require(user.user_id, kb.id, body.folder_id)
+            query["folderId"] = {
+                "$in": [f.id for f in await organizer.folders.subtree(user.user_id, folder)]
+            }
+        records: RecordStore = request.app.state.records
+        ids = await records.ids_matching(user.user_id, query)
+        ingestor: Ingestor = request.app.state.ingestor
+        queued, skipped = await ingestor.reindex(user.user_id, ids) if ids else ([], [])
+        return {"queued": queued, "skipped": skipped}
 
     @router.post("/records/trash")
     async def trash_records(request: Request, user: CurrentUser, body: IdsBody) -> dict[str, Any]:

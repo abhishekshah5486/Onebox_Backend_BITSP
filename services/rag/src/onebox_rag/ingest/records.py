@@ -422,6 +422,76 @@ class RecordStore:
         cursor = self._records.find({"userId": user_id, "folderId": {"$in": folder_ids}})
         return [Record.model_validate(d) async for d in cursor]
 
+    async def stats(self, user_id: str, query: Doc) -> dict[str, Any]:
+        """How many records pass the query: in all, per status, per type and per summary state,
+        and their size."""
+        cursor = await self._records.aggregate(
+            [
+                {"$match": {"userId": user_id, "deletedAt": None, **query}},
+                {
+                    "$lookup": {
+                        "from": "contents",
+                        "localField": "contentId",
+                        "foreignField": "_id",
+                        "as": "c",
+                        "pipeline": [{"$project": {"classifyStatus": 1}}],
+                    }
+                },
+                {
+                    "$facet": {
+                        "statuses": [{"$group": {"_id": "$status", "n": {"$sum": 1}}}],
+                        "types": [
+                            {
+                                "$group": {
+                                    "_id": {
+                                        "$cond": [
+                                            {
+                                                "$and": [
+                                                    {"$eq": ["$sourceType", "mail"]},
+                                                    {"$eq": ["$parentId", None]},
+                                                ]
+                                            },
+                                            "MAIL",
+                                            "FILE",
+                                        ]
+                                    },
+                                    "n": {"$sum": 1},
+                                }
+                            }
+                        ],
+                        "summaries": [
+                            {
+                                "$group": {
+                                    "_id": {"$first": "$c.classifyStatus"},
+                                    "n": {"$sum": 1},
+                                }
+                            }
+                        ],
+                        "size": [{"$group": {"_id": None, "bytes": {"$sum": "$sizeBytes"}}}],
+                    }
+                },
+            ]
+        )
+        [row] = [r async for r in cursor]
+
+        def counts(name: str) -> dict[str, int]:
+            return {str(g["_id"] or "not_started"): int(g["n"]) for g in row[name]}
+
+        statuses = counts("statuses")
+        return {
+            "total": sum(statuses.values()),
+            "statuses": {k.upper(): v for k, v in statuses.items()},
+            "recordTypes": counts("types"),
+            "summaries": {k.upper(): v for k, v in counts("summaries").items()},
+            "sizeBytes": int(row["size"][0]["bytes"]) if row["size"] else 0,
+        }
+
+    async def ids_matching(self, user_id: str, query: Doc, limit: int = 1000) -> list[str]:
+        cursor = self._records.find(
+            {"userId": user_id, "deletedAt": None, "parentId": None, **query}, {"_id": 1}
+        ).limit(limit)
+        return [str(d["_id"]) async for d in cursor]
+
     async def ids_in_source(self, user_id: str, source_type: str, source_id: str) -> list[str]:
         query = {
             "userId": user_id,

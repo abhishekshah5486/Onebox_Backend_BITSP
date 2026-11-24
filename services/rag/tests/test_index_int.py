@@ -614,3 +614,59 @@ def test_trashed_records_leave_search_and_renamed_ones_are_found_by_their_name(
     ).json()["chunks"]
     titles = [c["text"] for c in chunks if c["record"]["recordId"] == plan["id"]]
     assert any("Lighthouse rota.md" in t for t in titles)
+
+
+def test_a_replaced_file_is_searched_by_its_new_text_and_its_details_say_where_it_is(
+    client: TestClient,
+) -> None:
+    user = bearer("u1")
+    kb = client.post("/rag/collections", json={"name": "Versions"}, headers=user).json()["id"]
+    [notes] = upload(client, ("notes.md", b"The ferry leaves at nine."), kb=kb)
+    wait_for(client, notes["id"], completed, timeout_s=120)
+
+    details = client.get(f"/rag/records/{notes['id']}", headers=user).json()
+    assert details["collection"] == {"id": kb, "name": "Versions"}
+    assert details["permissions"][0]["relationship"] == "OWNER"
+    stages = {s["stage"]: s["status"] for s in details["stageStates"]}
+    assert stages["parse"] == "COMPLETED" and stages["index"] == "COMPLETED"
+    assert details["version"] == 1 and details["blockCount"] >= 1
+
+    replaced = client.post(
+        f"/rag/records/{notes['id']}/replace",
+        files={
+            "file": ("notes.md", b"The lighthouse keeper rows across at dawn.", "text/markdown")
+        },
+        headers=user,
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["version"] == 2 and replaced.json()["id"] == notes["id"]
+    wait_for(client, notes["id"], completed, timeout_s=120)
+
+    def texts(query: str) -> list[str]:
+        chunks = client.post(
+            "/rag/retrieve", json={"query": query, "sourceIds": [kb]}, headers=user
+        ).json()["chunks"]
+        return [c["text"] for c in chunks if c["record"]["recordId"] == notes["id"]]
+
+    assert any("lighthouse keeper" in t for t in texts("lighthouse keeper"))
+    assert not any("ferry leaves" in t for t in texts("ferry nine"))
+
+    [other] = upload(client, ("other.md", b"Gulls nest on the cliff."), kb=kb)
+    clash = client.post(
+        f"/rag/records/{other['id']}/replace",
+        files={"file": ("x.md", b"The lighthouse keeper rows across at dawn.", "text/markdown")},
+        headers=user,
+    )
+    assert clash.status_code == 409
+
+    wait_for(client, other["id"], completed, timeout_s=120)
+    stats = client.get(f"/rag/collections/{kb}/stats", headers=user).json()
+    assert stats["total"] == 2 and stats["statuses"] == {"COMPLETED": 2}
+    assert stats["recordTypes"] == {"FILE": 2}
+    again = client.post(
+        f"/rag/collections/{kb}/reindex", json={"statuses": ["FAILED"]}, headers=user
+    ).json()
+    assert again == {"queued": [], "skipped": []}
+    everything = client.post(f"/rag/collections/{kb}/reindex", json={}, headers=user).json()
+    assert sorted(everything["queued"]) == sorted([notes["id"], other["id"]])
+    assert client.get("/rag/limits", headers=user).json()["maxFileSizeBytes"] > 0

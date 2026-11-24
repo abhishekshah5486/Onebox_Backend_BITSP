@@ -12,6 +12,7 @@ from onebox_rag.errors import NotFoundError, UnavailableError, ValidationError
 from onebox_rag.index.embed import EmbeddingUnavailableError
 from onebox_rag.index.qdrant_store import SearchIndexError
 from onebox_rag.ingest.blobs import BlobStore
+from onebox_rag.ingest.details import content_facts, stage_states
 from onebox_rag.ingest.ingestor import Ingestor, ItemInfo, Source
 from onebox_rag.ingest.records import ContentStore, RecordFilter, RecordSort, RecordStore
 from onebox_rag.models import Record, SourceType, Status
@@ -147,7 +148,7 @@ async def _read(
     return {**head, **read_page(container, start, size)}
 
 
-def _upload_info(last_modified_ms: float | None) -> ItemInfo | None:
+def upload_info(last_modified_ms: float | None) -> ItemInfo | None:
     if last_modified_ms is None or not math.isfinite(last_modified_ms) or last_modified_ms <= 0:
         return None
     try:
@@ -201,7 +202,7 @@ def rag_router() -> APIRouter:
                 or "untitled",
                 declared_mime_type=upload.content_type,
                 stream=upload.file,
-                info=_upload_info(last_modified[position] if last_modified else None),
+                info=upload_info(last_modified[position] if last_modified else None),
             )
             results.append(record_json(done.record, duplicate=done.duplicate))
         return {"records": results}
@@ -313,17 +314,32 @@ def rag_router() -> APIRouter:
         contents: ContentStore = request.app.state.contents
         content = await contents.get(record.content_id)
         # What a model says the content is about, once it has read it.
-        classified = (
+        details: dict[str, Any] = (
             {
                 "classifyStatus": content.classify_status,
                 "classification": content.classification.model_dump(by_alias=True, mode="json")
                 if content.classification is not None
                 else None,
+                "stageStates": stage_states(content),
+                **content_facts(content),
             }
             if content is not None
             else {}
         )
-        return record_json(record, **classified)
+        organizer = request.app.state.organizer
+        if record.source_type == SourceType.UPLOAD:
+            kb = await organizer.kbs.get(user.user_id, record.source_id)
+            folder = (
+                await organizer.folders.get(user.user_id, record.folder_id)
+                if record.folder_id
+                else None
+            )
+            path = await organizer.folders.path(user.user_id, folder) if folder else []
+            details["collection"] = {"id": kb.id, "name": kb.name} if kb else None
+            details["folderPath"] = [{"id": f.id, "name": f.name} for f in path]
+        # One user's records: theirs alone (sharing comes with workspaces).
+        details["permissions"] = [{"id": user.user_id, "relationship": "OWNER", "type": "USER"}]
+        return record_json(record, **details)
 
     @router.get("/records/{record_id}/file")
     async def get_file(request: Request, user: CurrentUser, record_id: str) -> Response:
