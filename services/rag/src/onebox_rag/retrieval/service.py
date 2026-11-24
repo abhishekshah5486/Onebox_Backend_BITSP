@@ -140,9 +140,14 @@ class Retriever:
         scope: Scope,
         max_per_record: int | None = None,
         dates: DateBounds | None = None,
+        # The user's own choices, over the server's.
+        outside_dates: bool | None = None,
+        uploads_undated: bool | None = None,
     ) -> Retrieved:
         dates = dates if dates is not None and dates.given() else None
-        if dates is not None and self._settings.uploads_undated:
+        net = self._settings.outside_dates if outside_dates is None else outside_dates
+        no_upper = self._settings.uploads_undated if uploads_undated is None else uploads_undated
+        if dates is not None and no_upper:
             dates = replace(dates, uploads_undated=True)
         notices = await self._notices(user_id, scope, dates)
         content_ids = None
@@ -165,7 +170,7 @@ class Retriever:
             asyncio.create_task(
                 self._quietly(self._chunks(*search, None, self._settings.outside_dates_limit, None))
             )
-            if dates is not None and self._settings.outside_dates
+            if dates is not None and net
             else None
         )
         try:

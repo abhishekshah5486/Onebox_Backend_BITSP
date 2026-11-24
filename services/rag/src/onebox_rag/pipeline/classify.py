@@ -33,6 +33,7 @@ from onebox_rag.pipeline.prompts import (
     DOCUMENT_RECORD_HEADER,
     FALLBACK_SUMMARY_PROMPT,
 )
+from onebox_rag.preferences import RagPreferences
 
 logger = logging.getLogger("onebox_rag.classify")
 
@@ -365,9 +366,11 @@ class ClassifyScheduler:
         point: SummaryPoint,
         settings: ClassifySettings,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        # The user's own choice: right away, on first use, or never.
+        prefs: Callable[[str], Awaitable["RagPreferences"]] | None = None,
     ) -> None:
         self._contents, self._queue, self._point = contents, queue, point
-        self._settings, self._now = settings, now
+        self._settings, self._now, self._prefs = settings, now, prefs
 
     async def after_index(self, indexed: Content) -> None:
         content = await self._contents.get(indexed.id)
@@ -377,6 +380,8 @@ class ClassifyScheduler:
             await self._point.write(content, content.classification.summary)
             return
         status = self._settings.status_after_index()
+        if self._prefs is not None and self._settings.enabled:
+            status = (await self._prefs(content.user_id)).indexing.classify_status()
         reason = "switched off" if status == ClassifyStatus.SKIPPED else None
         await self._contents.update(
             content.id, self._now(), classify_status=status, classify_reason=reason

@@ -24,6 +24,7 @@ from onebox_rag.models import TERMINAL, Content, SourceType, Stage, Status
 from onebox_rag.models.blocks import BlocksContainer
 from onebox_rag.models.records import DateOrigin, EmbedMarker
 from onebox_rag.pipeline.parse import decode_blocks
+from onebox_rag.preferences import RagPreferences
 
 logger = logging.getLogger("onebox_rag.index")
 
@@ -48,6 +49,8 @@ class IndexStage:
         # Classify (and summarize) once searchable: queues it, or waits for its first search.
         classify: Callable[[Content], Awaitable[None]] | None = None,
         # Points embedded and written together, each batch durable before the next.
+        # The user's own settings (chunk windows, header dates), over the ones given here.
+        prefs: Callable[[str], Awaitable[RagPreferences]] | None = None,
         write_batch: int = 512,
         # Points of a content listed per run by the stray sweep (0: off).
         stray_max_points: int = 100_000,
@@ -58,6 +61,7 @@ class IndexStage:
         self._sweep_offsets: dict[str, str] = {}
         self._contents, self._records, self._blobs = contents, records, blobs
         self._content_dates = content_dates
+        self._prefs = prefs
         self._classify = classify
         self._upkeep = upkeep
         self._dense, self._store, self._split, self._now = dense, store, split, now
@@ -77,8 +81,12 @@ class IndexStage:
         try:
             container = decode_blocks(await self._blobs.get(content.blocks_key))
             model = await self._dense.model_for(content.user_id)
-            window = self._split.window_for(model.id, model.context_tokens)
-            texts = await asyncio.to_thread(point_texts, container, self._split, window)
+            split, content_dates = self._split, self._content_dates
+            if self._prefs is not None:
+                indexing = (await self._prefs(content.user_id)).indexing
+                split, content_dates = indexing.split(split), indexing.content_dates()
+            window = split.window_for(model.id, model.context_tokens)
+            texts = await asyncio.to_thread(point_texts, container, split, window)
             collection = await self._store.ensure_collection(model)
             wanted = await self._write(content, model, collection, texts)
             await self._store.delete_content(collection, content.id, keep_revision=revision)
@@ -115,7 +123,7 @@ class IndexStage:
         )
         redated: list[str] = []
         try:
-            redated = await self._date_uploads(content_id, container)
+            redated = await self._date_uploads(content_id, container, content_dates)
         except Exception:
             logger.warning("content dates failed", extra={"contentId": content_id}, exc_info=True)
         if self._classify is not None:
@@ -223,7 +231,9 @@ class IndexStage:
             for t, vector, terms in zip(texts, dense, sparse, strict=True)
         ]
 
-    async def _date_uploads(self, content_id: str, container: BlocksContainer) -> list[str]:
+    async def _date_uploads(
+        self, content_id: str, container: BlocksContainer, replace: frozenset[DateOrigin]
+    ) -> list[str]:
         """Uploads of this content take the dates its header states, or get their own back;
         returns the records whose dates changed."""
         uploads = [
@@ -231,12 +241,12 @@ class IndexStage:
             for r in await self._records.for_content(content_id)
             if r.source_type == SourceType.UPLOAD
         ]
-        if not self._content_dates and all(r.date_origin != DateOrigin.CONTENT for r in uploads):
+        if not replace and all(r.date_origin != DateOrigin.CONTENT for r in uploads):
             return []
         changed = []
         for record in uploads:
             stated = find_document_dates(container, uploaded_at=record.created_at)
-            fields = plan_dates(record, stated, self._content_dates)
+            fields = plan_dates(record, stated, replace)
             if fields is not None and await self._records.update(record.id, self._now(), **fields):
                 changed.append(record.id)
         return changed

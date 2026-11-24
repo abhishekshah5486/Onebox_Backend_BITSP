@@ -44,6 +44,7 @@ from onebox_rag.pipeline.routing import PdfLimits
 from onebox_rag.pipeline.tables import TableEnricher, TableSettings
 from onebox_rag.pipeline.vision import VisionClient, VisionSettings
 from onebox_rag.pipeline.worker import mail_worker, parse_worker, stage_worker
+from onebox_rag.preferences import PreferenceStore, server_defaults
 from onebox_rag.retrieval.service import RecordCut, Retriever, RetrieveSettings
 from onebox_rag.retrieval.units import UnitSettings
 from onebox_rag.routes import internal_router, rag_router
@@ -223,6 +224,8 @@ def create_app(
         )
         app.state.records, app.state.contents, app.state.blobs = records, contents, blobs
         app.state.ingestor = ingestor
+        preferences = PreferenceStore(mongo[settings.MONGO_DB], server_defaults(settings))
+        app.state.preferences = preferences
 
         async def mongodb() -> object:
             return await mongo.admin.command("ping")
@@ -330,8 +333,13 @@ def create_app(
             summary_point = SummaryPoint(dense, store, split_settings_from(settings))
             if classify_queue is not None:
                 scheduler = ClassifyScheduler(
-                    contents, classify_queue, summary_point, classify_settings
+                    contents,
+                    classify_queue,
+                    summary_point,
+                    classify_settings,
+                    prefs=preferences.get,
                 )
+            app.state.summaries_available = scheduler is not None
             app.state.retriever = Retriever(
                 records,
                 contents,
@@ -339,9 +347,8 @@ def create_app(
                 dense,
                 store,
                 retrieve_settings_from(settings),
-                returned=scheduler.first_use
-                if scheduler is not None and classify_settings.on_first_use
-                else None,
+                # Any user may choose to summarize on first use.
+                returned=scheduler.first_use if scheduler is not None else None,
             )
         mail = (
             MailSource(
@@ -370,6 +377,7 @@ def create_app(
                     upkeep,
                     content_dates=content_dates_from(settings),
                     classify=scheduler.after_index if scheduler is not None else None,
+                    prefs=preferences.get,
                     write_batch=settings.RAG_INDEX_WRITE_BATCH,
                     stray_max_points=settings.RAG_STRAY_SWEEP_MAX_POINTS,
                 ),

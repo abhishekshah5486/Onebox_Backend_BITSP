@@ -1,4 +1,5 @@
 import math
+import urllib.parse
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
@@ -16,11 +17,12 @@ from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Record, SourceType, Status
 from onebox_rag.models.records import DateOrigin
 from onebox_rag.pipeline.parse import decode_blocks
+from onebox_rag.preferences import PreferenceStore, RagPreferences
 from onebox_rag.retrieval.read import FocusSettings, focused_read, read_page
 from onebox_rag.retrieval.service import OUTSIDE_DATES_NOTE, Retriever, Scope
 
 SOURCE_ID = r"^[A-Za-z0-9_-]{1,64}$"
-DEFAULT_RETRIEVE_LIMIT, MAX_RETRIEVE_LIMIT = 8, 50
+MAX_RETRIEVE_LIMIT = 50
 
 
 INDEX_TIMEOUT = (
@@ -37,7 +39,8 @@ class RetrieveQuery(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     query: str = Field(min_length=1, max_length=4000)
-    limit: int = Field(default=DEFAULT_RETRIEVE_LIMIT, ge=1, le=MAX_RETRIEVE_LIMIT)
+    # Unset: the user's own setting.
+    limit: int | None = Field(default=None, ge=1, le=MAX_RETRIEVE_LIMIT)
     source_ids: list[str] | None = Field(default=None, alias="sourceIds", max_length=100)
     source_types: list[SourceType] | None = Field(default=None, alias="sourceTypes")
     record_ids: list[str] | None = Field(default=None, alias="recordIds", max_length=1000)
@@ -71,14 +74,17 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
         modified_after=body.modified_after,
         modified_before=body.modified_before,
     )
+    prefs = await _preferences(request).get(user_id)
     try:
         found = await retriever.retrieve(
             user_id,
             body.query,
-            limit=body.limit,
+            limit=body.limit or prefs.search.results,
             scope=scope,
-            max_per_record=body.max_chunks_per_record,
+            max_per_record=body.max_chunks_per_record or prefs.search.max_per_record,
             dates=dates,
+            outside_dates=prefs.search.date_safety_net,
+            uploads_undated=prefs.indexing.header_dates != "off",
         )
     except EmbeddingUnavailableError as err:
         raise UnavailableError("The embedding model is unavailable") from err
@@ -95,6 +101,11 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
     if found.outside_dates:
         out["outsideDates"] = {"note": OUTSIDE_DATES_NOTE, "chunks": found.outside_dates}
     return out
+
+
+def _preferences(request: Request) -> PreferenceStore:
+    store: PreferenceStore = request.app.state.preferences
+    return store
 
 
 async def _read(
@@ -176,6 +187,36 @@ def rag_router() -> APIRouter:
             results.append(record_json(done.record, duplicate=done.duplicate))
         return {"records": results}
 
+    @router.get("/settings")
+    async def get_settings(request: Request, user: CurrentUser) -> dict[str, Any]:
+        """The user's settings, and the server's defaults they start from."""
+        store = _preferences(request)
+        prefs = await store.get(user.user_id)
+        return {
+            "settings": prefs.model_dump(by_alias=True),
+            "defaults": store.defaults.model_dump(by_alias=True),
+            "summariesAvailable": bool(getattr(request.app.state, "summaries_available", False)),
+        }
+
+    @router.put("/settings")
+    async def put_settings(
+        request: Request, user: CurrentUser, body: RagPreferences
+    ) -> dict[str, Any]:
+        saved = await _preferences(request).put(user.user_id, body)
+        return {"settings": saved.model_dump(by_alias=True)}
+
+    @router.delete("/settings")
+    async def reset_settings(request: Request, user: CurrentUser) -> dict[str, Any]:
+        reset = await _preferences(request).reset(user.user_id)
+        return {"settings": reset.model_dump(by_alias=True)}
+
+    @router.get("/sources")
+    async def list_sources(request: Request, user: CurrentUser) -> dict[str, Any]:
+        """The user's knowledge bases and mail accounts, with how many records each holds and
+        how many are in each state."""
+        records: RecordStore = request.app.state.records
+        return {"sources": await records.sources(user.user_id)}
+
     @router.get("/records")
     async def list_records(
         request: Request,
@@ -217,6 +258,26 @@ def rag_router() -> APIRouter:
             else {}
         )
         return record_json(record, **classified)
+
+    @router.get("/records/{record_id}/file")
+    async def get_file(request: Request, user: CurrentUser, record_id: str) -> Response:
+        """The record's original bytes, to open or save (an email as its .eml)."""
+        records: RecordStore = request.app.state.records
+        record = await records.get(user.user_id, record_id)
+        if record is None:
+            raise NotFoundError("Record not found")
+        contents: ContentStore = request.app.state.contents
+        content = await contents.get(record.content_id)
+        if content is None or content.blob_key is None:
+            raise NotFoundError("The file is no longer stored")
+        blobs: BlobStore = request.app.state.blobs
+        data = await blobs.get(content.blob_key)
+        quoted = urllib.parse.quote(record.name or "file")
+        return Response(
+            data,
+            media_type=record.mime_type or "application/octet-stream",
+            headers={"Content-Disposition": f"inline; filename*=UTF-8''{quoted}"},
+        )
 
     @router.get("/records/{record_id}/blocks")
     async def get_blocks(request: Request, user: CurrentUser, record_id: str) -> dict[str, Any]:

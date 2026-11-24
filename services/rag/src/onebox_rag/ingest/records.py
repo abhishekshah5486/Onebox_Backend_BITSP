@@ -146,6 +146,43 @@ class RecordStore:
             Record.model_validate(d) async for d in self._records.find({"contentId": content_id})
         ]
 
+    async def sources(self, user_id: str) -> list[dict[str, Any]]:
+        """Each source (knowledge base or mail account) of the user: its records, how many are
+        in each status, and when the last one arrived, newest first."""
+        cursor = await self._records.aggregate(
+            [
+                {"$match": {"userId": user_id}},
+                {
+                    "$group": {
+                        "_id": {"type": "$sourceType", "id": "$sourceId", "status": "$status"},
+                        "count": {"$sum": 1},
+                        "last": {"$max": "$createdAt"},
+                    }
+                },
+            ]
+        )
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        async for row in cursor:
+            key = (row["_id"]["type"], row["_id"]["id"])
+            source = grouped.setdefault(
+                key,
+                {
+                    "sourceType": key[0],
+                    "sourceId": key[1],
+                    "records": 0,
+                    "statuses": {},
+                    "last": None,
+                },
+            )
+            source["records"] += row["count"]
+            source["statuses"][row["_id"]["status"]] = row["count"]
+            if source["last"] is None or row["last"] > source["last"]:
+                source["last"] = row["last"]
+        out = sorted(grouped.values(), key=lambda s: s["last"], reverse=True)
+        for source in out:
+            source["lastAddedAt"] = source.pop("last").isoformat()
+        return out
+
     async def scoped_contents(self, user_id: str, **scope: list[str] | None) -> list[str]:
         """The contents of the user's records in the given sources, source types or records."""
         query = _scope(user_id, scope)

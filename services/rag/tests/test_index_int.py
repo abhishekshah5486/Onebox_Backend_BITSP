@@ -521,3 +521,32 @@ async def test_the_stray_sweep_removes_only_points_the_revision_lacks(
         await store.close()
     left, _ = qdrant.scroll(COLLECTION, scroll_filter=content, limit=100)
     assert stray not in {str(p.id) for p in left} and len(left) == len(points)
+
+
+def test_a_users_settings_sources_and_files(client: TestClient) -> None:
+    user = bearer("u2b")
+    first = client.get("/rag/settings", headers=user).json()
+    assert first["settings"] == first["defaults"]
+    assert first["settings"]["search"]["results"] == 8
+
+    changed = {**first["settings"], "search": {**first["settings"]["search"], "results": 1}}
+    assert client.put("/rag/settings", json=changed, headers=user).status_code == 200
+    assert client.get("/rag/settings", headers=user).json()["settings"]["search"]["results"] == 1
+    bad = {**changed, "indexing": {**changed["indexing"], "windowChars": 300, "windowOverlap": 400}}
+    assert client.put("/rag/settings", json=bad, headers=user).status_code in {400, 422}
+
+    [doc] = upload(client, ("ferries.md", POLICY), kb="ferries", user="u2b")
+    wait_for(client, doc["id"], completed, user="u2b", timeout_s=120)
+    found = client.post("/rag/retrieve", json={"query": "refunds parcels"}, headers=user).json()
+    assert len(found["chunks"]) == 1  # the user's own result count
+
+    [source] = client.get("/rag/sources", headers=user).json()["sources"]
+    assert source["sourceId"] == "ferries" and source["records"] == 1
+    assert source["statuses"] == {"completed": 1}
+
+    file = client.get(f"/rag/records/{doc['id']}/file", headers=user)
+    assert file.status_code == 200 and file.content == POLICY
+    assert "ferries.md" in file.headers["content-disposition"]
+
+    reset = client.delete("/rag/settings", headers=user).json()
+    assert reset["settings"]["search"]["results"] == 8

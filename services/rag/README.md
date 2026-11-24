@@ -213,6 +213,16 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   way, mail or file; a .log or .cfg is not sent, nor content with no text.
   `RAG_CLASSIFY=false` turns it off; `RAG_CLASSIFY_ON_FIRST_USE` waits until a search first
   returns the content. A failure never touches the record's own status.
+- **Each user's settings.** `GET /rag/settings` returns the user's settings and the server's
+  defaults they start from (`RAG_*` env), and whether summaries are available on this server;
+  `PUT` saves them whole, `DELETE` goes back to the defaults. Search: `results` (8),
+  `maxPerRecord`, `dateSafetyNet`; a retrieve without `limit` uses them. Indexing:
+  `summaries` (`on`, `first_use`, `off`), `headerDates` (`off`, `true`, `all`),
+  `windowChars` and `windowOverlap`, applied to files indexed from then on. A server switch
+  still wins: with `RAG_CLASSIFY=false` nobody's files are summarized.
+- **Sources and files.** `GET /rag/sources` lists the user's knowledge bases and mail accounts
+  with their record counts per status and when the last record arrived;
+  `GET /rag/records/{id}/file` returns a record's original bytes (an email as its .eml).
 - **Mail.** The mail service follows its stored mail (a MongoDB change stream: every email
   once, then each change) and puts a job per email on `rag-mail`; RAG reads the email and its
   attachments back from mail's `/internal` routes. An email is one record whichever folders
