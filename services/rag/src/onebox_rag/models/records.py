@@ -103,6 +103,9 @@ class Content(CamelModel):
     mime_type: str
     size_bytes: int
     blob_key: str | None
+    # Its bytes are in the blob store. Until they are, the next attempt with the same bytes
+    # stores them; the content is never deleted, since another record may already hold it.
+    stored: bool = True
     # Gzipped BlocksContainer JSON, once parsed.
     blocks_key: str | None = None
     block_count: int | None = None

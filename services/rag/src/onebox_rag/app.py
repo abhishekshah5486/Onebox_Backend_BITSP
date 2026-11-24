@@ -20,6 +20,7 @@ from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
+from onebox_rag.ingest.repair import repair_orphans
 from onebox_rag.logs import log_requests
 from onebox_rag.mail.client import MailClient
 from onebox_rag.mail.source import MailSource
@@ -170,6 +171,17 @@ async def _sweep_undated(upkeep: PointUpkeep, every_s: float) -> None:
                 logger.info("points caught up", extra={"items": done})
         except Exception:
             logger.warning("point upkeep sweep failed", exc_info=True)
+        await asyncio.sleep(every_s)
+
+
+async def _sweep_orphans(
+    records: RecordStore, ingestor: Ingestor, mail: MailSource | None, every_s: float
+) -> None:
+    while True:
+        try:
+            await repair_orphans(records, ingestor, mail.repair if mail is not None else None)
+        except Exception:
+            logger.warning("orphan sweep failed", exc_info=True)
         await asyncio.sleep(every_s)
 
 
@@ -362,6 +374,7 @@ def create_app(
             if settings.RAG_MAIL_URL and settings.RAG_RUN_WORKER
             else None
         )
+        app.state.mail = mail
         mail_reader = mail_worker(settings, mail) if mail is not None else None
         indexer = (
             stage_worker(
@@ -410,12 +423,21 @@ def create_app(
             if upkeep is not None and settings.RAG_RUN_WORKER
             else None
         )
+        orphans = (
+            asyncio.create_task(
+                _sweep_orphans(records, ingestor, mail, settings.RAG_UPKEEP_SWEEP_S)
+            )
+            if settings.RAG_RUN_WORKER
+            else None
+        )
         try:
             yield
         finally:
             prepare.cancel()
             if sweep is not None:
                 sweep.cancel()
+            if orphans is not None:
+                orphans.cancel()
             if worker is not None:
                 await worker.close()
             if indexer is not None:

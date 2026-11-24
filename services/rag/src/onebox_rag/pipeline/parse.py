@@ -85,6 +85,7 @@ class ParseStage:
             or content.status in TERMINAL
             or content.stage != Stage.PARSE
             or content.blob_key is None
+            or not content.stored
         ):
             return
         data = await self._blobs.get(content.blob_key)

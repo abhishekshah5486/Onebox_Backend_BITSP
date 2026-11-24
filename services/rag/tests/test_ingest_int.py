@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import io
 import time
 from collections.abc import Callable, Iterator
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 from onebox_rag.app import create_app
 from onebox_rag.config import Settings
 from onebox_rag.ingest.blobs import BlobStore
+from onebox_rag.ingest.ingestor import content_id
 from tests.pdf_samples import handbook, scanned
 from tests.test_inspect import OOXML, archive, ooxml
 from tests.test_ocr import picture
@@ -180,3 +182,38 @@ def test_inspects_pdfs_and_routes_them_to_an_engine(client: TestClient) -> None:
     blocks = client.get(f"/rag/records/{third['id']}/blocks", headers=bearer("u1")).json()
     assert blocks["engine"] == "ocr"
     assert any("Invoice 2231 paid" in str(b.get("data")) for b in blocks["blocks"])
+
+
+def test_a_failed_store_is_finished_by_the_next_attempt(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blobs: BlobStore = client.app.state.blobs  # type: ignore[attr-defined]
+    real_put = blobs.put
+    failures = [ClientError({"Error": {"Code": "InternalError"}}, "PutObject")]
+
+    async def flaky(*args: Any, **kwargs: Any) -> None:
+        if failures:
+            raise failures.pop()
+        await real_put(*args, **kwargs)
+
+    monkeypatch.setattr(blobs, "put", flaky)
+    data = b"Ferries to the islands leave at nine.\n"
+    with pytest.raises(ClientError):
+        client.post(
+            "/rag/documents",
+            headers=bearer("u9"),
+            files=[("files", ("ferries.txt", data, "text/plain"))],
+            data={"knowledgeBase": "first"},
+        )
+    # Claimed but not stored: kept, so a record that took it meanwhile is not left orphaned.
+    contents = client.app.state.contents  # type: ignore[attr-defined]
+    cid = content_id("u9", hashlib.sha256(data).hexdigest())
+    content = client.portal.call(contents.get, cid)  # type: ignore[union-attr]
+    assert content is not None and content.stored is False
+
+    # The next attempt with these bytes stores them, and they are read (indexing is not set up
+    # in this app, so they wait for it).
+    [record] = upload(client, ("ferries.txt", data), kb="second", user="u9")
+    wait_for(client, record["id"], lambda r: r["stage"] == "index", user="u9")
+    [again] = upload(client, ("ferries.txt", data), kb="first", user="u9")
+    assert again["contentId"] == record["contentId"] == cid and again["stage"] == "index"

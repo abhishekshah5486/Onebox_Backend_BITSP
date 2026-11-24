@@ -252,6 +252,26 @@ class RecordStore:
             for name in ("statuses", "mimeTypes")
         }
 
+    async def orphans(self, limit: int = 100) -> list[Record]:
+        """Records waiting on a content that no longer exists (lost by an older failed store)."""
+        cursor = await self._records.aggregate(
+            [
+                {"$match": {"status": {"$in": [Status.QUEUED.value, Status.IN_PROGRESS.value]}}},
+                {
+                    "$lookup": {
+                        "from": "contents",
+                        "localField": "contentId",
+                        "foreignField": "_id",
+                        "as": "c",
+                    }
+                },
+                {"$match": {"c": {"$size": 0}}},
+                {"$project": {"c": 0}},
+                {"$limit": limit},
+            ]
+        )
+        return [Record.model_validate(doc) async for doc in cursor]
+
     async def sources(self, user_id: str) -> list[dict[str, Any]]:
         """Each source (knowledge base or mail account) of the user: its records, how many are
         in each status, and when the last one arrived, newest first."""

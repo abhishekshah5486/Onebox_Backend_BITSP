@@ -133,22 +133,21 @@ class Ingestor:
             status=rejected.status if rejected else Status.QUEUED,
             stage=None if rejected else Stage.PARSE,
             reason=rejected.reason if rejected else None,
+            stored=rejected is not None,
             created_at=now,
             updated_at=now,
         )
         content, created = await self._contents.claim(candidate)
-        if created and content.blob_key:
-            try:
-                await self._blobs.put(content.blob_key, stream, content.mime_type)
-                await self._queue.enqueue(user_id, cid, content.revision)
-            except Exception:
-                # Forget it, so the next attempt with these bytes starts clean.
-                await self._contents.delete(cid)
-                raise
-        elif created:
+        if created and content.blob_key is None:
             logger.info("file rejected", extra={"contentId": cid, "reason": content.reason})
-        elif content.status == Status.QUEUED and content.stage == Stage.PARSE:
-            # A crash may have stopped it between storing and queuing; queuing again is a no-op.
+            return content
+        if content.blob_key is not None and not content.stored:
+            # Ours to store, or left unstored by an attempt that failed: a failure here leaves
+            # it unstored for the next attempt (the caller's retry) rather than deleting it.
+            await self._blobs.put(content.blob_key, stream, content.mime_type)
+            content = await self._contents.update(cid, self._now(), stored=True) or content
+        if content.status == Status.QUEUED and content.stage == Stage.PARSE:
+            # Queuing again is a no-op, and covers a crash between storing and queuing.
             await self._queue.enqueue(user_id, cid, content.revision)
         return content
 
@@ -205,6 +204,31 @@ class Ingestor:
         await self._notify(content.id, [saved.id], [])
         return Ingested(saved, duplicate=False)
 
+    async def restore(
+        self, record: Record, stream: BinaryIO, declared_mime_type: str | None
+    ) -> Record:
+        """Points a record at its bytes again: stored, and queued like a new upload's."""
+        content = await self.store(record.user_id, stream, record.name, declared_mime_type)
+        restored = await self._records.update(
+            record.id,
+            self._now(),
+            content_id=content.id,
+            sha256=content.sha256,
+            mime_type=content.mime_type,
+            size_bytes=content.size_bytes,
+            status=content.status,
+            stage=content.stage,
+            reason=content.reason,
+        )
+        if content.id != record.content_id:
+            await self._notify(content.id, [record.id], [])
+        return restored or record
+
+    async def give_up(self, record: Record, reason: str) -> None:
+        await self._records.update(
+            record.id, self._now(), status=Status.FAILED, stage=None, reason=reason
+        )
+
     async def link_attachments(self, parent: Record, content: Content) -> None:
         """Gives a record one child record per file inside its content (an email's attachments)."""
         created, modified = parent.dates()
@@ -249,7 +273,7 @@ class Ingestor:
 
     async def _restart(self, user_id: str, cid: str) -> str | None:
         content = await self._contents.get(cid)
-        if content is None or content.blob_key is None:
+        if content is None or content.blob_key is None or not content.stored:
             return "Its file is not stored"
         if content.status not in TERMINAL:
             return "It is being read already"

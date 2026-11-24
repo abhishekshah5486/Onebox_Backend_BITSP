@@ -30,10 +30,14 @@ class IngestQueue:
         }
 
     async def enqueue(self, user_id: str, content_id: str, revision: int) -> bool:
-        """True when queued, False when that revision was already queued."""
+        """True when queued, False when that revision is already queued or running. A finished
+        job (kept a while after) is replaced: the content was recreated and needs a new run."""
         jid = job_id(content_id, revision)
-        if await self._queue.getJob(jid) is not None:
-            return False
+        existing = await self._queue.getJob(jid)
+        if existing is not None:
+            if await existing.getState() not in ("completed", "failed"):
+                return False
+            await existing.remove()
         envelope: dict[str, Any] = {
             "jobId": jid,
             "userId": user_id,

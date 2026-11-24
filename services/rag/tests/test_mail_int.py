@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -15,8 +16,10 @@ from fastapi.testclient import TestClient
 
 from onebox_rag.app import create_app
 from onebox_rag.config import Settings
+from onebox_rag.ingest.repair import LOST_UPLOAD, repair_orphans
+from onebox_rag.models import Stage, Status
 from tests.test_index_int import proxy_url  # noqa: F401 - a fixture
-from tests.test_ingest_int import Json
+from tests.test_ingest_int import Json, upload
 from tests.tokens import bearer, fake_verifier
 
 pytestmark = pytest.mark.integration
@@ -220,3 +223,52 @@ def test_keeps_emails_and_attachments_in_step_with_the_mailbox(
     send({"op": "remove", "key": "k2", "accountId": "acct-1", "version": 6})
     until(lambda: mail_records() == [])
     client.portal.call(queue.close)  # type: ignore[union-attr]
+
+
+def test_records_whose_content_was_lost_are_read_again(client: TestClient) -> None:
+    state = client.app.state  # type: ignore[attr-defined]
+
+    def run(work: Any) -> Any:
+        return client.portal.call(work)  # type: ignore[union-attr]
+
+    async def handle() -> None:
+        payload = {"op": "upsert", "key": "k-lost", "accountId": "acct-1", "version": 1}
+        await state.mail.handle("u1", {**payload, "messageIds": ["m-inbox"]})
+
+    run(handle)
+
+    def lost_mail() -> list[Json]:
+        found = client.get("/rag/records?sourceType=mail", headers=bearer("u1")).json()
+        return [r for r in found["records"] if r["externalId"].startswith("k-lost")]
+
+    def settled() -> list[Json] | None:
+        found = lost_mail()
+        done = len(found) == 2 and all(r["status"] == "completed" for r in found)
+        return found if done else None
+
+    [kept] = upload(client, ("notes.txt", b"Harbour opens at nine."), kb="lost", user="u1")
+    until(
+        lambda: (
+            client.get(f"/rag/records/{kept['id']}", headers=bearer("u1")).json()["stage"]
+            != "parse"
+        )
+    )
+
+    async def lose(records: list[Json]) -> None:
+        # As an older failed store left them: records waiting on contents that are gone.
+        for record in records:
+            await state.contents.delete(record["contentId"])
+            await state.records.update(
+                record["id"], datetime.now(UTC), status=Status.QUEUED, stage=Stage.PARSE
+            )
+
+    doomed = [*until(settled), kept]
+    run(lambda: lose(doomed))
+
+    async def repair() -> int:
+        return int(await repair_orphans(state.records, state.ingestor, state.mail.repair))
+
+    assert run(repair) == 3
+    assert {r["name"] for r in until(settled)} == {"Island shipping", "rates.csv"}
+    lost = client.get(f"/rag/records/{kept['id']}", headers=bearer("u1")).json()
+    assert lost["status"] == "failed" and lost["reason"] == LOST_UPLOAD

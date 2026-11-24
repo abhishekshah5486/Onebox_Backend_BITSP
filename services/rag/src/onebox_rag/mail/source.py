@@ -71,11 +71,7 @@ class MailSource:
         source = Source(SourceType.MAIL, payload["accountId"])
         info = _mail_info(payload["key"], copies, version, message)
         if record is None:
-            body = latest_reply(message.get("htmlBody"), message.get("textBody") or "")
-            if body is None:
-                body_bytes, mime = b"", "text/plain"
-            else:
-                body_bytes, mime = body.data, body.mime_type
+            body_bytes, mime = _body(message)
             done = await self._ingestor.ingest(
                 user_id=user_id,
                 source=source,
@@ -95,6 +91,33 @@ class MailSource:
             "email read",
             extra={"recordId": record.id, "attachments": len(message.get("attachments") or [])},
         )
+
+    async def repair(self, record: Record) -> bool:
+        """Reads an email whose content was lost again from the mailbox; False when no copy is
+        left there (its delete follows) or it is not an email."""
+        if record.parent_id is not None:
+            return await self._repair_attachment(record)
+        if record.mail is None:
+            return False
+        for message_id in record.mail.copy_ids:
+            message = await self._mail.message(record.user_id, message_id)
+            if message is not None:
+                data, mime = _body(message)
+                await self._ingestor.restore(record, io.BytesIO(data), mime)
+                return True
+        return False
+
+    async def _repair_attachment(self, record: Record) -> bool:
+        parent = await self._records.get(record.user_id, record.parent_id or "")
+        index = record.external_id.rsplit("/", 1)[-1]
+        if parent is None or parent.mail is None or not index.isdigit():
+            return False
+        for message_id in parent.mail.copy_ids:
+            data = await self._mail.attachment(record.user_id, message_id, int(index))
+            if data is not None:
+                await self._ingestor.restore(record, io.BytesIO(data), record.declared_mime_type)
+                return True
+        return False
 
     async def _attachments(
         self, user_id: str, source: Source, parent: Record, message: dict[str, Any]
@@ -140,6 +163,12 @@ class MailSource:
 
     async def close(self) -> None:
         await self._mail.close()
+
+
+def _body(message: dict[str, Any]) -> tuple[bytes, str]:
+    """What of an email is read: its latest reply (quoted history left out)."""
+    body = latest_reply(message.get("htmlBody"), message.get("textBody") or "")
+    return (b"", "text/plain") if body is None else (body.data, body.mime_type)
 
 
 def _mail_info(key: str, copies: list[str], version: int, message: dict[str, Any]) -> MailInfo:
