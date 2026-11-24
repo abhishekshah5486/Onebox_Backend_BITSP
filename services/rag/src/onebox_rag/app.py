@@ -98,6 +98,7 @@ def retrieve_settings_from(settings: Settings) -> RetrieveSettings:
         title_min_score=settings.RAG_TITLE_MIN_SCORE,
         unindexed_max=settings.RAG_TITLE_UNINDEXED_MAX,
         outside_dates=settings.RAG_DATE_SAFETY_NET,
+        uploads_undated=settings.RAG_CONTENT_DOCUMENT_DATES != "off",
         units=UnitSettings(
             small_table_cells=settings.RAG_SMALL_TABLE_CELLS,
             title_hit_words=settings.RAG_TITLE_HIT_WORDS,

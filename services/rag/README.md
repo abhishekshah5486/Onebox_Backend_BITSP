@@ -179,7 +179,9 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   event ("Due date:"), a range, a slashed date that reads two ways, a date after the upload,
   a header giving two days, and a file last modified before the stated day all leave the
   upload's dates alone. Those are kept beside it and put back when the header no longer
-  dates it or the setting is turned off.
+  dates it or the setting is turned off. While it is on, an upload dated only by when it was
+  uploaded counts as undated: it was written then or earlier, so a lower bound can leave it
+  out but an upper bound doesn't (its points carry `uploadedAt` for that).
 - **Titles.** Every record gets a title point the moment it is made, before its content is
   read: an email's header (subject, sender, recipients, date, attachment names), else its name.
   "The email from Ana" or "the budget sheet" then finds it though its text never says so. A

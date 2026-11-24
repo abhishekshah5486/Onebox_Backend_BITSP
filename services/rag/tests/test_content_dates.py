@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from onebox_rag.dates import DateBounds
 from onebox_rag.ingest.content_dates import DocumentDates, find_document_dates, plan_dates
 from onebox_rag.models.records import DateOrigin, Record, SourceType
 from onebox_rag.parsers.markdown import parse_markdown
@@ -101,3 +102,14 @@ def test_stated_dates_replace_only_what_the_setting_allows_and_can_be_put_back()
     revert = plan_dates(dated, None, only_upload)
     assert revert is not None and revert["date_origin"] == DateOrigin.UPLOAD
     assert revert["source_created_at"] == UPLOADED
+
+
+def test_an_upload_dated_by_its_upload_is_left_out_only_by_a_lower_bound() -> None:
+
+    march = DateBounds(day(2025, 3, 1), day(2025, 3, 31), uploads_undated=True)
+    assert march.admits(UPLOADED, UPLOADED, upload_dated=True)
+    assert not march.admits(UPLOADED, UPLOADED)
+    assert not march.admits(day(2025, 2, 1), day(2025, 2, 1), upload_dated=True)
+    assert not DateBounds(created_before=day(2025, 3, 31)).admits(
+        UPLOADED, UPLOADED, upload_dated=True
+    )

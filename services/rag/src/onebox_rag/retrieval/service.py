@@ -4,7 +4,7 @@ grouped into units, neighbouring paragraphs in the room left."""
 import asyncio
 import logging
 from collections.abc import Awaitable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from onebox_rag.dates import DateBounds
@@ -15,6 +15,7 @@ from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Content, Record, Status
 from onebox_rag.models.blocks import BlocksContainer
+from onebox_rag.models.records import DateOrigin
 from onebox_rag.pipeline.parse import decode_blocks
 from onebox_rag.retrieval.units import (
     Unit,
@@ -77,6 +78,8 @@ class RetrieveSettings:
     # A search with date bounds also runs once without them (this many results) and lists
     # the best few records the dates left out, each with up to this many passages.
     outside_dates: bool = True
+    # Uploads dated only by when they were uploaded pass upper bounds (content dates on).
+    uploads_undated: bool = False
     outside_dates_limit: int = 10
     outside_dates_max: int = 3
     outside_dates_passages: int = 3
@@ -136,6 +139,8 @@ class Retriever:
         dates: DateBounds | None = None,
     ) -> Retrieved:
         dates = dates if dates is not None and dates.given() else None
+        if dates is not None and self._settings.uploads_undated:
+            dates = replace(dates, uploads_undated=True)
         notices = await self._notices(user_id, scope, dates)
         content_ids = None
         if scope.given():
@@ -212,7 +217,9 @@ class Retriever:
             if (
                 len(picked) >= settings.outside_dates_max
                 or record.id in shown
-                or dates.admits(*record.dates())
+                or dates.admits(
+                    *record.dates(), upload_dated=record.date_origin == DateOrigin.UPLOAD
+                )
             ):
                 skipped.add(record.id)
                 continue

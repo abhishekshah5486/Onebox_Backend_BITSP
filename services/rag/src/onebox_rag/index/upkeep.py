@@ -10,10 +10,11 @@ from datetime import UTC, datetime
 
 from onebox_rag.index.embed import DenseEmbedder, SparseVector, sparse_documents
 from onebox_rag.index.points import POINT_NAMESPACE, PointKind
-from onebox_rag.index.qdrant_store import CREATED, MODIFIED, QdrantStore, StoredPoint
+from onebox_rag.index.qdrant_store import CREATED, MODIFIED, UPLOADED, QdrantStore, StoredPoint
 from onebox_rag.index.titles import title_label, title_text
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Record, Status
+from onebox_rag.models.records import DateOrigin
 
 logger = logging.getLogger("onebox_rag.index")
 TITLE_BATCH = 64
@@ -60,6 +61,7 @@ class PointUpkeep:
             content_id,
             sorted({_iso(r.dates()[0]) for r in holders}),
             sorted({_iso(r.dates()[1]) for r in holders}),
+            sorted({_iso(r.dates()[0]) for r in holders if r.date_origin == DateOrigin.UPLOAD}),
         )
         await self._contents.update(content_id, self._now(), points_dated=True)
 
@@ -133,5 +135,6 @@ def _title_point(
             "label": title_label(record),
             CREATED: [_iso(created)],
             MODIFIED: [_iso(modified)],
+            UPLOADED: [_iso(created)] if record.date_origin == DateOrigin.UPLOAD else [],
         },
     )

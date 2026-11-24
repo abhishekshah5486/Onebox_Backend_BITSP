@@ -319,7 +319,8 @@ def test_an_upload_takes_the_date_its_header_states(
         kept = wait_for(client, kept["id"], completed, user="u8", timeout_s=120)
         assert kept["dateOrigin"] == "upload"
 
-        def dated(record_id: str) -> bool:
+        # Dated only by its upload, the other may have been written in March too.
+        def dated(*record_ids: str) -> bool:
             found = client.post(
                 "/rag/retrieve",
                 json={
@@ -329,10 +330,10 @@ def test_an_upload_takes_the_date_its_header_states(
                 },
                 headers=bearer("u8"),
             ).json()
-            return {c["record"]["recordId"] for c in found["chunks"]} == {record_id}
+            return {c["record"]["recordId"] for c in found["chunks"]} == set(record_ids)
 
         deadline = time.monotonic() + 30
-        while not dated(memo["id"]):
+        while not dated(memo["id"], kept["id"]):
             assert time.monotonic() < deadline
             time.sleep(0.5)
 

@@ -8,6 +8,7 @@ from pymongo.errors import DuplicateKeyError
 
 from onebox_rag.dates import DateBounds
 from onebox_rag.models import Content, Record
+from onebox_rag.models.records import DateOrigin
 
 Doc = dict[str, Any]
 
@@ -225,14 +226,20 @@ def _scope(user_id: str, scope: dict[str, list[str] | None]) -> Doc:
 
 
 def _dated(dates: DateBounds | None) -> Doc:
-    query: Doc = {}
     if dates is None:
-        return query
+        return {}
+    dated: Doc = {}
+    lower: Doc = {}
     for field, after, before in (
         ("sourceCreatedAt", dates.created_after, dates.created_before),
         ("sourceModifiedAt", dates.modified_after, dates.modified_before),
     ):
         bound = {k: v for k, v in (("$gte", after), ("$lte", before)) if v is not None}
         if bound:
-            query[field] = bound
-    return query
+            dated[field] = bound
+        if after is not None:
+            lower[field] = {"$gte": after}
+    if not dates.uploads_undated or dated == lower:
+        return dated
+    # An upload dated only by its upload was written then or earlier: no upper bound for it.
+    return {"$or": [dated, {**lower, "dateOrigin": DateOrigin.UPLOAD.value}]}

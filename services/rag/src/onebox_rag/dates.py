@@ -22,9 +22,17 @@ class DateBounds:
     created_before: datetime | None = None
     modified_after: datetime | None = None
     modified_before: datetime | None = None
+    # An upload dated only by when it was uploaded was written then or earlier, so only a
+    # lower bound leaves it out (on while uploads take the dates their content states).
+    uploads_undated: bool = False
 
-    def admits(self, created: datetime, modified: datetime) -> bool:
+    def admits(self, created: datetime, modified: datetime, *, upload_dated: bool = False) -> bool:
         """Whether a record with these dates is inside the bounds."""
+        if upload_dated and self.uploads_undated:
+            return not (
+                (self.created_after is not None and created < self.created_after)
+                or (self.modified_after is not None and modified < self.modified_after)
+            )
         return not (
             (self.created_after is not None and created < self.created_after)
             or (self.created_before is not None and created > self.created_before)

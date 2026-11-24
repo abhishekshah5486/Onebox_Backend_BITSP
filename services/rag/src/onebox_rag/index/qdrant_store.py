@@ -17,6 +17,8 @@ DENSE, SPARSE = "dense", "sparse"
 # Payload fields date filters read, and the kind of a record's title point (it belongs to the
 # record, not to a revision of its content).
 CREATED, MODIFIED = "createdAt", "modifiedAt"
+# When the holders dated only by their upload were uploaded.
+UPLOADED = "uploadedAt"
 TITLE = "title"
 UPSERT_BATCH = 256
 # RRF ties hits of equal rank, which Qdrant returns in any order; a few more are fetched and
@@ -115,6 +117,7 @@ class QdrantStore:
             ("kind", models.PayloadSchemaType.KEYWORD),
             (CREATED, models.PayloadSchemaType.DATETIME),
             (MODIFIED, models.PayloadSchemaType.DATETIME),
+            (UPLOADED, models.PayloadSchemaType.DATETIME),
         ):
             await self._client.create_payload_index(name, field, schema)
         self._ready.add(name)
@@ -171,13 +174,18 @@ class QdrantStore:
         )
 
     async def set_dates(
-        self, collection: str, content_id: str, created: list[str], modified: list[str]
+        self,
+        collection: str,
+        content_id: str,
+        created: list[str],
+        modified: list[str],
+        uploaded: list[str],
     ) -> None:
         """The dates of the records holding a content, on its points (title points carry
         their own record's)."""
         await self._client.set_payload(
             collection,
-            {CREATED: created, MODIFIED: modified},
+            {CREATED: created, MODIFIED: modified, UPLOADED: uploaded},
             points=models.Filter(
                 must=[_match("contentId", content_id)], must_not=[_match("kind", TITLE)]
             ),
@@ -328,14 +336,19 @@ def _match(key: str, value: str) -> models.FieldCondition:
 
 def _date_conditions(dates: DateBounds) -> list[models.Condition]:
     """A point passes when one of its dates is in range (a content shared by several records
-    carries all their dates)."""
+    carries all their dates), or while uploads count as undated, when a holder dated by its
+    upload was uploaded at or after the lower bound."""
     conditions: list[models.Condition] = []
     for key, after, before in (
         (CREATED, dates.created_after, dates.created_before),
         (MODIFIED, dates.modified_after, dates.modified_before),
     ):
-        if after is not None or before is not None:
-            conditions.append(
-                models.FieldCondition(key=key, range=models.DatetimeRange(gte=after, lte=before))
-            )
+        if after is None and before is None:
+            continue
+        dated = models.FieldCondition(key=key, range=models.DatetimeRange(gte=after, lte=before))
+        if not dates.uploads_undated or before is None:
+            conditions.append(dated)
+            continue
+        uploaded = models.FieldCondition(key=UPLOADED, range=models.DatetimeRange(gte=after))
+        conditions.append(models.Filter(should=[dated, uploaded]))
     return conditions
