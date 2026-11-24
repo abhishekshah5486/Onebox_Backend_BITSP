@@ -1,4 +1,5 @@
 import { Client } from '@elastic/elasticsearch';
+import pRetry from 'p-retry';
 import { createRemoteTokenVerifier, deriveInternalToken } from '@onebox/auth-kit';
 import { startServer } from '@onebox/http';
 import { createLogger } from '@onebox/logger';
@@ -34,7 +35,16 @@ const defaultModel = await fetchEmbedModel(config.LLM_PROXY_SERVICE_URL, interna
 logger.info({ model: defaultModel.id }, 'default embedding model');
 
 const keyword = createKeywordIndex(elastic, config.ELASTICSEARCH_INDEX);
-await keyword.ensure();
+await pRetry(() => keyword.ensure(), {
+  retries: 30,
+  minTimeout: 500,
+  maxTimeout: 5_000,
+  onFailedAttempt: ({ error, attemptNumber }) =>
+    logger.warn(
+      { err: error.message, attempt: attemptNumber },
+      'elasticsearch not ready, retrying',
+    ),
+});
 const reembedJobs = createProducer<ReembedPayload>(QUEUES.reembed, {
   redisUrl: config.REDIS_URL,
   logger,

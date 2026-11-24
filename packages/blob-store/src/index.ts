@@ -8,6 +8,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { Readable } from 'node:stream';
+import pRetry from 'p-retry';
 import { z } from 'zod';
 
 // Any S3-compatible store: SeaweedFS locally, S3 (or similar) when deployed.
@@ -25,6 +26,11 @@ export interface BlobConfig {
   BLOB_BUCKET: string;
   BLOB_ACCESS_KEY: string;
   BLOB_SECRET_KEY: string;
+}
+
+export interface EnsureOptions {
+  retries?: number;
+  onRetry?: (error: Error, attempt: number) => void;
 }
 
 export interface StoredBlob {
@@ -51,13 +57,24 @@ export function createBlobStore(config: BlobConfig) {
   });
 
   return {
-    async ensureBucket() {
-      try {
-        await s3.send(new HeadBucketCommand({ Bucket: bucket }));
-      } catch (err) {
-        if (!notFound(err)) throw err;
-        await s3.send(new CreateBucketCommand({ Bucket: bucket }));
-      }
+    // Waits for a store that is still starting, rather than ending the process.
+    async ensureBucket({ retries = 30, onRetry }: EnsureOptions = {}) {
+      await pRetry(
+        async () => {
+          try {
+            await s3.send(new HeadBucketCommand({ Bucket: bucket }));
+          } catch (err) {
+            if (!notFound(err)) throw err;
+            await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+          }
+        },
+        {
+          retries,
+          minTimeout: 500,
+          maxTimeout: 5_000,
+          onFailedAttempt: ({ error, attemptNumber }) => onRetry?.(error, attemptNumber),
+        },
+      );
     },
 
     async put(key: string, body: Buffer, contentType = 'application/octet-stream') {

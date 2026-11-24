@@ -49,7 +49,10 @@ const config = loadMailConfig();
 
 // Attachment contents live in an S3-compatible store (SeaweedFS locally).
 const blobs = createBlobStore(config);
-await blobs.ensureBucket();
+await blobs.ensureBucket({
+  onRetry: (err, attempt) =>
+    logger.warn({ err: err.message, attempt }, 'object store not reachable yet, retrying'),
+});
 
 const mongo = await connectMongo(config.MONGO_URI, config.MONGO_DB, {
   onRetry: (err, attempt) =>
