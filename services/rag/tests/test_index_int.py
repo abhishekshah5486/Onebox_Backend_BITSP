@@ -252,3 +252,40 @@ def test_says_what_a_search_could_not_see(live_settings: Settings, proxy_url: st
         response = client.post("/rag/retrieve", json={"query": "x"}, headers=bearer("u9"))
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "SEARCH_INDEX_UNREACHABLE"
+
+
+def test_an_upload_is_dated_by_its_files_last_modified_time(client: TestClient) -> None:
+    march = 1_709_424_000_000  # 2024-03-03T00:00:00Z
+    files = [
+        ("files", ("invoice.md", b"Invoice for harbour fees.", "text/markdown")),
+        ("files", ("notes.md", b"Harbour notes, undated.", "text/markdown")),
+    ]
+    response = client.post(
+        "/rag/documents",
+        headers=bearer("u7"),
+        files=files,
+        data={"knowledgeBase": "dated", "lastModified": [str(march), "0"]},
+    )
+    assert response.status_code == 201, response.text
+    invoice, notes = response.json()["records"]
+    assert (
+        invoice["sourceCreatedAt"].startswith("2024-03-03")
+        and invoice["dateOrigin"] == "lastModified"
+    )
+    assert notes["dateOrigin"] == "upload"
+    mismatched = client.post(
+        "/rag/documents",
+        headers=bearer("u7"),
+        files=files,
+        data={"lastModified": [str(march)]},
+    )
+    assert mismatched.status_code == 400
+
+    for record in (invoice, notes):
+        wait_for(client, record["id"], completed, user="u7", timeout_s=120)
+    found = client.post(
+        "/rag/retrieve",
+        json={"query": "harbour", "createdAfter": "2024-03-01", "createdBefore": "2024-03-31"},
+        headers=bearer("u7"),
+    ).json()
+    assert {c["record"]["recordId"] for c in found["chunks"]} == {invoice["id"]}

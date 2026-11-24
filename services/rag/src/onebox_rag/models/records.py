@@ -113,6 +113,15 @@ class MailInfo(CamelModel):
     attachments_done: bool = False
 
 
+class DateOrigin(StrEnum):
+    """Where a record's created and modified dates came from."""
+
+    SOURCE = "source"  # the source's own (an email's: when it was received)
+    LAST_MODIFIED = "lastModified"  # an upload: the file's last-modified time, from the browser
+    UPLOAD = "upload"  # an upload sent without one: when it was uploaded
+    CONTENT = "content"  # an upload: the dates its header states
+
+
 class Record(CamelModel):
     """One item in a source (an email, an attachment, an uploaded file) pointing at its content."""
 
@@ -141,6 +150,11 @@ class Record(CamelModel):
     # and last changed in its source. Set on every new record.
     source_created_at: datetime | None = None
     source_modified_at: datetime | None = None
+    date_origin: DateOrigin = DateOrigin.SOURCE
+    # What the upload gave, kept while its content's dates stand in, so they can be put back.
+    upload_created_at: datetime | None = None
+    upload_modified_at: datetime | None = None
+    upload_date_origin: DateOrigin | None = None
     # Its title point is written (cleared to have the sweep write it again).
     titled: bool = False
 

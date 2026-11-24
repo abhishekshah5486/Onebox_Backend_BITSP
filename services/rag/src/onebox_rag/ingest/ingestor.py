@@ -13,7 +13,7 @@ from onebox_rag.ingest.inspect import Inspection, Limits, inspect_file
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Content, Record, SourceType, Stage, Status
-from onebox_rag.models.records import MailInfo
+from onebox_rag.models.records import DateOrigin, MailInfo
 from onebox_rag.parsers.base import ExtractedFile
 
 logger = logging.getLogger("onebox_rag.ingest")
@@ -42,6 +42,7 @@ class ItemInfo:
     created_at: datetime | None = None
     modified_at: datetime | None = None
     mail: MailInfo | None = None
+    origin: DateOrigin = DateOrigin.SOURCE
 
 
 def content_id(user_id: str, sha256: str) -> str:
@@ -166,6 +167,7 @@ class Ingestor:
         now = self._now()
         info = info or ItemInfo()
         created = info.created_at or now
+        origin = info.origin if info.created_at else DateOrigin.UPLOAD
         record = Record(
             id=str(uuid.uuid4()),
             user_id=user_id,
@@ -187,6 +189,7 @@ class Ingestor:
             mail=info.mail,
             source_created_at=created,
             source_modified_at=info.modified_at or created,
+            date_origin=origin,
         )
         saved, inserted = await self._records.insert(record)
         if not inserted:

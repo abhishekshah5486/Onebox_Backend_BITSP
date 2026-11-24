@@ -1,4 +1,5 @@
-from datetime import datetime
+import math
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
@@ -6,13 +7,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from onebox_rag.auth import CurrentUser, require_internal
 from onebox_rag.dates import parse_bounds
-from onebox_rag.errors import NotFoundError, UnavailableError
+from onebox_rag.errors import NotFoundError, UnavailableError, ValidationError
 from onebox_rag.index.embed import EmbeddingUnavailableError
 from onebox_rag.index.qdrant_store import SearchIndexError
 from onebox_rag.ingest.blobs import BlobStore
-from onebox_rag.ingest.ingestor import Ingestor, Source
+from onebox_rag.ingest.ingestor import Ingestor, ItemInfo, Source
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Record, SourceType, Status
+from onebox_rag.models.records import DateOrigin
 from onebox_rag.pipeline.parse import decode_blocks
 from onebox_rag.retrieval.read import FocusSettings, focused_read, read_page
 from onebox_rag.retrieval.service import Retriever, Scope
@@ -127,6 +129,16 @@ async def _read(
     return {**head, **read_page(container, start, size)}
 
 
+def _upload_info(last_modified_ms: float | None) -> ItemInfo | None:
+    if last_modified_ms is None or not math.isfinite(last_modified_ms) or last_modified_ms <= 0:
+        return None
+    try:
+        moment = datetime.fromtimestamp(last_modified_ms / 1000, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return ItemInfo(moment, moment, origin=DateOrigin.LAST_MODIFIED)
+
+
 def record_json(record: Record, **extra: Any) -> dict[str, Any]:
     body = record.model_dump(by_alias=True, mode="json")
     body["id"] = body.pop("_id")
@@ -142,16 +154,22 @@ def rag_router() -> APIRouter:
         user: CurrentUser,
         files: Annotated[list[UploadFile], File(min_length=1)],
         knowledge_base: Annotated[str, Form(alias="knowledgeBase", pattern=SOURCE_ID)] = "default",
+        # Each file's last-modified time (ms since 1970, the browser's File.lastModified), in
+        # the order of the files; missing or not positive, the upload time stands in.
+        last_modified: Annotated[list[float] | None, Form(alias="lastModified")] = None,
     ) -> dict[str, list[dict[str, Any]]]:
         ingestor: Ingestor = request.app.state.ingestor
+        if last_modified is not None and len(last_modified) != len(files):
+            raise ValidationError("lastModified needs one value per file, in the files' order")
         results = []
-        for upload in files:
+        for position, upload in enumerate(files):
             done = await ingestor.ingest(
                 user_id=user.user_id,
                 source=Source(SourceType.UPLOAD, knowledge_base),
                 name=upload.filename or "untitled",
                 declared_mime_type=upload.content_type,
                 stream=upload.file,
+                info=_upload_info(last_modified[position] if last_modified else None),
             )
             results.append(record_json(done.record, duplicate=done.duplicate))
         return {"records": results}
