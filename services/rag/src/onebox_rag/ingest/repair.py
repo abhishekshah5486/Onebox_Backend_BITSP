@@ -4,6 +4,7 @@ again from the mailbox; an upload's bytes are gone, so it fails and asks to be u
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.records import RecordStore
@@ -40,3 +41,10 @@ async def repair_orphans(
     if repaired:
         logger.info("orphaned records repaired", extra={"count": repaired})
     return repaired
+
+
+async def requeue_stalled(ingestor: Ingestor, before: datetime) -> int:
+    queued = await ingestor.requeue_stalled(before)
+    if queued:
+        logger.info("stalled contents queued again", extra={"count": queued})
+    return queued

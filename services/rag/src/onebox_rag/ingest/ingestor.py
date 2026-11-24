@@ -224,6 +224,15 @@ class Ingestor:
             await self._notify(content.id, [record.id], [])
         return restored or record
 
+    async def requeue_stalled(self, before: datetime) -> int:
+        """Queues contents left waiting with no live job; a live one makes it a no-op."""
+        queued = 0
+        for content in await self._contents.stalled(before):
+            queue = self._queue if content.stage == Stage.PARSE else self._index_queue
+            if queue is not None and content.stored:
+                queued += await queue.enqueue(content.user_id, content.id, content.revision)
+        return queued
+
     async def give_up(self, record: Record, reason: str) -> None:
         await self._records.update(
             record.id, self._now(), status=Status.FAILED, stage=None, reason=reason

@@ -134,6 +134,16 @@ class ContentStore:
         ).limit(limit)
         return [str(doc["_id"]) async for doc in cursor]
 
+    async def stalled(self, before: datetime, limit: int = 100) -> list[Content]:
+        """Contents waiting for a stage since before `before`: their job may have been lost."""
+        stages = [Stage.PARSE.value, Stage.INDEX.value]
+        query = {
+            "status": Status.QUEUED.value,
+            "stage": {"$in": stages},
+            "updatedAt": {"$lt": before},
+        }
+        return [Content.model_validate(d) async for d in self._contents.find(query).limit(limit)]
+
     async def delete(self, content_id: str) -> None:
         await self._contents.delete_one({"_id": content_id})
 

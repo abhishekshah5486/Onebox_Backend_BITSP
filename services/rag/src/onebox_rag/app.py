@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
 from redis.asyncio import Redis
@@ -20,7 +20,7 @@ from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
-from onebox_rag.ingest.repair import repair_orphans
+from onebox_rag.ingest.repair import repair_orphans, requeue_stalled
 from onebox_rag.logs import log_requests
 from onebox_rag.mail.client import MailClient
 from onebox_rag.mail.source import MailSource
@@ -180,6 +180,8 @@ async def _sweep_orphans(
     while True:
         try:
             await repair_orphans(records, ingestor, mail.repair if mail is not None else None)
+            # Anything waiting longer than a sweep has lost its job (or never got one).
+            await requeue_stalled(ingestor, datetime.now(UTC) - timedelta(seconds=every_s))
         except Exception:
             logger.warning("orphan sweep failed", exc_info=True)
         await asyncio.sleep(every_s)
