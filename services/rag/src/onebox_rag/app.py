@@ -109,6 +109,8 @@ def split_settings_from(settings: Settings) -> SplitSettings:
         window_chars=settings.RAG_INDEX_WINDOW_CHARS,
         window_overlap=settings.RAG_INDEX_WINDOW_OVERLAP,
         sentence_min_words=settings.RAG_INDEX_SENTENCE_MIN_WORDS,
+        token_ceiling=settings.RAG_EMBED_TOKEN_CEILING,
+        token_ratio=settings.RAG_EMBED_TOKEN_RATIO,
     )
 
 

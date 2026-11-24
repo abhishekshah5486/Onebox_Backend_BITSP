@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     RAG_INDEX_WINDOW_CHARS: int = Field(default=1500, ge=200)
     RAG_INDEX_WINDOW_OVERLAP: int = Field(default=200, ge=0)
     RAG_INDEX_SENTENCE_MIN_WORDS: int = Field(default=100, ge=1)
+    # Text over the embedding model's input (its own limit, at most the ceiling) is cut into
+    # pieces that fit. Counted with cl100k, times the ratio for models with another tokenizer.
+    RAG_EMBED_TOKEN_CEILING: int = Field(default=8191, ge=64)
+    RAG_EMBED_TOKEN_RATIO: float = Field(default=2.13, ge=1, le=8)
 
     # Retrieval: the dense leg's search beam and int8 rescore oversampling; the record cut
     # (spread a page across records, off by default); tables shown whole up to this many

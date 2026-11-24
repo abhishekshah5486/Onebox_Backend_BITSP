@@ -26,6 +26,8 @@ class EmbeddingUnavailableError(Exception):
 class EmbeddingModel:
     id: str
     dimensions: int
+    # The most tokens one input may hold, when the proxy knows it.
+    context_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,10 @@ class DenseEmbedder:
     async def model_for(self, user_id: str) -> EmbeddingModel:
         """The user's embedding model (their semantic-search pick, or OneBox's default)."""
         body = await self._call("GET", "/internal/embed/model", params={"userId": user_id})
-        return EmbeddingModel(str(body["id"]), int(body["dimensions"]))
+        context = body.get("contextTokens")
+        return EmbeddingModel(
+            str(body["id"]), int(body["dimensions"]), context if isinstance(context, int) else None
+        )
 
     async def embed(
         self, user_id: str, model: EmbeddingModel, texts: list[str]

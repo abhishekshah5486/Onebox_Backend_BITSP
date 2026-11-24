@@ -7,6 +7,7 @@ from typing import Any
 from onebox_rag.index.embed import DenseEmbedder, EmbeddingUnavailableError, sparse_documents
 from onebox_rag.index.points import PointText, SplitSettings, point_texts
 from onebox_rag.index.qdrant_store import QdrantStore, StoredPoint
+from onebox_rag.index.tokens import TokenLimitError
 from onebox_rag.index.upkeep import PointUpkeep
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.records import ContentStore, RecordStore
@@ -50,8 +51,9 @@ class IndexStage:
         moved = False
         try:
             container = decode_blocks(await self._blobs.get(content.blocks_key))
-            texts = await asyncio.to_thread(point_texts, container, self._split)
             model = await self._dense.model_for(content.user_id)
+            window = self._split.window_for(model.id, model.context_tokens)
+            texts = await asyncio.to_thread(point_texts, container, self._split, window)
             collection = await self._store.ensure_collection(model)
             points = await self._points(content, model, texts)
             await self._store.upsert(collection, points)
@@ -60,6 +62,11 @@ class IndexStage:
                 # Indexed before with another embedding model: its records' titles move too.
                 await self._store.delete_content(content.index_collection, content.id)
                 moved = True
+        except TokenLimitError as err:
+            # Every try would fail the same way until the user picks another model.
+            logger.warning("embedding input too small", extra={"contentId": content_id})
+            await self._settle(content, Status.FAILED, stage=Stage.INDEX, reason=str(err))
+            return
         except EmbeddingUnavailableError as err:
             logger.warning(
                 "embedding unavailable", extra={"contentId": content_id, "why": str(err)}

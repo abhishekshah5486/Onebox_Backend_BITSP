@@ -123,7 +123,13 @@ Following PipesHub's design:
   embedded as their host, and images as their description plus alt text. A block of more than 100
   words also gets a point per sentence (pysbd, in the language lingua detects for the
   record), and one longer than `RAG_INDEX_MAX_BLOCK_CHARS` becomes overlapping 1,500
-  character windows instead. Points get a dense vector from the user's embedding model
+  character windows instead (a long table summary too). No point is longer than the
+  embedding model reads in one input: llm-proxy says the model's limit (at most
+  `RAG_EMBED_TOKEN_CEILING`, 8,191), text is counted with tiktoken's cl100k (times
+  `RAG_EMBED_TOKEN_RATIO`, 2.13, for models with another tokenizer; text whose bytes fit is
+  never counted), and longer text is cut on character boundaries into pieces that each fit,
+  all on the same block. A model reading under 18 tokens fails the file with the reason.
+  Points get a dense vector from the user's embedding model
   through llm-proxy (not charged) and a BM25 sparse vector computed here (fastembed), and go
   into RAG's own Qdrant collection for that model, `rag_<model>_<dims>` (never search's):
   `dense` and `sparse` vectors (IDF from Qdrant), int8 quantization, on-disk storage, and the

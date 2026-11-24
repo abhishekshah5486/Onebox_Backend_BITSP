@@ -4,12 +4,13 @@ points for long blocks; a block too long to embed whole becomes overlapping wind
 table's rows and summary are led by its title."""
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
 from onebox_rag.index.split import detect_language, split_sentences, windows
 from onebox_rag.index.texts import embed_text, table_titles, with_title, without_urls
+from onebox_rag.index.tokens import TokenWindow
 from onebox_rag.models.blocks import Block, BlocksContainer, BlockType, GroupType
 
 POINT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "onebox:rag-point")
@@ -46,9 +47,39 @@ class SplitSettings:
     window_overlap: int = 200
     # Blocks with more words also get a point per sentence.
     sentence_min_words: int = 100
+    # The most tokens one embedding input may hold, whatever the model says (OpenAI's limit).
+    token_ceiling: int = 8191
+    # For a model whose tokenizer isn't cl100k, a cl100k count times this bounds its own
+    # (the worst measured: bge on Russian and code).
+    token_ratio: float = 2.13
+
+    def window_for(self, model_id: str, context_tokens: int | None) -> TokenWindow:
+        limit = min(context_tokens or self.token_ceiling, self.token_ceiling)
+        # OpenAI's embedding models read cl100k, so its count is theirs.
+        exact = model_id.startswith("openai/")
+        return TokenWindow(limit, 1.0 if exact else self.token_ratio)
 
 
-def point_texts(container: BlocksContainer, settings: SplitSettings) -> list[PointText]:
+def point_texts(
+    container: BlocksContainer, settings: SplitSettings, window: TokenWindow | None = None
+) -> list[PointText]:
+    """Every point's text fits `window` (the embedding model's input): longer text is cut
+    into pieces on the same block, never cut off."""
+    points = _points(container, settings)
+    if window is None:
+        return points
+    fitted: list[PointText] = []
+    for point in points:
+        pieces = window.split(point.text)
+        if len(pieces) == 1:
+            fitted.append(point)
+            continue
+        kind = PointKind.WINDOW if point.kind == PointKind.BLOCK else point.kind
+        fitted += [replace(point, text=piece, kind=kind) for piece in pieces]
+    return fitted
+
+
+def _points(container: BlocksContainer, settings: SplitSettings) -> list[PointText]:
     texts = [b.text() for b in container.blocks if b.type == BlockType.TEXT]
     language = detect_language(texts)
     titles = table_titles(container.blocks, container.block_groups)
@@ -86,15 +117,21 @@ def point_texts(container: BlocksContainer, settings: SplitSettings) -> list[Poi
         if text:
             cite = group.citation_metadata
             payload = {"page": cite.page_number, "sheet": cite.sheet_name} if cite else {}
-            points.append(
+            pieces = (
+                windows(text, language, settings.window_chars, settings.window_overlap)
+                if len(text) > settings.max_block_chars
+                else [text]
+            )
+            points += [
                 PointText(
-                    text[: settings.max_block_chars],
+                    piece,
                     PointKind.TABLE,
                     None,
                     group.index,
                     {k: v for k, v in payload.items() if v is not None},
                 )
-            )
+                for piece in pieces
+            ]
     return points
 
 
