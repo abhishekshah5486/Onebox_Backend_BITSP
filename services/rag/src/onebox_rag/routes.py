@@ -1,7 +1,7 @@
 import math
 import urllib.parse
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,8 +13,9 @@ from onebox_rag.index.embed import EmbeddingUnavailableError
 from onebox_rag.index.qdrant_store import SearchIndexError
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.ingestor import Ingestor, ItemInfo, Source
-from onebox_rag.ingest.records import ContentStore, RecordStore
+from onebox_rag.ingest.records import ContentStore, RecordFilter, RecordSort, RecordStore
 from onebox_rag.models import Record, SourceType, Status
+from onebox_rag.models.base import CamelModel
 from onebox_rag.models.records import DateOrigin
 from onebox_rag.pipeline.parse import decode_blocks
 from onebox_rag.preferences import PreferenceStore, RagPreferences
@@ -31,6 +32,10 @@ INDEX_TIMEOUT = (
 INDEX_UNREACHABLE = (
     "The search index can't be reached just now, so no results are shown. Try again in a minute."
 )
+
+
+class ReindexBody(CamelModel):
+    ids: list[str] = Field(min_length=1, max_length=100)
 
 
 class RetrieveQuery(BaseModel):
@@ -222,21 +227,63 @@ def rag_router() -> APIRouter:
         request: Request,
         user: CurrentUser,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
-        before: datetime | None = None,
-        status: Status | None = None,
-        source_type: Annotated[SourceType | None, Query(alias="sourceType")] = None,
-        source_id: Annotated[str | None, Query(alias="sourceId", pattern=SOURCE_ID)] = None,
-    ) -> dict[str, list[dict[str, Any]]]:
+        offset: Annotated[int, Query(ge=0)] = 0,
+        q: Annotated[str | None, Query(max_length=200)] = None,
+        status: Annotated[list[Status] | None, Query()] = None,
+        source_type: Annotated[list[SourceType] | None, Query(alias="sourceType")] = None,
+        source_id: Annotated[list[str] | None, Query(alias="sourceId")] = None,
+        mime_type: Annotated[list[str] | None, Query(alias="mimeType")] = None,
+        min_size: Annotated[int | None, Query(alias="minSize", ge=0)] = None,
+        max_size: Annotated[int | None, Query(alias="maxSize", ge=0)] = None,
+        created_after: Annotated[str | None, Query(alias="createdAfter")] = None,
+        created_before: Annotated[str | None, Query(alias="createdBefore")] = None,
+        modified_after: Annotated[str | None, Query(alias="modifiedAfter")] = None,
+        modified_before: Annotated[str | None, Query(alias="modifiedBefore")] = None,
+        sort: RecordSort = "createdAt",
+        order: Literal["asc", "desc"] = "desc",
+    ) -> dict[str, Any]:
+        """A page of the user's records with filters, how many pass them, and the statuses and
+        file types the user has (for the filter menus)."""
         records: RecordStore = request.app.state.records
-        found = await records.find(
-            user.user_id,
-            limit=limit,
-            before=before,
-            status=status,
-            sourceType=source_type,
-            sourceId=source_id,
+        dates = parse_bounds(
+            created_after=created_after,
+            created_before=created_before,
+            modified_after=modified_after,
+            modified_before=modified_before,
+            now=datetime.now(UTC),
         )
-        return {"records": [record_json(record) for record in found]}
+        found, total = await records.page(
+            user.user_id,
+            RecordFilter(
+                name=q.strip() if q else None,
+                statuses=status,
+                source_types=source_type,
+                source_ids=source_id,
+                mime_types=mime_type,
+                min_size=min_size,
+                max_size=max_size,
+                dates=dates if dates.given() else None,
+            ),
+            sort=sort,
+            descending=order == "desc",
+            offset=offset,
+            limit=limit,
+        )
+        return {
+            "records": [record_json(record) for record in found],
+            "total": total,
+            "available": await records.facets(user.user_id),
+        }
+
+    @router.post("/records/reindex")
+    async def reindex_records(
+        request: Request, user: CurrentUser, body: ReindexBody
+    ) -> dict[str, Any]:
+        """Reads the records' files again from the start (e.g. after a failure, or to apply
+        new indexing settings)."""
+        ingestor: Ingestor = request.app.state.ingestor
+        queued, skipped = await ingestor.reindex(user.user_id, body.ids)
+        return {"queued": queued, "skipped": skipped}
 
     @router.get("/records/{record_id}")
     async def get_record(request: Request, user: CurrentUser, record_id: str) -> dict[str, Any]:

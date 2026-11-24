@@ -139,7 +139,7 @@ def test_users_only_see_their_records_and_deleting_frees_unshared_content(
 
     assert client.get(path, headers=bearer("intruder")).status_code == 404
     assert client.delete(path, headers=bearer("intruder")).status_code == 404
-    assert client.get("/rag/records", headers=bearer("intruder")).json() == {"records": []}
+    assert client.get("/rag/records", headers=bearer("intruder")).json()["total"] == 0
 
     blob_key = f"owner/contents/{mine['contentId']}/original"
 

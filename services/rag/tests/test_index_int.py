@@ -550,3 +550,30 @@ def test_a_users_settings_sources_and_files(client: TestClient) -> None:
 
     reset = client.delete("/rag/settings", headers=user).json()
     assert reset["settings"]["search"]["results"] == 8
+
+
+def test_records_are_listed_with_filters_and_read_again_on_reindex(client: TestClient) -> None:
+    user = bearer("u2c")
+    [policy] = upload(client, ("ferries.md", POLICY), kb="ferries", user="u2c")
+    [notes] = upload(client, ("notes.txt", b"Harbour opens at nine."), kb="misc", user="u2c")
+    for doc in (policy, notes):
+        wait_for(client, doc["id"], completed, user="u2c", timeout_s=120)
+
+    page = client.get("/rag/records?q=FERR", headers=user).json()
+    assert [r["id"] for r in page["records"]] == [policy["id"]] and page["total"] == 1
+    page = client.get(
+        "/rag/records?sort=name&order=asc&limit=1&offset=1&status=completed", headers=user
+    ).json()
+    assert [r["name"] for r in page["records"]] == ["notes.txt"] and page["total"] == 2
+    assert page["available"]["statuses"] == {"completed": 2}
+    by_type = client.get("/rag/records?mimeType=text/plain", headers=user).json()
+    assert [r["id"] for r in by_type["records"]] == [notes["id"]]
+
+    done = client.post(
+        "/rag/records/reindex", json={"ids": [policy["id"], "missing"]}, headers=user
+    ).json()
+    assert done["queued"] == [policy["id"]]
+    assert done["skipped"] == [{"id": "missing", "reason": "Record not found"}]
+    wait_for(client, policy["id"], completed, user="u2c", timeout_s=120)
+    found = client.post("/rag/retrieve", json={"query": "refunds parcels"}, headers=user).json()
+    assert policy["id"] in {c["record"]["recordId"] for c in found["chunks"]}

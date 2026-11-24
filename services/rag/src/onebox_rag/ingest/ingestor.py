@@ -6,14 +6,14 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.inspect import Inspection, Limits, inspect_file
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import Content, Record, SourceType, Stage, Status
-from onebox_rag.models.records import DateOrigin, MailInfo
+from onebox_rag.models.records import TERMINAL, DateOrigin, MailInfo
 from onebox_rag.parsers.base import ExtractedFile
 
 logger = logging.getLogger("onebox_rag.ingest")
@@ -222,6 +222,45 @@ class Ingestor:
                 parent_id=parent.id,
                 info=ItemInfo(created, modified),
             )
+
+    async def reindex(
+        self, user_id: str, record_ids: list[str]
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """Reads the records' files again from the start, as a new revision. A record stays
+        listed while that runs and is searchable again once the new revision is indexed."""
+        queued: list[str] = []
+        skipped: list[dict[str, Any]] = []
+        # Per content: None once restarted, else why not (records sharing it share the answer).
+        outcome: dict[str, str | None] = {}
+        for record_id in dict.fromkeys(record_ids):
+            record = await self._records.get(user_id, record_id)
+            if record is None:
+                skipped.append({"id": record_id, "reason": "Record not found"})
+                continue
+            cid = record.content_id
+            if cid not in outcome:
+                outcome[cid] = await self._restart(user_id, cid)
+            reason = outcome[cid]
+            if reason is None:
+                queued.append(record_id)
+            else:
+                skipped.append({"id": record_id, "reason": reason})
+        return queued, skipped
+
+    async def _restart(self, user_id: str, cid: str) -> str | None:
+        content = await self._contents.get(cid)
+        if content is None or content.blob_key is None:
+            return "Its file is not stored"
+        if content.status not in TERMINAL:
+            return "It is being read already"
+        fresh = await self._contents.restart(content, self._now())
+        if fresh is None:
+            return "It is being read already"
+        await self._records.update_for_content(
+            cid, self._now(), status=Status.QUEUED, stage=Stage.PARSE, reason=None
+        )
+        await self._queue.enqueue(user_id, cid, fresh.revision)
+        return None
 
     async def delete(self, user_id: str, record_id: str) -> bool:
         """Removes a record and its attachments' records; content nothing else holds goes too."""

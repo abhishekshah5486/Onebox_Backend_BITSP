@@ -220,6 +220,14 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   `summaries` (`on`, `first_use`, `off`), `headerDates` (`off`, `true`, `all`),
   `windowChars` and `windowOverlap`, applied to files indexed from then on. A server switch
   still wins: with `RAG_CLASSIFY=false` nobody's files are summarized.
+- **Records table.** `GET /rag/records` pages the user's records (`offset`, `limit` up to 100)
+  with filters (`q` part of the name, `status`, `sourceType`, `sourceId`, `mimeType`, each
+  repeatable; `minSize`/`maxSize`; `createdAfter`/`createdBefore`/`modifiedAfter`/
+  `modifiedBefore` on the record's own dates) and `sort` (`createdAt`, `updatedAt`,
+  `sourceCreatedAt`, `sourceModifiedAt`, `name`, `sizeBytes`) with `order`; it returns `total`
+  and the statuses and file types the user has, with counts. `POST /rag/records/reindex`
+  (`ids`, up to 100) reads settled records' files again as a new revision (a record being
+  read is skipped, with why); the record is out of search until that revision is indexed.
 - **Sources and files.** `GET /rag/sources` lists the user's knowledge bases and mail accounts
   with their record counts per status and when the last record arrived;
   `GET /rag/records/{id}/file` returns a record's original bytes (an email as its .eml).

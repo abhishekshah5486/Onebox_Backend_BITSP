@@ -1,5 +1,8 @@
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic.alias_generators import to_camel
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
@@ -8,7 +11,7 @@ from pymongo.errors import DuplicateKeyError
 
 from onebox_rag.dates import DateBounds
 from onebox_rag.models import Content, Record
-from onebox_rag.models.records import DateOrigin
+from onebox_rag.models.records import TERMINAL, DateOrigin, Stage, Status
 
 Doc = dict[str, Any]
 
@@ -16,6 +19,44 @@ Doc = dict[str, Any]
 def _set(fields: dict[str, Any], now: datetime) -> Doc:
     # Callers pass model field names; documents store them camelCase.
     return {"$set": {**{to_camel(k): v for k, v in fields.items()}, "updatedAt": now}}
+
+
+RecordSort = Literal[
+    "createdAt", "updatedAt", "sourceCreatedAt", "sourceModifiedAt", "name", "sizeBytes"
+]
+
+
+@dataclass(frozen=True)
+class RecordFilter:
+    # Part of the name, any case.
+    name: str | None = None
+    statuses: Sequence[str] | None = None
+    source_types: Sequence[str] | None = None
+    source_ids: Sequence[str] | None = None
+    mime_types: Sequence[str] | None = None
+    min_size: int | None = None
+    max_size: int | None = None
+    # The record's own dates, as a search's date bounds read them.
+    dates: DateBounds | None = None
+
+    def query(self) -> Doc:
+        query: Doc = {}
+        if self.name:
+            query["name"] = {"$regex": re.escape(self.name), "$options": "i"}
+        for field, values in (
+            ("status", self.statuses),
+            ("sourceType", self.source_types),
+            ("sourceId", self.source_ids),
+            ("mimeType", self.mime_types),
+        ):
+            if values:
+                query[field] = {"$in": values}
+        size = {
+            k: v for k, v in (("$gte", self.min_size), ("$lte", self.max_size)) if v is not None
+        }
+        if size:
+            query["sizeBytes"] = size
+        return {**query, **_dated(self.dates)}
 
 
 class ContentStore:
@@ -52,6 +93,30 @@ class ContentStore:
         doc = await self._contents.find_one_and_update(
             {"_id": content_id},
             _set(fields, now),
+            return_document=ReturnDocument.AFTER,
+        )
+        return Content.model_validate(doc) if doc else None
+
+    async def restart(self, content: Content, now: datetime) -> Content | None:
+        """Reads a settled content again under its next revision, from its stored file; None
+        when it moved on meanwhile (being read, or restarted by another request)."""
+        settled = [s.value for s in TERMINAL]
+        doc = await self._contents.find_one_and_update(
+            {"_id": content.id, "revision": content.revision, "status": {"$in": settled}},
+            {
+                "$set": {
+                    "revision": content.revision + 1,
+                    "status": Status.QUEUED.value,
+                    "stage": Stage.PARSE.value,
+                    "reason": None,
+                    # Chosen per revision: a new one decides again.
+                    "engine": None,
+                    "engineReason": None,
+                    "ocrProvider": None,
+                    "workerDeaths": 0,
+                    "updatedAt": now,
+                }
+            },
             return_document=ReturnDocument.AFTER,
         )
         return Content.model_validate(doc) if doc else None
@@ -145,6 +210,47 @@ class RecordStore:
         return [
             Record.model_validate(d) async for d in self._records.find({"contentId": content_id})
         ]
+
+    async def page(
+        self,
+        user_id: str,
+        filters: RecordFilter,
+        *,
+        sort: RecordSort = "createdAt",
+        descending: bool = True,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[Record], int]:
+        """A page of the user's records that pass the filters, and how many pass in all."""
+        query = {"userId": user_id, **filters.query()}
+        direction = DESCENDING if descending else ASCENDING
+        cursor = (
+            self._records.find(query)
+            .sort([(sort, direction), ("_id", direction)])
+            .skip(offset)
+            .limit(limit)
+        )
+        found = [Record.model_validate(doc) async for doc in cursor]
+        return found, await self._records.count_documents(query)
+
+    async def facets(self, user_id: str) -> dict[str, dict[str, int]]:
+        """How many of the user's records are in each status and of each file type."""
+        cursor = await self._records.aggregate(
+            [
+                {"$match": {"userId": user_id}},
+                {
+                    "$facet": {
+                        "statuses": [{"$group": {"_id": "$status", "n": {"$sum": 1}}}],
+                        "mimeTypes": [{"$group": {"_id": "$mimeType", "n": {"$sum": 1}}}],
+                    }
+                },
+            ]
+        )
+        row = await cursor.next()
+        return {
+            name: {group["_id"]: group["n"] for group in row[name]}
+            for name in ("statuses", "mimeTypes")
+        }
 
     async def sources(self, user_id: str) -> list[dict[str, Any]]:
         """Each source (knowledge base or mail account) of the user: its records, how many are
