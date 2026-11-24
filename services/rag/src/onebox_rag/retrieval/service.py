@@ -3,6 +3,7 @@ grouped into units, neighbouring paragraphs in the room left."""
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -73,7 +74,22 @@ class RetrieveSettings:
     title_depth: int = 25
     title_min_score: float = 0.45
     unindexed_max: int = 10
+    # A search with date bounds also runs once without them (this many results) and lists
+    # the best few records the dates left out, each with up to this many passages.
+    outside_dates: bool = True
+    outside_dates_limit: int = 10
+    outside_dates_max: int = 3
+    outside_dates_passages: int = 3
 
+
+# Bounds match when a record was written or last changed, not when what it describes
+# happened: a later write-up about the period is left out however well it matches.
+OUTSIDE_DATES_NOTE = (
+    "Also matching, but written outside your dates, so the date filter left them out of the "
+    "results: the best matches of the same search without dates, each with its dates. A later "
+    "write-up, such as release notes, a retrospective or a weekly summary, can still be about "
+    "your period."
+)
 
 # Said beside results that may not be all there, so "nothing found" isn't taken as "none".
 TITLE_LOOKUP_FAILED = (
@@ -92,6 +108,8 @@ class Retrieved:
     incomplete: str | None = None
     # What the search can't see yet: {code, count, message}.
     notices: list[dict[str, Any]] = field(default_factory=list)
+    # Records the date bounds left out that match without them, best first.
+    outside_dates: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Retriever:
@@ -131,31 +149,75 @@ class Retriever:
         dense, sparse = await asyncio.gather(
             self._dense.embed(user_id, model, [query]), asyncio.to_thread(sparse_query, query)
         )
+        search = (user_id, collection, dense[0], sparse, content_ids, scope)
         unindexed = asyncio.create_task(
             self._unindexed(user_id, collection, dense[0], content_ids, scope, dates)
         )
-        try:
-            chunks = await self._chunks(
-                user_id,
-                collection,
-                dense[0],
-                sparse,
-                content_ids,
-                scope,
-                dates,
-                limit,
-                max_per_record,
+        undated = (
+            asyncio.create_task(
+                self._quietly(self._chunks(*search, None, self._settings.outside_dates_limit, None))
             )
+            if dates is not None and self._settings.outside_dates
+            else None
+        )
+        try:
+            cited = await self._chunks(*search, dates, limit, max_per_record)
         except BaseException:
             unindexed.cancel()
+            if undated is not None:
+                undated.cancel()
             raise
         names = await unindexed
+        outside = (
+            self._outside(await undated, dates, {r.id for _, r in cited})
+            if undated is not None and dates is not None
+            else []
+        )
         return Retrieved(
-            chunks,
+            [chunk for chunk, _ in cited],
             names or [],
             TITLE_LOOKUP_FAILED if names is None else None,
             notices,
+            outside,
         )
+
+    async def _quietly(
+        self, search: Awaitable[list[tuple[dict[str, Any], Record]]]
+    ) -> list[tuple[dict[str, Any], Record]]:
+        """The net only adds to a search: its own failure leaves the result as it was."""
+        try:
+            return await search
+        except Exception:
+            logger.warning("search without dates failed; results unchanged", exc_info=True)
+            return []
+
+    def _outside(
+        self,
+        found: list[tuple[dict[str, Any], Record]],
+        dates: DateBounds,
+        shown: set[str],
+    ) -> list[dict[str, Any]]:
+        """The best records of the search without dates that the bounds leave out, in its
+        order. One inside the bounds was ranked too low, not left out by dates: skipped."""
+        settings = self._settings
+        picked: dict[str, list[dict[str, Any]]] = {}
+        skipped: set[str] = set()
+        for chunk, record in found:
+            if record.id in skipped:
+                continue
+            if record.id in picked:
+                if len(picked[record.id]) < settings.outside_dates_passages:
+                    picked[record.id].append(chunk)
+                continue
+            if (
+                len(picked) >= settings.outside_dates_max
+                or record.id in shown
+                or dates.admits(*record.dates())
+            ):
+                skipped.add(record.id)
+                continue
+            picked[record.id] = [chunk]
+        return [chunk for chunks in picked.values() for chunk in chunks]
 
     async def _notices(
         self, user_id: str, scope: Scope, dates: DateBounds | None
@@ -196,7 +258,7 @@ class Retriever:
         dates: DateBounds | None,
         limit: int,
         max_per_record: int | None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[tuple[dict[str, Any], Record]]:
         cut = self._settings.record_cut
         fetch = limit
         if cut.enabled:
@@ -237,7 +299,12 @@ class Retriever:
             if r.parent_id and r.mail is None
         }
         return [
-            _chunk(unit, record, containers[unit.content_id], parents.get(record.parent_id or ""))
+            (
+                _chunk(
+                    unit, record, containers[unit.content_id], parents.get(record.parent_id or "")
+                ),
+                record,
+            )
             for unit, record in cited
         ]
 
@@ -373,6 +440,7 @@ def _chunk(
             "sourceType": record.source_type,
             "sourceId": record.source_id,
             "updatedAt": record.updated_at.isoformat(),
+            "dates": _dates(record),
             **({"mail": _mail(record)} if record.mail is not None else {}),
             **(
                 {"attachedTo": {"recordId": parent.id, "name": parent.name, "mail": _mail(parent)}}
@@ -386,6 +454,17 @@ def _chunk(
             "blockIndices": unit.blocks,
             **({"neighbourOf": unit.neighbour_of} if unit.neighbour_of is not None else {}),
         },
+    }
+
+
+def _dates(record: Record) -> dict[str, Any]:
+    """When the record was written and last changed, and where those dates came from (an
+    upload's may be only when it was uploaded)."""
+    created, modified = record.dates()
+    return {
+        "created": created.isoformat(),
+        "modified": modified.isoformat(),
+        "origin": record.date_origin,
     }
 
 

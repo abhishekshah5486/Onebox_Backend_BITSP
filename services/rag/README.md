@@ -162,7 +162,15 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   A bound is `YYYY-MM-DD` (the whole day, UTC) or a datetime with its zone; a reversed range
   or an "after" in the future is a 400. Records' changes reach their points at once, and a
   sweep (`RAG_UPKEEP_SWEEP_S`) catches up any that failed. Each record says where its dates
-  came from (`dateOrigin`: source, lastModified, upload or content).
+  came from (`dateOrigin`: source, lastModified, upload or content), and every passage's record
+  carries `dates` (created, modified, origin).
+- **What the dates left out.** Bounds match when a record was written or last changed, not when
+  what it describes happened, so a retrospective written in April about March is left out of
+  a March search. A search with dates therefore also runs once without them (10 results,
+  beside the dated one) and returns `outsideDates`: up to 3 records the bounds left out, 3
+  passages each, under a note saying so. A record already returned, or one inside the
+  bounds that only ranked lower, is never listed; if that search fails, the result is as it
+  would have been. `RAG_DATE_SAFETY_NET=false` turns it off.
 - **Dates an upload states.** With `RAG_CONTENT_DOCUMENT_DATES` (`off` by default; `true`
   replaces only the upload time, `all` the file's last-modified time too), an upload takes the
   dates its header states once indexed: labelled lines ("Date:", "Sent:", "Created:",

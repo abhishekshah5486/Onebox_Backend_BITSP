@@ -23,6 +23,15 @@ class DateBounds:
     modified_after: datetime | None = None
     modified_before: datetime | None = None
 
+    def admits(self, created: datetime, modified: datetime) -> bool:
+        """Whether a record with these dates is inside the bounds."""
+        return not (
+            (self.created_after is not None and created < self.created_after)
+            or (self.created_before is not None and created > self.created_before)
+            or (self.modified_after is not None and modified < self.modified_after)
+            or (self.modified_before is not None and modified > self.modified_before)
+        )
+
     def given(self) -> bool:
         return any(
             v is not None

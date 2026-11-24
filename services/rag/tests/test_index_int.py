@@ -335,3 +335,34 @@ def test_an_upload_takes_the_date_its_header_states(
         while not dated(memo["id"]):
             assert time.monotonic() < deadline
             time.sleep(0.5)
+
+
+def test_a_dated_search_lists_matches_its_dates_left_out(client: TestClient) -> None:
+    march, april = 1_709_424_000_000, 1_712_102_400_000  # 2024-03-03, 2024-04-03
+    response = client.post(
+        "/rag/documents",
+        headers=bearer("u6"),
+        files=[
+            ("files", ("standup.md", b"Ferry timetable standup notes.", "text/markdown")),
+            ("files", ("retro.md", b"Ferry timetable retrospective for March.", "text/markdown")),
+        ],
+        data={"knowledgeBase": "ferry", "lastModified": [str(march), str(april)]},
+    )
+    standup, retro = response.json()["records"]
+    for record in (standup, retro):
+        wait_for(client, record["id"], completed, user="u6", timeout_s=120)
+
+    def search(**dates: str) -> Json:
+        return dict(
+            client.post(
+                "/rag/retrieve", json={"query": "ferry timetable", **dates}, headers=bearer("u6")
+            ).json()
+        )
+
+    found = search(createdAfter="2024-03-01", createdBefore="2024-03-31")
+    assert {c["record"]["recordId"] for c in found["chunks"]} == {standup["id"]}
+    outside = found["outsideDates"]
+    assert {c["record"]["recordId"] for c in outside["chunks"]} == {retro["id"]}
+    assert outside["chunks"][0]["record"]["dates"]["created"].startswith("2024-04-03")
+    assert outside["chunks"][0]["record"]["dates"]["origin"] == "lastModified"
+    assert "outsideDates" not in search()

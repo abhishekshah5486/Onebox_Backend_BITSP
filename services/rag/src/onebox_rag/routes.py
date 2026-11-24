@@ -17,7 +17,7 @@ from onebox_rag.models import Record, SourceType, Status
 from onebox_rag.models.records import DateOrigin
 from onebox_rag.pipeline.parse import decode_blocks
 from onebox_rag.retrieval.read import FocusSettings, focused_read, read_page
-from onebox_rag.retrieval.service import Retriever, Scope
+from onebox_rag.retrieval.service import OUTSIDE_DATES_NOTE, Retriever, Scope
 
 SOURCE_ID = r"^[A-Za-z0-9_-]{1,64}$"
 DEFAULT_RETRIEVE_LIMIT, MAX_RETRIEVE_LIMIT = 8, 50
@@ -92,6 +92,8 @@ async def _retrieve(request: Request, user_id: str, body: RetrieveQuery) -> dict
         out["incomplete"] = found.incomplete
     if found.notices:
         out["notices"] = found.notices
+    if found.outside_dates:
+        out["outsideDates"] = {"note": OUTSIDE_DATES_NOTE, "chunks": found.outside_dates}
     return out
 
 

@@ -150,6 +150,9 @@ class Settings(BaseSettings):
     # embedding model; re-measure for others) and how many are listed.
     RAG_TITLE_MIN_SCORE: float = Field(default=0.45, ge=0, le=1)
     RAG_TITLE_UNINDEXED_MAX: int = Field(default=10, ge=0, le=50)
+    # A search with date bounds also lists up to 3 matching records the dates left out (a
+    # write-up after the period it is about), found by the same search without dates.
+    RAG_DATE_SAFETY_NET: bool = True
     RAG_SMALL_TABLE_CELLS: int = Field(default=250, ge=0)
     # A read with a question returns a record whole up to this many characters, else the
     # part that answers it within them.
