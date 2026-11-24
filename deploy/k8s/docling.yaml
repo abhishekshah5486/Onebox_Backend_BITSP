@@ -1,0 +1,56 @@
+# Docling: PDF, Word and PowerPoint layout and tables for the RAG service (internal only).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docling
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: docling }
+  template:
+    metadata:
+      labels: { app: docling }
+    spec:
+      enableServiceLinks: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: docling
+          image: onebox/docling:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4013 }]
+          env:
+            # One model-holding worker, capped below the pod's limit so a huge file only
+            # takes down its worker.
+            - { name: DOCLING_WORKERS, value: '1' }
+            - { name: DOCLING_MEMORY_MB, value: '3072' }
+            - name: CREDENTIALS_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: onebox-secrets, key: CREDENTIALS_ENCRYPTION_KEY } }
+          startupProbe:
+            httpGet: { path: /health/live, port: 4013 }
+            periodSeconds: 5
+            failureThreshold: 36
+          # Ready once the models are loaded.
+          readinessProbe:
+            httpGet: { path: /health/ready, port: 4013 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: 4013 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { memory: 4Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          # LibreOffice profiles and conversions, and PyTorch's scratch files.
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 2Gi } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: docling
+spec:
+  selector: { app: docling }
+  ports: [{ port: 4013 }]

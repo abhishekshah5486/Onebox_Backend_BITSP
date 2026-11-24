@@ -1,4 +1,5 @@
 import {
+  categoriesOf,
   decodeUidSet,
   ingestDedupeKey,
   MAIL_CATEGORIES,
@@ -23,12 +24,45 @@ const flagState = (flags: string[]) => ({
   isStarred: flags.includes('\\Flagged'),
 });
 
-export function createChangesHandler(collections: MailCollections) {
+export function createChangesHandler(
+  collections: MailCollections,
+  // How sending an outbox message ended; the compose module records it.
+  onSendResult: (
+    outboxId: string,
+    status: 'sent' | 'failed',
+    error: string | null,
+  ) => Promise<void> = async () => {},
+  // Hands labels put on in OneBox to the mail server (Gmail keeps them as its own labels).
+  writeLabels: (doc: MessageDoc, add: string[], remove: string[]) => Promise<void> = async () => {},
+) {
   const { messages } = collections;
 
   return async (envelope: JobEnvelope<MailboxChangePayload>, { logger }: JobContext) => {
     const { accountId, payload: change } = envelope;
     if (!accountId) throw new ValidationError('Mailbox change is missing accountId');
+
+    if (change.type === 'sendResult') {
+      await onSendResult(change.outboxId, change.status, change.error);
+      return;
+    }
+
+    // Categories the AI picked; every copy keeps them, and inbox copies Gmail left untagged
+    // move to the matching tab.
+    if (change.type === 'categorized') {
+      const doc = await messages.findOne({ _id: change.messageId, accountId });
+      if (!doc) return;
+      const filter = doc.messageIdHeader
+        ? { accountId, threadId: doc.threadId, messageIdHeader: doc.messageIdHeader }
+        : { _id: doc._id };
+      await messages.updateMany(filter, { $set: { aiCategories: change.categories } });
+      await messages.updateMany(
+        { ...filter, role: 'inbox', 'categories.0': { $exists: false } },
+        { $set: { category: tabOf(change.categories) } },
+      );
+      await refreshThread(collections, doc.threadId);
+      logger.info({ accountId, categories: change.categories }, 'categories filled in');
+      return;
+    }
 
     // Labels put on in OneBox (by AI or from a suggestion); every copy of the message gets them.
     if (change.type === 'tagged') {
@@ -47,6 +81,9 @@ export function createChangesHandler(collections: MailCollections) {
         await messages.updateMany(filter, { $pull: { aiLabels: { $in: change.remove } } });
       }
       await refreshThread(collections, doc.threadId);
+      if (change.add.length || change.remove.length) {
+        await writeLabels(doc, change.add, change.remove);
+      }
       logger.info(
         { accountId, added: change.add.length, removed: change.remove.length },
         'labels applied',
@@ -91,7 +128,7 @@ export function createChangesHandler(collections: MailCollections) {
               role: to.role,
               uid,
               uidValidity: to.uidValidity,
-              category: to.role === 'inbox' ? tabOf(doc.categories ?? []) : null,
+              category: to.role === 'inbox' ? tabOf(categoriesOf(doc)) : null,
               pendingSince: null,
               movingTo: null,
             });
@@ -209,6 +246,8 @@ export function createChangesHandler(collections: MailCollections) {
               isRead: 1,
               isStarred: 1,
               category: 1,
+              categories: 1,
+              aiCategories: 1,
               movingTo: 1,
             },
           },
@@ -232,7 +271,8 @@ export function createChangesHandler(collections: MailCollections) {
           if (change.categories) {
             const tags = tagsOf.get(doc.uid) ?? [];
             if (tags.join() !== (doc.categories ?? []).join()) set.categories = tags;
-            const tab = change.role === 'inbox' ? tabOf(tags) : null;
+            const shown = categoriesOf({ categories: tags, aiCategories: doc.aiCategories });
+            const tab = change.role === 'inbox' ? tabOf(shown) : null;
             if (tab !== doc.category) set.category = tab;
           }
           if (Object.keys(set).length > 0) {

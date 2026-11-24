@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { decodeHTML } from 'entities';
+import { convert } from 'html-to-text';
 import { simpleParser, type AddressObject } from 'mailparser';
 import type { Address, AttachmentMeta } from '../db/collections';
 import { readAuthentication, type Authentication } from './authentication';
@@ -19,12 +21,15 @@ export interface ParsedMessage {
   htmlBody: string | null;
   hasRemoteImages: boolean;
   snippet: string;
+  // Which rules made textBody and snippet; older mail is redone when they change.
+  textVersion: number;
   attachments: AttachmentMeta[];
   unsubscribe: Unsubscribe | null;
   authentication: Authentication;
 }
 
 const MAX_TEXT_CHARS = 200_000;
+export const TEXT_VERSION = 4;
 
 function addresses(field: AddressObject | AddressObject[] | undefined): Address[] {
   const list = Array.isArray(field) ? field : field ? [field] : [];
@@ -39,21 +44,40 @@ const ids = (value: string | string[] | undefined) =>
     .map((id) => id.trim())
     .filter(Boolean);
 
-function htmlToText(html: string): string {
-  return html
-    .replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>');
+const HEADINGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+
+// Readable text from HTML: links keep their words only, images go, headings keep their case.
+export function htmlToText(html: string): string {
+  return convert(html, {
+    wordwrap: false,
+    selectors: [
+      { selector: 'a', options: { ignoreHref: true } },
+      { selector: 'img', format: 'skip' },
+      ...HEADINGS.map((selector) => ({ selector, options: { uppercase: false } })),
+    ],
+  });
 }
 
+// Some senders put their HTML in the plain-text part too.
+const TAGS = '!doctype|html|head|body|div|p|table|tr|td|span|br|a|img|style';
+const looksLikeHtml = (text: string) => new RegExp(`<(${TAGS})\\b[^>]*>`, 'i').test(text);
+// A tag left in the text anyway, even one the sender never closed.
+const STRAY_TAG = new RegExp(`</?(?:${TAGS})\\b[^>]*(?:>|$)`, 'gi');
+export const readableText = (text: string) => (looksLikeHtml(text) ? htmlToText(text) : text);
+
+// Invisible characters senders pad previews with (e.g. U+034F, U+FEFF, soft hyphens).
+const INVISIBLE = /\p{Default_Ignorable_Code_Point}/gu;
+// Plain-text links written as "Docs<https://…>".
+const BRACKETED_LINK = /<(?:https?|mailto):[^<>]*>/gi;
+
 export function makeSnippet(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().slice(0, 200);
+  return decodeHTML(text)
+    .replace(BRACKETED_LINK, ' ')
+    .replace(STRAY_TAG, ' ')
+    .replace(INVISIBLE, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
 }
 
 export async function parseMessage(raw: Buffer): Promise<ParsedMessage> {
@@ -70,7 +94,7 @@ export async function parseMail(raw: Buffer): Promise<{ message: ParsedMessage; 
   });
   const sanitized = typeof mail.html === 'string' ? sanitizeEmailHtml(mail.html) : null;
   const textBody = (
-    mail.text || (typeof mail.html === 'string' ? htmlToText(mail.html) : '')
+    mail.text ? readableText(mail.text) : typeof mail.html === 'string' ? htmlToText(mail.html) : ''
   ).slice(0, MAX_TEXT_CHARS);
 
   const message: ParsedMessage = {
@@ -87,6 +111,7 @@ export async function parseMail(raw: Buffer): Promise<{ message: ParsedMessage; 
     htmlBody: sanitized?.html ?? null,
     hasRemoteImages: sanitized?.hasRemoteImages ?? false,
     snippet: makeSnippet(textBody),
+    textVersion: TEXT_VERSION,
     attachments: mail.attachments.map((attachment) => ({
       filename: attachment.filename ?? 'attachment',
       contentType: attachment.contentType,

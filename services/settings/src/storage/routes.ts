@@ -1,14 +1,20 @@
 import { currentUser } from '@onebox/auth-kit';
-import { STORAGE_PROVIDERS, storagePathSchema } from '@onebox/contracts';
+import {
+  keyStorageConnectSchema,
+  OAUTH_STORAGE_PROVIDERS,
+  STORAGE_PROVIDERS,
+  storagePathSchema,
+} from '@onebox/contracts';
 import { AppError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { CALLBACK_SLUGS, PROVIDER_NAMES, type StorageProviderId } from './provider';
+import { CALLBACK_SLUGS, PROVIDER_NAMES, type OAuthStorageProviderId } from './provider';
 import type { StorageService } from './storage-service';
 
 const provider = z.enum(STORAGE_PROVIDERS);
+const oauthProvider = z.enum(OAUTH_STORAGE_PROVIDERS);
 const account = z.object({
   id: z.uuid(),
   provider,
@@ -31,6 +37,15 @@ export function registerStorageRoutes(scope: FastifyInstance, storage: StorageSe
           200: z.object({
             providers: z.array(provider),
             accounts: z.array(account),
+            s3Presets: z.array(
+              z.object({
+                id: z.string(),
+                name: z.string(),
+                region: z.string(),
+                needsAccount: z.boolean(),
+                needsEndpoint: z.boolean(),
+              }),
+            ),
             failures: z.array(
               z.object({
                 provider,
@@ -50,11 +65,19 @@ export function registerStorageRoutes(scope: FastifyInstance, storage: StorageSe
     '/storage/connect',
     {
       schema: {
-        body: z.object({ provider }),
+        body: z.object({ provider: oauthProvider }),
         response: { 200: z.object({ url: z.string(), expiresAt: z.string() }) },
       },
     },
     async (request) => storage.authUrl(userId(request), request.body.provider),
+  );
+
+  // Buckets and containers connect with keys rather than a sign-in.
+  routes.post(
+    '/storage/keys',
+    { schema: { body: keyStorageConnectSchema, response: { 201: account } } },
+    async (request, reply) =>
+      reply.code(201).send(await storage.connectKeys(userId(request), request.body)),
   );
 
   routes.patch(
@@ -93,7 +116,10 @@ const callbackQuery = z.object({
 });
 
 const bySlug = new Map(
-  (Object.entries(CALLBACK_SLUGS) as [StorageProviderId, string][]).map(([id, slug]) => [slug, id]),
+  (Object.entries(CALLBACK_SLUGS) as [OAuthStorageProviderId, string][]).map(([id, slug]) => [
+    slug,
+    id,
+  ]),
 );
 
 // Public: the provider redirects the browser here, so the signed state identifies the user.

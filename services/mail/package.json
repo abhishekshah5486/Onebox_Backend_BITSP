@@ -10,6 +10,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1148.0",
+    "@aws-sdk/s3-request-presigner": "3.1148.0",
+    "@azure/storage-blob": "12.34.0",
     "@onebox/auth-kit": "*",
     "@onebox/blob-store": "*",
     "@onebox/config": "*",
@@ -22,8 +25,10 @@
     "@onebox/mailbox-state": "*",
     "@onebox/net-guard": "*",
     "@onebox/queue": "*",
+    "entities": "8.1.0",
     "fastify": "^5.12.5",
     "fastify-type-provider-zod": "^7.0.0",
+    "html-to-text": "10.0.1",
     "ioredis": "^6.0.0",
     "mailparser": "^3.9.36",
     "mongodb": "^7.7.0",
@@ -32,6 +37,7 @@
   },
   "devDependencies": {
     "@onebox/testing": "*",
+    "@types/html-to-text": "9.0.4",
     "@types/mailparser": "^3.9.0",
     "@types/sanitize-html": "^2.16.2",
     "bullmq": "6.3.11"

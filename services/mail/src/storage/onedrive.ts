@@ -88,7 +88,22 @@ export function oneDriveUploader(logger: Logger, send: typeof fetch = fetch): Up
       });
       if (!done.ok) throw failed(done);
       const item = (await done.json()) as DriveItem;
-      return { name: item.name, link: item.webUrl };
+      return { id: item.id, name: item.name, link: item.webUrl };
+    },
+
+    // A view-only link that works without signing in.
+    async share(token, file) {
+      const response = await graph(
+        token,
+        `${GRAPH}/items/${encodeURIComponent(file.id)}/createLink`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ type: 'view', scope: 'anonymous' }),
+        },
+      );
+      if (!response.ok) throw failed(response);
+      return ((await response.json()) as { link: { webUrl: string } }).link.webUrl;
     },
 
     forget(accountId) {

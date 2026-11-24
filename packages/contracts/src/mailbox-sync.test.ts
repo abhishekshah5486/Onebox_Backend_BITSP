@@ -39,6 +39,12 @@ describe('mailbox ops', () => {
     expect(mailboxOpPayloadSchema.safeParse(op(['\\Deleted'])).success).toBe(false);
   });
 
+  it('accepts Gmail labels to put on and take off, by path', () => {
+    const op = (add: string[]) => ({ ...base, op: { type: 'labels', add, remove: ['Old'] } });
+    expect(mailboxOpPayloadSchema.safeParse(op(['Leads', 'Work/Clients'])).success).toBe(true);
+    expect(mailboxOpPayloadSchema.safeParse(op([''])).success).toBe(false);
+  });
+
   it('rejects empty uid lists', () => {
     expect(
       mailboxOpPayloadSchema.safeParse({ ...base, uids: [], op: { type: 'expunge' } }).success,
@@ -47,6 +53,13 @@ describe('mailbox ops', () => {
 });
 
 describe('mailbox changes', () => {
+  it('takes only known categories from the AI', () => {
+    const categorized = (categories: string[]) =>
+      mailboxChangePayloadSchema.safeParse({ type: 'categorized', messageId: 'm1', categories });
+    expect(categorized(['purchases', 'updates']).success).toBe(true);
+    expect(categorized(['receipts']).success).toBe(false);
+  });
+
   it('defaults snapshot flags and moved keepSource', () => {
     const snapshot = mailboxChangePayloadSchema.parse({
       type: 'snapshot',

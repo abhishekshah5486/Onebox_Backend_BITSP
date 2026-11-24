@@ -48,7 +48,25 @@ export function createStorageService({
     return (await response.json()) as { provider: StorageProviderId; accessToken: string };
   }
 
+  // Where files too big to attach go before their link is put in an email.
+  const EMAIL_FOLDER = 'OneBox/Email attachments';
+
   return {
+    // A file too large to attach: uploaded to the chosen account and shared by link.
+    async shareFile(
+      userId: string,
+      accountId: string,
+      file: { name: string; type: string; body: Buffer },
+    ) {
+      const { provider, accessToken: token } = await accessToken(userId, accountId);
+      const uploader = uploaders[provider];
+      const folder = await uploader.folderAt(token, accountId, EMAIL_FOLDER);
+      const uploaded = await uploader.upload(token, folder, file);
+      const link = await uploader.share(token, uploaded);
+      logger.info({ provider, sizeBytes: file.body.length }, 'large file shared for an email');
+      return { name: uploaded.name, link, provider, sizeBytes: file.body.length };
+    },
+
     async save(
       userId: string,
       messageId: string,

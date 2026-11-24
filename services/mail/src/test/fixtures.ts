@@ -7,6 +7,10 @@ import {
   type IngestPayload,
 } from '@onebox/contracts';
 
+import type { MessageDoc } from '../db/collections';
+
+type Indexed = Omit<MessageDoc, 'htmlBody'>;
+
 let nextUid = 1;
 
 export interface MailSpec {
@@ -82,3 +86,31 @@ export function ingestJob(
     payload,
   });
 }
+
+// A stored message as the search feed reads it (no HTML body).
+export const storedMessage = (overrides: Partial<Indexed> = {}): Indexed =>
+  ({
+    _id: 'm1',
+    userId: 'u1',
+    accountId: 'a1',
+    threadId: 't1',
+    folder: 'INBOX',
+    role: 'inbox',
+    from: { name: 'Priya', address: 'priya@acme.example' },
+    to: [{ name: null, address: 'me@gmail.com' }],
+    cc: [],
+    subject: 'Pricing for 20 seats',
+    snippet: 'Sharing the quote',
+    textBody: 'Sharing the quote for 20 seats.',
+    attachments: [
+      { filename: 'quote.pdf', contentType: 'application/pdf', sizeBytes: 10, inline: false },
+      { filename: 'logo.png', contentType: 'image/png', sizeBytes: 5, inline: true },
+    ],
+    aiLabels: ['Sales'],
+    categories: ['updates'],
+    isRead: false,
+    isStarred: true,
+    sizeBytes: 2048,
+    receivedAt: new Date('2026-10-30T10:00:00.000Z'),
+    ...overrides,
+  }) as Indexed;

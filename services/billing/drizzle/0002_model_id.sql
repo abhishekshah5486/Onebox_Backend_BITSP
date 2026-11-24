@@ -1,0 +1,1 @@
+ALTER TABLE "billing"."ledger" ADD COLUMN "model_id" text;

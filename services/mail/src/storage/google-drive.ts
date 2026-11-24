@@ -78,8 +78,18 @@ export function googleDriveUploader(logger: Logger, send: typeof fetch = fetch):
         headers: { 'content-type': type },
         body: new Uint8Array(body),
       });
-      const file = (await done.json()) as { name: string; webViewLink: string };
-      return { name: file.name, link: file.webViewLink };
+      const file = (await done.json()) as { id: string; name: string; webViewLink: string };
+      return { id: file.id, name: file.name, link: file.webViewLink };
+    },
+
+    // drive.file may share the files OneBox made: anyone with the link can view.
+    async share(token, file) {
+      await drive(token, `${DRIVE_FILES}/${encodeURIComponent(file.id)}/permissions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+      });
+      return file.link;
     },
 
     forget(accountId) {

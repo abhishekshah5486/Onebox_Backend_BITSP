@@ -48,6 +48,7 @@ export interface MessageDoc {
   replyTo: Address[];
   subject: string;
   snippet: string;
+  textVersion?: number;
   textBody: string;
   htmlBody: string | null;
   hasRemoteImages: boolean;
@@ -64,6 +65,8 @@ export interface MessageDoc {
   aiLabels?: string[];
   // Every Gmail category (tabs, Purchases, Travel); missing on mail stored before them.
   categories?: MailCategory[];
+  // Filled in by the AI where Gmail gave none; Gmail's own win when it has them.
+  aiCategories?: MailCategory[];
   unsubscribe: Unsubscribe | null;
   // Missing on mail stored before it was recorded.
   authentication?: Authentication;

@@ -6,7 +6,9 @@ export interface Uploader {
     token: string,
     folder: string,
     file: { name: string; type: string; body: Buffer },
-  ): Promise<{ name: string; link: string }>;
+  ): Promise<{ id: string; name: string; link: string }>;
+  // A link anyone can open (to put in an email), for a file uploaded here.
+  share(token: string, file: { id: string; link: string }): Promise<string>;
   // Drops cached folder ids, e.g. after a folder was deleted.
   forget(accountId: string): void;
 }

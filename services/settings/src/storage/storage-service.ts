@@ -1,3 +1,10 @@
+import {
+  isKeyStorage,
+  KEY_STORAGE_PROVIDERS,
+  S3_PRESETS,
+  type KeyStorageConnect,
+  type OAuthStorageProviderId,
+} from '@onebox/contracts';
 import { decrypt, encrypt } from '@onebox/crypto';
 import { AppError, NotFoundError, ServiceUnavailableError, ValidationError } from '@onebox/errors';
 import type { Logger } from '@onebox/logger';
@@ -11,6 +18,7 @@ import {
   type StorageProvider,
   type StorageProviderId,
 } from './provider';
+import { checkObjectStore, labelOf, type AzureEndpoint } from './object-stores';
 import { createStateSigner, STATE_TTL_MS } from './state';
 
 const MAX_ACCOUNTS = 10;
@@ -29,7 +37,10 @@ export interface StorageServiceDeps {
   encryptionKey: Buffer;
   logger: Logger;
   // Only providers with credentials on this server.
-  providers: Partial<Record<StorageProviderId, StorageProvider>>;
+  providers: Partial<Record<OAuthStorageProviderId, StorageProvider>>;
+  // Key-based stores may live on this machine's network (tests, local MinIO).
+  allowPrivateHosts?: boolean;
+  azureEndpoint?: AzureEndpoint;
 }
 
 // Google tokens were encrypted under "google:<userId>" before other providers existed.
@@ -37,11 +48,20 @@ const AAD_PREFIX: Record<StorageProviderId, string> = {
   GOOGLE_DRIVE: 'google',
   ONEDRIVE: 'onedrive',
   DROPBOX: 'dropbox',
+  S3: 's3',
+  AZURE_BLOB: 'azure-blob',
 };
 const aadFor = (row: { provider: StorageProviderId; userId: string }) =>
   `${AAD_PREFIX[row.provider]}:${row.userId}`;
 
-export function createStorageService({ db, encryptionKey, logger, providers }: StorageServiceDeps) {
+export function createStorageService({
+  db,
+  encryptionKey,
+  logger,
+  providers,
+  allowPrivateHosts = false,
+  azureEndpoint: endpoint,
+}: StorageServiceDeps) {
   const state = createStateSigner(encryptionKey);
   const accessTokens = new Map<string, { token: string; expiresAt: number }>();
   // Recent failed sign-ins per user, kept in memory: they only matter for a few minutes.
@@ -67,7 +87,7 @@ export function createStorageService({ db, encryptionKey, logger, providers }: S
   };
 
   const providerFor = (id: StorageProviderId) => {
-    const provider = providers[id];
+    const provider = isKeyStorage(id) ? undefined : providers[id];
     if (!provider) throw new ServiceUnavailableError(`${PROVIDER_NAMES[id]} is not set up`);
     return provider;
   };
@@ -167,7 +187,18 @@ export function createStorageService({ db, encryptionKey, logger, providers }: S
         .where(eq(storageAccounts.userId, userId))
         .orderBy(asc(storageAccounts.createdAt));
       return {
-        providers: (Object.keys(providers) as StorageProviderId[]).filter((id) => providers[id]),
+        providers: [
+          ...(Object.keys(providers) as OAuthStorageProviderId[]).filter((id) => providers[id]),
+          ...KEY_STORAGE_PROVIDERS,
+        ],
+        // The S3-compatible services the key form offers, and what each needs typed in.
+        s3Presets: Object.entries(S3_PRESETS).map(([id, preset]) => ({
+          id,
+          name: preset.name,
+          region: preset.region,
+          needsAccount: preset.endpoint?.includes('{account}') ?? false,
+          needsEndpoint: id === 'custom',
+        })),
         accounts: rows.map(view),
         failures: recentFailures(userId),
       };
@@ -188,15 +219,45 @@ export function createStorageService({ db, encryptionKey, logger, providers }: S
       await db.delete(storageAccounts).where(eq(storageAccounts.id, id));
       accessTokens.delete(id);
       const token = decrypt(row.refreshTokenEncrypted, encryptionKey, aadFor(row));
-      await providers[row.provider]
+      await (isKeyStorage(row.provider) ? undefined : providers[row.provider])
         ?.revoke(token)
         .catch((err: unknown) => logger.warn({ err }, 'storage token revoke failed'));
       logger.info({ userId, provider: row.provider }, 'storage account disconnected');
     },
 
-    // A short-lived access token for calls other services make to the provider.
+    // A bucket or container connected with keys, checked by writing to it first. Connecting the
+    // same one again replaces its keys and keeps its folder.
+    async connectKeys(userId: string, input: KeyStorageConnect) {
+      await checkObjectStore(input, { allowPrivateHosts, ...(endpoint && { endpoint }) });
+      const label = labelOf(input);
+      const row = { provider: input.provider, userId };
+      const refreshTokenEncrypted = encrypt(
+        JSON.stringify(input.credentials),
+        encryptionKey,
+        aadFor(row),
+      );
+      const [saved] = await db
+        .insert(storageAccounts)
+        .values({ ...row, email: label, refreshTokenEncrypted, scopes: [] })
+        .onConflictDoUpdate({
+          target: [storageAccounts.userId, storageAccounts.provider, storageAccounts.email],
+          set: { refreshTokenEncrypted },
+        })
+        .returning();
+      logger.info({ userId, provider: input.provider }, 'storage connected with keys');
+      return view(saved!);
+    },
+
+    // A short-lived access token for calls other services make to the provider. Stores
+    // connected with keys hand over the keys themselves.
     async accessToken(userId: string, id: string) {
       const row = await ownAccount(userId, id);
+      if (isKeyStorage(row.provider)) {
+        return {
+          provider: row.provider,
+          accessToken: decrypt(row.refreshTokenEncrypted, encryptionKey, aadFor(row)),
+        };
+      }
       const cached = accessTokens.get(id);
       if (cached && cached.expiresAt - 60_000 > Date.now()) {
         return { provider: row.provider, accessToken: cached.token };

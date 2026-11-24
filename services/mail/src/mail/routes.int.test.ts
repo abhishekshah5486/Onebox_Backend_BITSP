@@ -23,6 +23,7 @@ import { createMemoryBlobStore } from '@onebox/blob-store';
 import { createAttachmentService } from '../attachments/attachments';
 import { googleDriveUploader } from '../storage/google-drive';
 import { dropboxUploader } from '../storage/dropbox';
+import { azureBlobUploader, s3Uploader } from '../storage/object-store';
 import { oneDriveUploader } from '../storage/onedrive';
 import { createStorageService } from '../storage/storage';
 import { createIngestHandler } from '../ingest/ingest-message';
@@ -101,11 +102,14 @@ beforeAll(async () => {
           GOOGLE_DRIVE: googleDriveUploader(logger, driveFetch),
           ONEDRIVE: oneDriveUploader(logger, driveFetch),
           DROPBOX: dropboxUploader(logger, driveFetch),
+          S3: s3Uploader(logger),
+          AZURE_BLOB: azureBlobUploader(logger),
         },
         fetch: driveFetch,
       }),
       verifyToken,
     },
+    internal: { messages: collections.messages, attachments, internalToken: 'internal-token' },
   });
 });
 
@@ -881,6 +885,49 @@ describe('mail api', () => {
       '<script>alert(1)</script>',
       '--b1--',
     ].join('\r\n');
+
+    it('lets the RAG service read an email and its attachments with the internal token', async () => {
+      const userId = randomUUID();
+      await createIngestHandler(
+        collections,
+        undefined,
+        blobs,
+      )(
+        ingestJob({
+          userId,
+          subject: 'Marksheets',
+          headers: ['MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="b1"'],
+          body: multipart,
+        }),
+        context,
+      );
+      const [thread] = (await list(userId)).json<{ items: Thread[] }>().items;
+      const { messageId } = thread!.attachments[0]!;
+      const internal = (url: string, token = 'internal-token') =>
+        app.inject({ url, headers: { 'x-onebox-internal-token': token } });
+
+      const read = await internal(`/internal/messages/${messageId}?userId=${userId}`);
+      expect(read.statusCode).toBe(200);
+      const email = read.json<{ textBody: string }>();
+      expect(email.textBody).toContain('Marksheets attached');
+      expect(email).toMatchObject({
+        subject: 'Marksheets',
+        attachments: [
+          { index: 0, filename: 'marks.pdf', contentType: 'application/pdf', inline: false },
+          { index: 1, filename: 'page.html' },
+        ],
+      });
+      const file = await internal(`/internal/messages/${messageId}/attachments/0?userId=${userId}`);
+      expect(file.rawPayload.equals(pdf)).toBe(true);
+      expect(file.headers['x-content-type']).toBe('application/pdf');
+
+      expect(
+        (await internal(`/internal/messages/${messageId}?userId=${randomUUID()}`)).statusCode,
+      ).toBe(404);
+      expect(
+        (await internal(`/internal/messages/${messageId}?userId=${userId}`, 'x')).statusCode,
+      ).toBe(401);
+    });
 
     it('keeps attachment contents and serves them only to their owner, safely', async () => {
       const userId = randomUUID();

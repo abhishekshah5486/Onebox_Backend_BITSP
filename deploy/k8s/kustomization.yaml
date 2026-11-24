@@ -5,6 +5,8 @@ resources:
   - namespace.yaml
   - redis.yaml
   - objects.yaml
+  - elasticsearch.yaml
+  - qdrant.yaml
   - auth.yaml
   - accounts.yaml
   - settings.yaml
@@ -12,4 +14,10 @@ resources:
   - connector.yaml
   - llm-proxy.yaml
   - ai.yaml
+  - payments.yaml
+  - billing.yaml
+  - realtime.yaml
+  - search.yaml
+  - docling.yaml
+  - rag.yaml
   - api-gateway.yaml

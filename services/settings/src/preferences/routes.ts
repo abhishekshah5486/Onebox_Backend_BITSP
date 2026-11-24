@@ -27,6 +27,7 @@ const preferencesView = z.object({
   sidebarHidden: z.array(z.string()),
   chipsHidden: z.array(z.string()),
   inboxTabs: z.array(z.string()),
+  setupDone: z.boolean(),
   updatedAt: z.string().nullable(),
 });
 
@@ -41,6 +42,7 @@ const updateBody = z
     sidebarHidden: viewKeys.optional(),
     chipsHidden: viewKeys.optional(),
     inboxTabs: z.array(z.enum(['promotions', 'social', 'updates', 'forums'])).optional(),
+    setupDone: z.boolean().optional(),
   })
   .refine((body) => Object.values(body).some((value) => value !== undefined), {
     message: 'Provide at least one preference to update',

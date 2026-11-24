@@ -1,9 +1,10 @@
-import { envPort, loadConfig } from '@onebox/config';
+import { envPoolSize, envPort, loadConfig } from '@onebox/config';
 import { encryptionKeySchema } from '@onebox/crypto';
 import { z } from 'zod';
 
 const schema = z.object({
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres connection string'),
+  DATABASE_POOL_MAX: envPoolSize,
   CREDENTIALS_ENCRYPTION_KEY: encryptionKeySchema,
   PORT: envPort.default(4001),
 });

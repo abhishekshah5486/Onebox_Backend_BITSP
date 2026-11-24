@@ -53,6 +53,8 @@ export const messageOpSchema = z.object({
     z.object({ type: z.literal('move'), to: mailboxTargetSchema }),
     // Permanent deletion, offered only in Trash and Spam.
     z.object({ type: z.literal('expunge') }),
+    // Gmail labels put on or taken off; other servers keep labels in OneBox only.
+    z.object({ type: z.literal('labels'), add: z.array(path), remove: z.array(path) }),
   ]),
 });
 
@@ -109,6 +111,19 @@ export const mailboxChangePayloadSchema = z.discriminatedUnion('type', [
     messageId: z.string().min(1),
     add: z.array(path),
     remove: z.array(path).default([]),
+  }),
+  // AI filled in a message's categories where the server gave none.
+  z.object({
+    type: z.literal('categorized'),
+    messageId: z.string().min(1),
+    categories: z.array(mailCategorySchema),
+  }),
+  // How sending an outbox message ended: sent (its copy is in Sent) or failed for good.
+  z.object({
+    type: z.literal('sendResult'),
+    outboxId: z.uuid(),
+    status: z.enum(['sent', 'failed']),
+    error: z.string().max(500).nullable(),
   }),
   // Everything in a folder right now; stored messages missing from it were moved or deleted.
   z.object({

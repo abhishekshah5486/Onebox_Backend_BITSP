@@ -78,6 +78,19 @@ describe('queue', () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
   });
 
+  it('takes job ids with colons, still spotting duplicates', async () => {
+    const handler = vi.fn(async (_envelope: JobEnvelope<{ uid: number }>) => {});
+    const { producer } = setup(handler);
+
+    const first = await producer.enqueue(envelope('catchup-own:s1:abc'));
+    const second = await producer.enqueue(envelope('catchup-own:s1:abc'));
+
+    expect([first.duplicate, second.duplicate]).toEqual([false, true]);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    expect(handler.mock.calls[0]![0].jobId).toBe('catchup-own:s1:abc');
+    expect(await producer.outcome('catchup-own:s1:abc')).toEqual({ status: 'completed' });
+  });
+
   it('retries transient failures until they succeed', async () => {
     let calls = 0;
     const { producer } = setup(async () => {
