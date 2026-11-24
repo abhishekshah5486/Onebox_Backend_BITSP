@@ -28,12 +28,18 @@ services:
   # S3-compatible object store for attachment contents (SeaweedFS; MinIO is no longer published).
   objects:
     image: chrislusf/seaweedfs:4.48
-    command: server -dir=/data -s3 -s3.port=8333 -ip.bind=0.0.0.0
+    # Small volumes and plenty of them: every bucket takes several on its first write, and
+    # 30 GB volumes would leave only a handful on a laptop's disk.
+    command: server -dir=/data -s3 -s3.port=8333 -ip.bind=0.0.0.0 -volume.max=200 -master.volumeSizeLimitMB=256
     environment:
       AWS_ACCESS_KEY_ID: ${BLOB_ACCESS_KEY:?set BLOB_ACCESS_KEY in .env}
       AWS_SECRET_ACCESS_KEY: ${BLOB_SECRET_KEY:?set BLOB_SECRET_KEY in .env}
     ports: ['127.0.0.1:8333:8333']
     volumes: [objects-data:/data]
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8333/healthz']
+      interval: 5s
+      retries: 20
 
   greenmail:
     image: greenmail/standalone:2.1.14
@@ -49,6 +55,11 @@ services:
     profiles: [vector]
     ports: ['127.0.0.1:6333:6333']
     volumes: [qdrant-data:/qdrant/storage]
+    # The image has no curl or wget; an open port is enough to start against.
+    healthcheck:
+      test: ['CMD', 'bash', '-c', ':> /dev/tcp/127.0.0.1/6333']
+      interval: 5s
+      retries: 20
 
 volumes:
   objects-data:
