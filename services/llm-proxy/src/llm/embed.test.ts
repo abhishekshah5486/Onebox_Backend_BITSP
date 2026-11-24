@@ -40,6 +40,7 @@ const openAiModel = (overrides: Partial<EmbeddingModel> = {}): EmbeddingModel =>
   needsKey: true,
   sendDimensions: true,
   local: false,
+  contextTokens: 8191,
   ...overrides,
 });
 const ollamaModel = (overrides: Partial<EmbeddingModel> = {}): EmbeddingModel => ({
@@ -53,6 +54,7 @@ const ollamaModel = (overrides: Partial<EmbeddingModel> = {}): EmbeddingModel =>
   needsKey: false,
   sendDimensions: false,
   local: true,
+  contextTokens: 8192,
   ...overrides,
 });
 const openAi = (apiKey: string | undefined = 'k') => openAiModel({ apiKey });
@@ -128,6 +130,7 @@ describe('createEmbedder', () => {
       name: 'bge-m3',
       dimensions: 2,
       local: true,
+      contextTokens: 8192,
     });
 
     await embed({ userId, texts: ['a'], charge: true });
@@ -166,12 +169,21 @@ describe('createEmbeddings', () => {
       'https://api.openai.com/v1/embeddings',
     ]);
     expect(resolve).toHaveBeenNthCalledWith(1, userId, undefined);
-    await expect(embed.modelFor(userId)).resolves.toMatchObject({ id: 'ollama/bge-m3' });
+    await expect(embed.modelFor(userId)).resolves.toMatchObject({
+      id: 'ollama/bge-m3',
+      contextTokens: 8192,
+    });
   });
 });
 
 describe('embedding routes', () => {
-  const localModel = { id: 'ollama/bge-m3', name: 'bge-m3', dimensions: 1024, local: true };
+  const localModel = {
+    id: 'ollama/bge-m3',
+    name: 'bge-m3',
+    dimensions: 1024,
+    local: true,
+    contextTokens: 8192,
+  };
   const embed = Object.assign(
     vi.fn(async () => ({ model: 'm', dimensions: 2, vectors: [[1, 2]] })),
     { modelFor: vi.fn(async () => localModel) },

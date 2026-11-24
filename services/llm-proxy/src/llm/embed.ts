@@ -25,6 +25,8 @@ export interface EmbeddingModel {
   sendDimensions: boolean;
   // Runs beside OneBox (Ollama) rather than at a provider.
   local: boolean;
+  // The most tokens one input may hold, when known; callers split longer text.
+  contextTokens: number | null;
   // A user's own model, called through its AI SDK provider with their key.
   sdk?: EmbeddingModelV4;
 }
@@ -49,6 +51,7 @@ export interface EmbedModelSummary {
   name: string;
   dimensions: number;
   local: boolean;
+  contextTokens: number | null;
 }
 
 // Which model it uses goes with it, so search can keep one vector index per model.
@@ -170,7 +173,13 @@ export function createEmbedder({
     return { model: model.id, dimensions: model.dimensions, vectors };
   };
   return Object.assign(embed, {
-    model: { id: model.id, name: model.name, dimensions: model.dimensions, local: model.local },
+    model: {
+      id: model.id,
+      name: model.name,
+      dimensions: model.dimensions,
+      local: model.local,
+      contextTokens: model.contextTokens,
+    },
   });
 }
 

@@ -93,6 +93,7 @@ export function createEmbeddingCatalog({
     needsKey: true,
     sendDimensions: row.sendDimensions,
     local: false,
+    contextTokens: row.contextTokens,
   });
 
   async function discoverLocal() {
@@ -115,6 +116,7 @@ export function createEmbeddingCatalog({
           needsKey: false,
           sendDimensions: false,
           local: true,
+          contextTokens: context ?? null,
         };
         const size = pulled.details.parameter_size;
         return {
@@ -182,6 +184,7 @@ export function createEmbeddingCatalog({
         needsKey: false,
         sendDimensions: false,
         local: false,
+        contextTokens: row.contextTokens ?? null,
         sdk: sdk.embeddingModel(row.modelId),
       };
     } catch (err) {
