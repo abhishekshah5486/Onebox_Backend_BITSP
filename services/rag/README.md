@@ -48,6 +48,14 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
   names are unique per user and folder names per parent, trimmed and in any case; folder names
   have no `/` or `\`, and folders nest at most 20 deep. Uploading to an id with no collection
   (e.g. `default`) makes one, as uploads did before collections.
+- **Knowledge hub.** `GET /rag/hub/nodes` lists the collections and mailboxes;
+  `GET /rag/hub/nodes/{collection|folder|mailbox|record}/{id}` lists what is in one (folders
+  first, then its files, or an email's attachments). With any filter (`q`, `recordTypes`
+  FILE/MAIL, `indexingStatus`, `sourceIds`, `createdAt`/`updatedAt`/`size` as `gte:X,lte:Y` in
+  epoch ms or bytes), or `flattened=true`, it lists every record below the node instead.
+  `sortBy` name/createdAt/updatedAt/size, `sortOrder`, `limit` (up to 200) and the opaque
+  `cursor` from `pagination.nextCursor`; `include` adds `breadcrumbs`, `counts`,
+  `permissions` and `availableFilters`.
 - **Records.** `GET /rag/records` (filters below, `folderId` with `root` for a collection's
   top, `trashed`), `GET /rag/records/{id}`, `GET /rag/records/{id}/blocks` (the parsed blocks),
   `PATCH /rag/records/{id}` (`name`, unique in its folder), `POST /rag/records/{id}/move`

@@ -42,6 +42,8 @@ class RecordFilter:
     folder_ids: Sequence[str | None] | None = None
     # The trash instead of the records in use.
     trashed: bool = False
+    # FILE and/or MAIL (an email itself; its attachments are files).
+    record_types: Sequence[str] | None = None
 
     def query(self) -> Doc:
         query: Doc = _trash(self.trashed)
@@ -62,7 +64,11 @@ class RecordFilter:
         }
         if size:
             query["sizeBytes"] = size
-        return {**query, **_dated(self.dates)}
+        dated = _dated(self.dates)
+        typed = _typed(self.record_types)
+        if typed:
+            return {**query, "$and": [typed, dated]} if dated else {**query, **typed}
+        return {**query, **dated}
 
 
 class ContentStore:
@@ -436,6 +442,19 @@ class RecordStore:
 
 
 SCOPE_FIELDS = {"source_ids": "sourceId", "source_types": "sourceType", "record_ids": "_id"}
+
+
+RECORD_TYPES: dict[str, Doc] = {
+    "MAIL": {"sourceType": "mail", "parentId": None},
+    "FILE": {"$or": [{"sourceType": {"$ne": "mail"}}, {"parentId": {"$ne": None}}]},
+}
+
+
+def _typed(record_types: Sequence[str] | None) -> Doc:
+    wanted = [RECORD_TYPES[t] for t in dict.fromkeys(record_types or []) if t in RECORD_TYPES]
+    if not wanted or len(wanted) == len(RECORD_TYPES):
+        return {}
+    return wanted[0]
 
 
 def _trash(trashed: bool | None) -> Doc:

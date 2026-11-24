@@ -106,3 +106,65 @@ def test_one_users_collections_are_their_own(client: TestClient) -> None:  # noq
         client.patch(f"/rag/records/{record['id']}", json={"name": "x"}, headers=other).status_code
         == 404
     )
+
+
+def test_the_hub_lists_a_level_or_everything_below(client: TestClient) -> None:  # noqa: F811
+    user = bearer("browser")
+    kb = client.post("/rag/collections", json={"name": "Docs"}, headers=user).json()["id"]
+    folder = client.post(
+        f"/rag/collections/{kb}/folders", json={"name": "Inner"}, headers=user
+    ).json()
+    client.post(
+        "/rag/documents",
+        headers=user,
+        files=[
+            ("files", ("top.txt", b"top", "text/plain")),
+            ("files", ("deep.txt", b"deeper down", "text/plain")),
+        ],
+        data={"knowledgeBase": kb, "paths": ["top.txt", "Inner/Lower/deep.txt"]},
+    )
+
+    def hub(path: str = "", **params: Any) -> Json:
+        response = client.get(f"/rag/hub/nodes{path}", params=params, headers=user)
+        assert response.status_code == 200, response.text
+        return dict(response.json())
+
+    roots = hub()["items"]
+    assert [(n["name"], n["nodeType"]) for n in roots] == [("Docs", "collection")]
+
+    # A level at a time: folders first, then its own files.
+    level = hub(f"/collection/{kb}", include="breadcrumbs,counts", sortBy="name", sortOrder="asc")
+    assert [(n["name"], n["nodeType"]) for n in level["items"]] == [
+        ("Inner", "folder"),
+        ("top.txt", "record"),
+    ]
+    assert level["breadcrumbs"] == [{"id": kb, "name": "Docs", "nodeType": "collection"}]
+    assert level["items"][1]["indexingStatus"] in {"QUEUED", "IN_PROGRESS", "COMPLETED"}
+
+    inner = hub(f"/folder/{folder['id']}", include="breadcrumbs")
+    assert [n["name"] for n in inner["items"]] == ["Lower"]
+    assert [c["name"] for c in inner["breadcrumbs"]] == ["Docs", "Inner"]
+
+    # Filters search everything below, and pages carry on with their token.
+    found = hub(f"/folder/{folder['id']}", q="deep")
+    assert [n["name"] for n in found["items"]] == ["deep.txt"]
+    first = hub(f"/collection/{kb}", flattened="true", limit=1, sortBy="name", sortOrder="asc")
+    assert first["pagination"]["totalItems"] == 2 and first["pagination"]["hasNext"]
+    second = hub(
+        f"/collection/{kb}",
+        flattened="true",
+        limit=1,
+        sortBy="name",
+        sortOrder="asc",
+        cursor=first["pagination"]["nextCursor"],
+    )
+    assert [n["name"] for n in first["items"] + second["items"]] == ["deep.txt", "top.txt"]
+    assert not second["pagination"]["hasNext"]
+
+    everywhere = hub(recordTypes="FILE", include="availableFilters")
+    assert sorted(n["name"] for n in everywhere["items"]) == ["deep.txt", "top.txt"]
+    assert {"id": kb, "label": "Docs", "type": "collection"} in everywhere["filters"]["available"][
+        "sources"
+    ]
+    assert client.get("/rag/hub/nodes/folder/nope", headers=user).status_code == 404
+    assert client.get("/rag/hub/nodes", params={"cursor": "%%"}, headers=user).status_code == 400

@@ -1,12 +1,13 @@
 """Collections, their folders, and where records sit in them (names, moves, the trash)."""
 
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import Field
 
 from onebox_rag.auth import CurrentUser
 from onebox_rag.errors import NotFoundError
+from onebox_rag.ingest.hub_listing import HubLister, HubQuery
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.organize import Organizer
 from onebox_rag.models.base import CamelModel
@@ -48,8 +49,69 @@ def _organizer(request: Request) -> Organizer:
     return organizer
 
 
+def _hub_query(
+    q: Annotated[str | None, Query(max_length=500)] = None,
+    record_types: Annotated[str | None, Query(alias="recordTypes")] = None,
+    indexing_status: Annotated[str | None, Query(alias="indexingStatus")] = None,
+    source_ids: Annotated[str | None, Query(alias="sourceIds")] = None,
+    created_at: Annotated[str | None, Query(alias="createdAt")] = None,
+    updated_at: Annotated[str | None, Query(alias="updatedAt")] = None,
+    size: Annotated[str | None, Query()] = None,
+    sort_by: Annotated[str, Query(alias="sortBy")] = "updatedAt",
+    sort_order: Annotated[Literal["asc", "desc"], Query(alias="sortOrder")] = "desc",
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query(max_length=200)] = None,
+    flattened: Annotated[bool | None, Query()] = None,
+    include: Annotated[str | None, Query()] = None,
+) -> HubQuery:
+    def split(value: str | None) -> list[str] | None:
+        parts = [p.strip() for p in (value or "").split(",") if p.strip()]
+        return parts[:100] or None
+
+    return HubQuery(
+        q=q.strip() if q and q.strip() else None,
+        record_types=split(record_types),
+        statuses=split(indexing_status),
+        source_ids=split(source_ids),
+        created_at=created_at,
+        updated_at=updated_at,
+        size=size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        cursor=cursor,
+        flattened=flattened,
+        include=set(split(include) or []),
+    )
+
+
+HubParams = Annotated[HubQuery, Depends(_hub_query)]
+
+
+async def _listing(
+    request: Request, user_id: str, query: HubQuery, kind: str | None, node_id: str | None
+) -> dict[str, Any]:
+    lister: HubLister = request.app.state.hub
+    body = await lister.nodes(user_id, query, kind, node_id)
+    if "availableFilters" in query.include:
+        body["filters"] = {"available": await lister.available_filters(user_id)}
+    return body
+
+
 def hub_router() -> APIRouter:
     router = APIRouter(prefix="/rag")
+
+    @router.get("/hub/nodes")
+    async def hub_roots(request: Request, user: CurrentUser, query: HubParams) -> dict[str, Any]:
+        """Collections and mailboxes; with filters (or flattened), records anywhere."""
+        return await _listing(request, user.user_id, query, None, None)
+
+    @router.get("/hub/nodes/{node_type}/{node_id}")
+    async def hub_children(
+        request: Request, user: CurrentUser, node_type: str, node_id: str, query: HubParams
+    ) -> dict[str, Any]:
+        """What is in a node; with filters (or flattened), every record below it."""
+        return await _listing(request, user.user_id, query, node_type, node_id)
 
     @router.get("/collections")
     async def list_collections(request: Request, user: CurrentUser) -> dict[str, Any]:

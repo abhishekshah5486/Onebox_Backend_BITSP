@@ -18,6 +18,7 @@ from onebox_rag.index.qdrant_store import QdrantStore, SearchTuning
 from onebox_rag.index.upkeep import PointUpkeep
 from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.hub import FolderStore, KnowledgeBaseStore
+from onebox_rag.ingest.hub_listing import HubLister
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.inspect import Limits
 from onebox_rag.ingest.organize import Organizer
@@ -245,6 +246,7 @@ def create_app(
             KnowledgeBaseStore(mongo[settings.MONGO_DB]),
             FolderStore(mongo[settings.MONGO_DB]),
         )
+        app.state.hub = HubLister(kbs, folders, records)
         app.state.organizer = Organizer(kbs, folders, records, ingestor, lambda: datetime.now(UTC))
         preferences = PreferenceStore(mongo[settings.MONGO_DB], server_defaults(settings))
         app.state.preferences = preferences
