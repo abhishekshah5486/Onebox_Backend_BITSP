@@ -185,6 +185,14 @@ describe('llm proxy', () => {
     expect(calls.filter((model) => model === 'gpt-6-sol')).toHaveLength(1);
   });
 
+  it('says when models answered but never in the required format', async () => {
+    script['gemini-3.8-flash'] = () => 'not json';
+    await expect(ask(randomUUID())).rejects.toMatchObject({
+      statusCode: 502,
+      code: 'INVALID_OUTPUT',
+    });
+  });
+
   it('skips a model that keeps failing, and reports when nothing can answer', async () => {
     const userId = randomUUID();
     await expect(ask(userId)).rejects.toThrow('No language model could answer right now');

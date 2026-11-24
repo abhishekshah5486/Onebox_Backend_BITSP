@@ -388,10 +388,15 @@ export function createCompleter({
       { purpose: input.purpose, requested, attempts: attempts.length },
       'no model could answer',
     );
+    // A model answered, but never in the required format: a caller may ask for less.
+    const misshapen = attempts.some((attempt) => attempt.outcome === 'invalid_output');
     throw new ExternalServiceError(
       chain.length === 0
         ? 'No language model is available'
-        : 'No language model could answer right now',
+        : misshapen
+          ? 'No language model answered in the required format'
+          : 'No language model could answer right now',
+      misshapen ? { code: 'INVALID_OUTPUT' } : {},
     );
   };
 }
