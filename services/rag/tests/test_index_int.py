@@ -180,7 +180,8 @@ SALES = b"region,revenue\nnorth,120\nsouth,95\neast,80\n"
 
 
 def test_retrieves_cited_passages_and_reads_records_in_pages(client: TestClient) -> None:
-    policy, sales = upload(client, ("policy.md", POLICY), ("sales.csv", SALES), kb="handbook")
+    # Its own collection: other tests' files in a shared one would crowd its results.
+    policy, sales = upload(client, ("policy.md", POLICY), ("sales.csv", SALES), kb="cited")
     [other] = upload(client, ("other.md", b"# Parcels\n\nParcelforce islands note."), kb="misc")
     for record in (policy, sales, other):
         assert wait_for(client, record["id"], completed, timeout_s=120)["status"] == "completed"
@@ -190,7 +191,7 @@ def test_retrieves_cited_passages_and_reads_records_in_pages(client: TestClient)
         assert response.status_code == 200, response.text
         return list(response.json()["chunks"])
 
-    [first, *_] = retrieve(query="parcelforce islands", sourceIds=["handbook"])
+    [first, *_] = retrieve(query="parcelforce islands", sourceIds=["cited"])
     assert "Parcelforce" in first["text"] and first["record"]["recordId"] == policy["id"]
     # A short record may come whole, found by its title as well (cited from its first block).
     if first["kind"] != "record":
@@ -199,10 +200,11 @@ def test_retrieves_cited_passages_and_reads_records_in_pages(client: TestClient)
         c["record"]["recordId"] for c in retrieve(query="parcelforce", recordIds=[other["id"]])
     } == {other["id"]}
 
+    # The table, or (once its title point is written) the short file whole.
     table = next(
         c
-        for c in retrieve(query="south revenue 95", sourceIds=["handbook"])
-        if c["kind"] == "table"
+        for c in retrieve(query="south revenue 95", sourceIds=["cited"])
+        if c["kind"] in {"table", "record"} and c["record"]["recordId"] == sales["id"]
     )
     assert "region: south, revenue: 95" in table["text"]
     assert table["record"]["recordId"] == sales["id"]
