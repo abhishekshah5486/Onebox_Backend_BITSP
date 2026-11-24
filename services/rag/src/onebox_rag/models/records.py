@@ -74,6 +74,19 @@ class Classification(CamelModel):
     organizations: list[str] | None = None
 
 
+class EmbedMarker(CamelModel):
+    """Written before an index run's first point, cleared when it completes: a retry of the
+    same revision with the same setup and the same points keeps those that exist."""
+
+    revision: int
+    collection: str
+    # The embedding setup (dense model, its size, the sparse model).
+    key: str
+    # Of the sorted ids of the points the revision needs, and how many that is.
+    digest: str
+    total: int
+
+
 class Attachment(CamelModel):
     name: str
     mime_type: str
@@ -108,6 +121,7 @@ class Content(CamelModel):
     point_count: int | None = None
     # Its points carry its records' dates (and emails' header points are written).
     points_dated: bool = False
+    embed_marker: EmbedMarker | None = None
     classification: Classification | None = None
     classify_status: ClassifyStatus | None = None
     classify_reason: str | None = None

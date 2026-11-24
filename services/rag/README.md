@@ -137,6 +137,16 @@ Following PipesHub's design:
   content, revision, block and text, so retries overwrite; a new revision is written before
   the old one's points are deleted, and deleting content deletes its points. The content is
   then `completed`.
+- **Big files and crashes.** Points are embedded and written `RAG_INDEX_WRITE_BATCH` (512) at a
+  time, each batch durable before the next. Before the first one, the content records a marker:
+  its revision, collection, embedding setup and a digest of the point ids it needs. A retry of
+  that same revision with the same setup and points keeps the points that exist and embeds the
+  rest, then checks every one is there; anything else embeds everything. The marker is cleared
+  when the content completes or fails. After each index a stray sweep lists the content's
+  points (at most `RAG_STRAY_SWEEP_MAX_POINTS`, 100,000, per run; the next run resumes where it
+  stopped) and deletes those its revision doesn't have, such as points left by a crash between
+  the write and the old revision's delete, or text that a changed setting split differently.
+  Title and summary points are left to their owners, and a failed sweep never fails the index.
 - **Retrieval.** `POST /rag/retrieve` (`{query, limit, sourceIds, sourceTypes, recordIds,
 maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`) and
   `/internal/rag/retrieve` (with `userId`, for the agent service).

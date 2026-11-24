@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # Index jobs (embedding and writing points) run apart from parsing: they wait on the network.
     RAG_INDEX_QUEUE: str = "rag-index"
     RAG_INDEX_CONCURRENCY: int = Field(default=4, ge=1)
+    # Points are embedded and written this many at a time; a retry of the same revision
+    # embeds only the points still missing.
+    RAG_INDEX_WRITE_BATCH: int = Field(default=512, ge=16, le=4096)
+    # After each index, a content's points its revision no longer has are deleted: at most
+    # this many are listed per run (0 turns the sweep off).
+    RAG_STRAY_SWEEP_MAX_POINTS: int = Field(default=100_000, ge=0)
     # Once searchable, every content is classified and summarized by the user's model (its
     # summary becomes a point found as the whole record): right away, or with
     # RAG_CLASSIFY_ON_FIRST_USE when a search first returns it. A .log or .cfg is not.

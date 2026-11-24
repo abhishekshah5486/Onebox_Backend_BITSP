@@ -370,6 +370,8 @@ def create_app(
                     upkeep,
                     content_dates=content_dates_from(settings),
                     classify=scheduler.after_index if scheduler is not None else None,
+                    write_batch=settings.RAG_INDEX_WRITE_BATCH,
+                    stray_max_points=settings.RAG_STRAY_SWEEP_MAX_POINTS,
                 ),
                 settings.RAG_INDEX_CONCURRENCY,
             )

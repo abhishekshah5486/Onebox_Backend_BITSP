@@ -21,6 +21,7 @@ CREATED, MODIFIED = "createdAt", "modifiedAt"
 UPLOADED = "uploadedAt"
 TITLE = "title"
 UPSERT_BATCH = 256
+EXISTENCE_BATCH = 1000
 # RRF ties hits of equal rank, which Qdrant returns in any order; a few more are fetched and
 # ties broken by id, so the same query always ranks the same.
 TIE_MARGIN = 2
@@ -253,6 +254,39 @@ class QdrantStore:
         return [
             Hit(str(p.id), float(p.score or 0.0), dict(p.payload or {})) for p in response.points
         ]
+
+    async def existing_ids(self, collection: str, ids: list[str]) -> set[str]:
+        """Which of these points exist."""
+        found: set[str] = set()
+        for start in range(0, len(ids), EXISTENCE_BATCH):
+            points = await self._client.retrieve(
+                collection,
+                ids=ids[start : start + EXISTENCE_BATCH],
+                with_payload=False,
+                with_vectors=False,
+            )
+            found |= {str(p.id) for p in points}
+        return found
+
+    async def list_points(
+        self, collection: str, content_id: str, *, limit: int, offset: str | None = None
+    ) -> tuple[list[tuple[str, dict[str, Any]]], str | None]:
+        """A page of a content's points (id and kind), and where the next page starts."""
+        points, next_offset = await self._client.scroll(
+            collection,
+            scroll_filter=models.Filter(must=[_match("contentId", content_id)]),
+            limit=limit,
+            offset=offset,
+            with_payload=["kind"],
+            with_vectors=False,
+        )
+        return (
+            [(str(p.id), dict(p.payload or {})) for p in points],
+            str(next_offset) if next_offset is not None else None,
+        )
+
+    async def delete_ids(self, collection: str, ids: list[str]) -> None:
+        await self._client.delete(collection, models.PointIdsList(points=list(ids)), wait=True)
 
     async def count(self, collection: str, content_id: str) -> int:
         result = await self._client.count(

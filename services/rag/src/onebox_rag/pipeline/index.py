@@ -1,12 +1,20 @@
 import asyncio
+import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from onebox_rag.index.embed import DenseEmbedder, EmbeddingUnavailableError, sparse_documents
+from onebox_rag.index.embed import (
+    SPARSE_MODEL,
+    DenseEmbedder,
+    EmbeddingModel,
+    EmbeddingUnavailableError,
+    sparse_documents,
+)
 from onebox_rag.index.points import PointText, SplitSettings, point_texts
 from onebox_rag.index.qdrant_store import QdrantStore, StoredPoint
+from onebox_rag.index.stray import sweep_stray_points
 from onebox_rag.index.tokens import TokenLimitError
 from onebox_rag.index.upkeep import PointUpkeep
 from onebox_rag.ingest.blobs import BlobStore
@@ -14,7 +22,7 @@ from onebox_rag.ingest.content_dates import find_document_dates, plan_dates
 from onebox_rag.ingest.records import ContentStore, RecordStore
 from onebox_rag.models import TERMINAL, Content, SourceType, Stage, Status
 from onebox_rag.models.blocks import BlocksContainer
-from onebox_rag.models.records import DateOrigin
+from onebox_rag.models.records import DateOrigin, EmbedMarker
 from onebox_rag.pipeline.parse import decode_blocks
 
 logger = logging.getLogger("onebox_rag.index")
@@ -39,7 +47,15 @@ class IndexStage:
         content_dates: frozenset[DateOrigin] = frozenset(),
         # Classify (and summarize) once searchable: queues it, or waits for its first search.
         classify: Callable[[Content], Awaitable[None]] | None = None,
+        # Points embedded and written together, each batch durable before the next.
+        write_batch: int = 512,
+        # Points of a content listed per run by the stray sweep (0: off).
+        stray_max_points: int = 100_000,
     ) -> None:
+        self._write_batch, self._stray_max_points = write_batch, stray_max_points
+        # Where a stray sweep that stopped at its bound resumes (per process: losing it only
+        # restarts that content's sweep).
+        self._sweep_offsets: dict[str, str] = {}
         self._contents, self._records, self._blobs = contents, records, blobs
         self._content_dates = content_dates
         self._classify = classify
@@ -64,9 +80,9 @@ class IndexStage:
             window = self._split.window_for(model.id, model.context_tokens)
             texts = await asyncio.to_thread(point_texts, container, self._split, window)
             collection = await self._store.ensure_collection(model)
-            points = await self._points(content, model, texts)
-            await self._store.upsert(collection, points)
+            wanted = await self._write(content, model, collection, texts)
             await self._store.delete_content(collection, content.id, keep_revision=revision)
+            await self._sweep(collection, content.id, wanted)
             if content.index_collection and content.index_collection != collection:
                 # Indexed before with another embedding model: its records' titles move too.
                 await self._store.delete_content(content.index_collection, content.id)
@@ -74,7 +90,9 @@ class IndexStage:
         except TokenLimitError as err:
             # Every try would fail the same way until the user picks another model.
             logger.warning("embedding input too small", extra={"contentId": content_id})
-            await self._settle(content, Status.FAILED, stage=Stage.INDEX, reason=str(err))
+            await self._settle(
+                content, Status.FAILED, stage=Stage.INDEX, reason=str(err), embed_marker=None
+            )
             return
         except EmbeddingUnavailableError as err:
             logger.warning(
@@ -91,8 +109,9 @@ class IndexStage:
             Status.COMPLETED,
             index_collection=collection,
             embedding_model=model.id,
-            point_count=len(points),
+            point_count=len(wanted),
             points_dated=False,
+            embed_marker=None,
         )
         redated: list[str] = []
         try:
@@ -116,8 +135,64 @@ class IndexStage:
                 )
         logger.info(
             "indexed",
-            extra={"contentId": content_id, "points": len(points), "collection": collection},
+            extra={"contentId": content_id, "points": len(wanted), "collection": collection},
         )
+
+    async def _write(
+        self, content: Content, model: EmbeddingModel, collection: str, texts: list[PointText]
+    ) -> set[str]:
+        """Writes the revision's points a batch at a time, each durable once written. A retry
+        of the same revision, embedding setup and points embeds only those still missing."""
+        unique: dict[str, PointText] = {}
+        for text in texts:
+            unique.setdefault(text.point_id(content.id, content.revision), text)
+        wanted = list(unique)
+        marker = EmbedMarker(
+            revision=content.revision,
+            collection=collection,
+            key=embed_key(model),
+            digest=digest_of(wanted),
+            total=len(wanted),
+        )
+        resuming = content.embed_marker == marker
+        if resuming:
+            present = await self._store.existing_ids(collection, wanted)
+            logger.info(
+                "resuming index",
+                extra={"contentId": content.id, "present": len(present), "total": len(wanted)},
+            )
+        else:
+            present = set()
+            await self._contents.update(
+                content.id, self._now(), embed_marker=marker.model_dump(by_alias=True)
+            )
+        todo = [unique[point_id] for point_id in wanted if point_id not in present]
+        for start in range(0, len(todo), self._write_batch):
+            batch = todo[start : start + self._write_batch]
+            await self._store.upsert(collection, await self._points(content, model, batch))
+        if resuming:
+            missing = len(wanted) - len(await self._store.existing_ids(collection, wanted))
+            if missing:
+                raise RuntimeError(f"{missing} of {len(wanted)} points are missing after a resume")
+        return set(wanted)
+
+    async def _sweep(self, collection: str, content_id: str, keep: set[str]) -> None:
+        if not self._stray_max_points:
+            return
+        try:
+            result = await sweep_stray_points(
+                self._store,
+                collection,
+                content_id,
+                keep,
+                max_points=self._stray_max_points,
+                resume=self._sweep_offsets.pop(content_id, None),
+            )
+        except Exception:
+            logger.warning("stray sweep failed", extra={"contentId": content_id}, exc_info=True)
+            return
+        if result.next_offset is not None:
+            self._sweep_offsets[content_id] = result.next_offset
 
     async def _points(
         self, content: Content, model: Any, texts: list[PointText]
@@ -168,7 +243,9 @@ class IndexStage:
 
     async def _retry_or_fail(self, content: Content, final: bool, reason: str) -> None:
         if final:
-            await self._settle(content, Status.FAILED, stage=Stage.INDEX, reason=reason)
+            await self._settle(
+                content, Status.FAILED, stage=Stage.INDEX, reason=reason, embed_marker=None
+            )
         else:
             await self._settle(content, Status.QUEUED, stage=Stage.INDEX)
 
@@ -185,3 +262,16 @@ class IndexStage:
         now = self._now()
         await self._contents.update(content.id, now, **state, **fields)
         await self._records.update_for_content(content.id, now, **state)
+
+
+def embed_key(model: EmbeddingModel) -> str:
+    return f"{model.id}|{model.dimensions}|{SPARSE_MODEL}"
+
+
+def digest_of(point_ids: list[str]) -> str:
+    """Order-insensitive digest of a set of point ids."""
+    h = hashlib.sha256()
+    for point_id in sorted(set(point_ids)):
+        h.update(point_id.encode())
+        h.update(b"\n")
+    return h.hexdigest()[:32]

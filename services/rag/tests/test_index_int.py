@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from qdrant_client import QdrantClient, models
 
@@ -19,6 +19,8 @@ from onebox_rag.app import create_app
 from onebox_rag.auth import INTERNAL_TOKEN_HEADER
 from onebox_rag.config import Settings
 from onebox_rag.index.embed import sparse_query
+from onebox_rag.index.qdrant_store import QdrantStore
+from onebox_rag.index.stray import sweep_stray_points
 from tests.test_ingest_int import Json, upload, wait_for
 from tests.tokens import bearer, fake_verifier
 
@@ -34,6 +36,11 @@ def vector(text: str) -> list[float]:
     return out if any(out) else [1.0] + [0.0] * (DIMS - 1)
 
 
+# How often each text was embedded, and texts that fail their first embed.
+EMBEDDED: dict[str, int] = {}
+TRIPWIRES = {"Tripwire paragraph that fails once."}
+
+
 def fake_proxy() -> FastAPI:
     app = FastAPI()
 
@@ -44,6 +51,12 @@ def fake_proxy() -> FastAPI:
     @app.post("/internal/embed")
     def embed(body: dict[str, Any]) -> dict[str, Any]:
         assert body["charge"] is False and len(body["texts"]) <= 64
+        for text in body["texts"]:
+            EMBEDDED[text] = EMBEDDED.get(text, 0) + 1
+        tripped = TRIPWIRES.intersection(body["texts"])
+        if tripped:
+            TRIPWIRES.difference_update(tripped)
+            raise HTTPException(503, "embedding model busy")
         return {
             "model": body["model"],
             "dimensions": DIMS,
@@ -421,3 +434,90 @@ def test_a_record_is_summarized_and_found_by_its_summary(
         summary = next(c for c in found["chunks"] if c["kind"] == "summary")
         assert summary["record"]["recordId"] == census["id"]
         assert summary["text"].startswith("Field report on the albatross colony census")
+
+
+def test_a_failed_index_resumes_with_the_points_it_wrote(
+    live_settings: Settings, proxy_url: str
+) -> None:
+    settings = live_settings.model_copy(
+        update={
+            "RAG_LLM_PROXY_URL": proxy_url,
+            "RAG_TABLE_ENRICHMENT": False,
+            "RAG_CLASSIFY": False,
+            "RAG_INDEX_WRITE_BATCH": 16,
+            "RAG_INGEST_BACKOFF_MS": 200,
+        }
+    )
+    paragraphs = [f"Lantern note number {n} for the keeper." for n in range(40)]
+    paragraphs.insert(30, "Tripwire paragraph that fails once.")
+    with TestClient(create_app(settings, verifier=fake_verifier())) as client:
+        while client.get("/health/ready").status_code != 200:
+            time.sleep(0.5)
+        [doc] = upload(client, ("lanterns.md", "\n\n".join(paragraphs).encode()), kb="l", user="u4")
+        doc = wait_for(client, doc["id"], completed, user="u4", timeout_s=120)
+        assert doc["status"] == "completed", doc
+
+    # The first batch was written before the failure and kept: embedded once, not twice.
+    assert EMBEDDED["Lantern note number 0 for the keeper."] == 1
+    assert EMBEDDED["Tripwire paragraph that fails once."] == 2
+    qdrant = QdrantClient(url=live_settings.QDRANT_URL)
+    content = models.Filter(
+        must=[
+            models.FieldCondition(key="contentId", match=models.MatchValue(value=doc["contentId"]))
+        ]
+    )
+    assert qdrant.count(COLLECTION, count_filter=content).count == 41 + 1  # its blocks and title
+
+
+async def test_the_stray_sweep_removes_only_points_the_revision_lacks(
+    client: TestClient, live_settings: Settings
+) -> None:
+    [doc] = upload(client, ("strays.md", POLICY), kb="strays", user="u3")
+    doc = wait_for(client, doc["id"], completed, user="u3", timeout_s=120)
+    qdrant = QdrantClient(url=live_settings.QDRANT_URL)
+    content = models.Filter(
+        must=[
+            models.FieldCondition(key="contentId", match=models.MatchValue(value=doc["contentId"]))
+        ]
+    )
+    points, _ = qdrant.scroll(COLLECTION, scroll_filter=content, limit=100)
+    keep = {str(p.id) for p in points if p.payload and p.payload["kind"] != "title"}
+    stray = "00000000-0000-4000-8000-000000000001"
+    qdrant.upsert(
+        COLLECTION,
+        [
+            models.PointStruct(
+                id=stray,
+                vector={
+                    "dense": vector("old text"),
+                    "sparse": models.SparseVector(indices=[1], values=[1.0]),
+                },
+                payload={
+                    "userId": "u3",
+                    "contentId": doc["contentId"],
+                    "kind": "block",
+                    "revision": 1,
+                    "text": "old text",
+                },
+            )
+        ],
+    )
+    store = QdrantStore(live_settings.QDRANT_URL, live_settings.QDRANT_API_KEY, 10)
+    try:
+        resume = None
+        removed = 0
+        while True:  # 2 points a pass: each pass resumes where the last one stopped
+            result = await sweep_stray_points(
+                store, COLLECTION, doc["contentId"], keep, max_points=2, resume=resume
+            )
+            removed += result.removed
+            resume = result.next_offset
+            if resume is None:
+                break
+        assert removed == 1
+        again = await sweep_stray_points(store, COLLECTION, doc["contentId"], keep, max_points=1000)
+        assert again.removed == 0
+    finally:
+        await store.close()
+    left, _ = qdrant.scroll(COLLECTION, scroll_filter=content, limit=100)
+    assert stray not in {str(p.id) for p in left} and len(left) == len(points)
