@@ -401,6 +401,7 @@ def create_app(
                     prefs=preferences.get,
                 )
             app.state.summaries_available = scheduler is not None
+            app.state.scheduler = scheduler
             app.state.retriever = Retriever(
                 records,
                 contents,

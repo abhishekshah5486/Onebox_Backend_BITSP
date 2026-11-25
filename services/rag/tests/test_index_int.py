@@ -39,6 +39,7 @@ def vector(text: str) -> list[float]:
 # How often each text was embedded, and texts that fail their first embed.
 EMBEDDED: dict[str, int] = {}
 TRIPWIRES = {"Tripwire paragraph that fails once."}
+SUMMARIZED: list[str] = []
 
 
 def fake_proxy() -> FastAPI:
@@ -68,6 +69,7 @@ def fake_proxy() -> FastAPI:
         assert body["subject"] == "rag-classify" and body["messages"][0]["role"] == "system"
         document = body["messages"][1]["content"]
         assert "File name: census.md" in document and "File type: FILE" in document
+        SUMMARIZED.append(document)
         return {
             "output": {
                 "summary": "Field report on the albatross colony census for March 2026.",
@@ -444,6 +446,18 @@ def test_a_record_is_summarized_and_found_by_its_summary(
         summary = next(c for c in found["chunks"] if c["kind"] == "summary")
         assert summary["record"]["recordId"] == census["id"]
         assert summary["text"].startswith("Field report on the albatross colony census")
+
+        # Summarized again from its indexed text: the model is asked again, the file isn't read.
+        def text_embedded() -> int:
+            return sum(n for t, n in EMBEDDED.items() if "Nests counted" in t)
+
+        asked, embedded = len(SUMMARIZED), text_embedded()
+        again = client.post(
+            "/rag/records/summarize", json={"ids": [census["id"]]}, headers=bearer("u5")
+        ).json()
+        assert again == {"queued": [census["id"]], "skipped": []}
+        wait_for(client, census["id"], classified, user="u5", timeout_s=60)
+        assert len(SUMMARIZED) == asked + 1 and text_embedded() == embedded
 
 
 def test_a_failed_index_resumes_with_the_points_it_wrote(

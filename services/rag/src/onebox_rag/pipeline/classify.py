@@ -389,6 +389,23 @@ class ClassifyScheduler:
         if status == ClassifyStatus.QUEUED:
             await self._queue.enqueue(content.user_id, content.id, content.revision)
 
+    async def summarize_again(self, content: Content) -> str | None:
+        """Writes a content's summary again from its indexed text, leaving its index as it is;
+        why not, when it can't be."""
+        if content.status != Status.COMPLETED:
+            return "It isn't indexed yet"
+        if content.classify_status == ClassifyStatus.QUEUED:
+            return "It is being summarized already"
+        await self._contents.update(
+            content.id,
+            self._now(),
+            classify_status=ClassifyStatus.QUEUED,
+            classify_reason=None,
+            classified_revision=None,
+        )
+        await self._queue.enqueue(content.user_id, content.id, content.revision)
+        return None
+
     async def first_use(self, contents: list[Content]) -> None:
         for content in contents:
             if content.classify_status != ClassifyStatus.DEFERRED:

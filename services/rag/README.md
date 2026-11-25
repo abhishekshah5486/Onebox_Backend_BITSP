@@ -267,6 +267,8 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   and the statuses and file types the user has, with counts. `POST /rag/records/reindex`
   (`ids`, up to 100) reads settled records' files again as a new revision (a record being
   read is skipped, with why); the record is out of search until that revision is indexed.
+  `POST /rag/records/summarize` (`ids`) writes indexed records' summaries again from their
+  stored text, without reading or indexing them again.
 - **Sources and files.** `GET /rag/sources` lists the user's knowledge bases and mail accounts
   with their record counts per status and when the last record arrived;
   `GET /rag/records/{id}/file` returns a record's original bytes (an email as its .eml).

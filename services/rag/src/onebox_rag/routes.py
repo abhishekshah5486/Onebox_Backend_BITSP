@@ -18,6 +18,7 @@ from onebox_rag.ingest.records import ContentStore, RecordFilter, RecordSort, Re
 from onebox_rag.models import Record, SourceType, Status
 from onebox_rag.models.base import CamelModel
 from onebox_rag.models.records import DateOrigin
+from onebox_rag.pipeline.classify import ClassifyScheduler
 from onebox_rag.pipeline.parse import decode_blocks
 from onebox_rag.preferences import PreferenceStore, RagPreferences
 from onebox_rag.retrieval.read import FocusSettings, focused_read, read_page
@@ -306,6 +307,41 @@ def rag_router() -> APIRouter:
         new indexing settings)."""
         ingestor: Ingestor = request.app.state.ingestor
         queued, skipped = await ingestor.reindex(user.user_id, body.ids)
+        return {"queued": queued, "skipped": skipped}
+
+    @router.post("/records/summarize")
+    async def summarize_records(
+        request: Request, user: CurrentUser, body: ReindexBody
+    ) -> dict[str, Any]:
+        """Writes the records' summaries again from their indexed text, without reading or
+        indexing them again."""
+        scheduler: ClassifyScheduler | None = getattr(request.app.state, "scheduler", None)
+        records: RecordStore = request.app.state.records
+        contents: ContentStore = request.app.state.contents
+        queued: list[str] = []
+        skipped: list[dict[str, Any]] = []
+        # Per content, as records sharing it share the answer: None once queued, else why not.
+        outcome: dict[str, str | None] = {}
+        for record_id in dict.fromkeys(body.ids):
+            record = await records.get(user.user_id, record_id)
+            if record is None:
+                skipped.append({"id": record_id, "reason": "Record not found"})
+                continue
+            cid = record.content_id
+            if cid not in outcome:
+                content = await contents.get(cid)
+                outcome[cid] = (
+                    "Summaries are switched off"
+                    if scheduler is None
+                    else "Its content is gone"
+                    if content is None
+                    else await scheduler.summarize_again(content)
+                )
+            reason = outcome[cid]
+            if reason is None:
+                queued.append(record_id)
+            else:
+                skipped.append({"id": record_id, "reason": reason})
         return {"queued": queued, "skipped": skipped}
 
     @router.get("/records/{record_id}")
