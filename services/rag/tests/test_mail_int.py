@@ -400,11 +400,11 @@ def test_every_attachment_is_listed_under_its_email_with_why_one_was_not_read(
     late = client.get(f"/rag/records/{found['late.csv']['id']}", headers=bearer("u1")).json()
     assert late["attachedTo"] == {"id": email_id, "name": "Quarter pack"}
 
-    # All records lists the email with its count; the attachments open under it.
+    # All records lists every record on its own, the email with its count.
     listing = client.get("/rag/hub/nodes?flattened=true&limit=100", headers=bearer("u1")).json()
     rows = {n["id"]: n for n in listing["items"]}
     assert rows[email_id]["attachmentCount"] == 3 and rows[email_id]["hasChildren"]
-    assert found["rates.csv"]["id"] not in rows
+    assert found["rates.csv"]["id"] in rows
     under = client.get(f"/rag/hub/nodes/record/{email_id}", headers=bearer("u1")).json()
     assert {n["name"] for n in under["items"]} == {"rates.csv", "video.mov", "late.csv"}
 

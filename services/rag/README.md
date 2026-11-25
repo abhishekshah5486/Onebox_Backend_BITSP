@@ -59,9 +59,8 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
   `GET /rag/hub/nodes/{collection|folder|mailbox|record}/{id}` lists what is in one (folders
   first, then its files, or an email's attachments). With any filter (`q`, `recordTypes`
   FILE/MAIL, `indexingStatus`, `sourceIds`, `createdAt`/`updatedAt`/`size` as `gte:X,lte:Y` in
-  epoch ms or bytes), or `flattened=true`, it lists every record below the node instead; at
-  the top with no name, type or status filter, attachments stay under their email, which
-  carries its `attachmentCount`.
+  epoch ms or bytes), or `flattened=true`, it lists every record below the node instead,
+  attachments as rows of their own; an email carries its `attachmentCount`.
   `sortBy` name/createdAt/updatedAt/size, `sortOrder`, `limit` (up to 200) and the opaque
   `cursor` from `pagination.nextCursor`; `include` adds `breadcrumbs`, `counts`,
   `permissions` and `availableFilters`.

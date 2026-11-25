@@ -148,10 +148,8 @@ class HubLister:
 
         if parent_type is None:
             if flat:
+                # Everything, each record on its own row (attachments too).
                 scope = {"source_ids": query.source_ids}
-                # Everything, with attachments under their emails until it is searched.
-                if not (query.q or query.record_types or query.statuses):
-                    scope["top_level"] = True
             else:
                 containers = await self._roots(user_id)
                 containers = _sorted(containers, query.sort_by, descending)
