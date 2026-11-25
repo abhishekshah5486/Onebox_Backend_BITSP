@@ -39,6 +39,19 @@ class MailClient:
         response = await self._get(f"/internal/messages/{message_id}/attachments/{index}", user_id)
         return response.content if response is not None else None
 
+    async def copies(
+        self, user_id: str, account_id: str, message_id_header: str
+    ) -> tuple[list[str], list[str]]:
+        """Every copy of an email the mailbox holds now, and those not in spam, trash or drafts."""
+        response = await self._http.get(
+            f"/internal/accounts/{account_id}/copies",
+            params={"userId": user_id, "messageIdHeader": message_id_header},
+        )
+        if response.status_code != 200:
+            raise MailUnavailableError(f"mail answered {response.status_code}")
+        body = response.json()
+        return list(body["held"]), list(body["readable"])
+
     async def _get(self, path: str, user_id: str) -> httpx.Response | None:
         try:
             response = await self._http.get(path, params={"userId": user_id})

@@ -66,6 +66,8 @@ BUNDLE = {
     ],
 }
 SENDS_LATE: dict[str, bool] = {"ready": False}
+# The copies the mailbox holds of the email now, as its copies route reports them.
+MAILBOX: dict[str, list[str]] = {"held": [], "readable": []}
 
 
 def fake_mail(calls: list[str]) -> FastAPI:
@@ -77,6 +79,10 @@ def fake_mail(calls: list[str]) -> FastAPI:
         if userId != "u1" or message_id not in {"m-inbox", "m-label", "m-bundle"}:
             return Response(status_code=404)
         return BUNDLE if message_id == "m-bundle" else {**EMAIL, "id": message_id}
+
+    @app.get("/internal/accounts/{account_id}/copies")
+    def copies(account_id: str, userId: str, messageIdHeader: str) -> Any:
+        return MAILBOX
 
     @app.get("/internal/messages/{message_id}/attachments/{index}")
     def attachment(message_id: str, index: int) -> Response:
@@ -231,12 +237,63 @@ def test_keeps_emails_and_attachments_in_step_with_the_mailbox(
     send({"op": "delete", "version": 4, "messageId": "m-inbox"}, user="system")
     until(lambda: mail_records() == [])
 
-    # Moved to spam (no copy RAG reads): removed too.
-    send({**upsert, "key": "k2", "version": 5, "messageIds": ["m-inbox"]})
-    until(lambda: len(mail_records()) == 2)
-    send({"op": "remove", "key": "k2", "accountId": "acct-1", "version": 6})
-    until(lambda: mail_records() == [])
+    state = client.app.state  # type: ignore[attr-defined]
+
+    def trashed() -> list[Json]:
+        found = client.get("/rag/records?sourceType=mail&trashed=true", headers=bearer("u1"))
+        return [r for r in found.json()["records"] if r["mail"] is None or r["mail"]["key"] == "k2"]
+
+    def searchable() -> set[str]:
+        body = {"query": "islands parcelforce"}
+        chunks = client.post("/rag/retrieve", json=body, headers=bearer("u1")).json()["chunks"]
+        return {c["record"]["recordId"] for c in chunks}
+
+    k2 = {**upsert, "key": "k2"}
+    send({**k2, "version": 5, "messageIds": ["m-inbox"]})
+    email = until(lambda: (s := settled()) and next(r for r in s if r["parentId"] is None))
+    until(lambda: email["id"] in searchable())
+
+    # Moved to the mailbox's trash: the inbox copy goes, and the mailbox (asked, as its job
+    # naming the trash copy may not have run yet) holds one there. To the trash here, its points
+    # removed, out of search.
+    MAILBOX.update(held=["m-trash"], readable=[])
+    send({"op": "delete", "version": 7, "messageId": "m-inbox"}, user="system")
+    gone = until(lambda: len(trashed()) == 2 and trashed())
+    assert {r["deleteSource"] for r in gone} == {"source"}
+    assert len({r["deleteBatchId"] for r in gone}) == 1
+    content = client.portal.call(state.contents.get, email["contentId"])  # type: ignore[union-attr]
+    assert content.unindexed
+    assert email["id"] not in searchable()
+
+    # Back in the inbox: restored, indexed again from what was read, found again.
+    reads = len(calls)
+    send({**k2, "version": 8, "messageIds": ["m-inbox"], "heldIds": ["m-inbox", "m-trash"]})
+    until(lambda: settled())
+    until(lambda: email["id"] in searchable())
+    assert trashed() == [] and len(calls) == reads
+
+    # Only in spam: the trash again, and back once it is not.
+    send({**k2, "op": "remove", "version": 9, "heldIds": ["m-spam"]})
+    until(lambda: len(trashed()) == 2)
+    send({**k2, "version": 10, "messageIds": ["m-inbox"]})
+    until(lambda: settled())
+
+    # Deleted here by the user: it stays deleted whatever the mailbox does with it.
+    assert client.delete(f"/rag/records/{email['id']}", headers=bearer("u1")).status_code == 204
+    send({**k2, "version": 11, "messageIds": ["m-inbox"]})
+    until(lambda: the_mail_version(client, email["id"]) == 11)
+    assert {r["deleteSource"] for r in trashed()} == {"user"}
+
+    # Gone from the mailbox altogether: gone from here for good.
+    MAILBOX.update(held=[], readable=[])
+    send({"op": "delete", "version": 12, "messageId": "m-inbox"}, user="system")
+    until(lambda: trashed() == [])
     client.portal.call(queue.close)  # type: ignore[union-attr]
+
+
+def the_mail_version(client: TestClient, record_id: str) -> int:
+    found = client.get("/rag/records?sourceType=mail&trashed=true", headers=bearer("u1"))
+    return next((r["mail"]["version"] for r in found.json()["records"] if r["id"] == record_id), -1)
 
 
 def test_records_whose_content_was_lost_are_read_again(client: TestClient) -> None:

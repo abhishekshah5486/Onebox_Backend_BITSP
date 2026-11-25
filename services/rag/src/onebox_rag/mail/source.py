@@ -1,5 +1,6 @@
 """The mail source: every email the user keeps (not spam, trash or drafts) is a record whose
-content is its latest reply, with a child record per attachment."""
+content is its latest reply, with a child record per attachment. One only in spam or trash is
+in the trash here, back if it leaves them, and gone once the mailbox no longer holds it."""
 
 import io
 import logging
@@ -11,7 +12,7 @@ from onebox_rag.ingest.ingestor import Ingestor, ItemInfo, Source, is_unread
 from onebox_rag.ingest.records import RecordStore
 from onebox_rag.mail.client import MailClient
 from onebox_rag.mail.reply import latest_reply
-from onebox_rag.models import Record, SourceType
+from onebox_rag.models import DeleteSource, Record, SourceType
 from onebox_rag.models.records import Address, MailInfo
 
 logger = logging.getLogger("onebox_rag.mail")
@@ -40,24 +41,34 @@ class MailSource:
         )
         if record is not None and record.mail is not None and record.mail.version > version:
             return  # a later change already landed
+        held = list(payload.get("heldIds") or [])
         if op == "remove":
-            if record is not None:
-                await self._ingestor.delete(user_id, record.id)
-                logger.info("email left rag", extra={"recordId": record.id})
+            # Only in spam or trash: to the trash here too, until the mailbox lets it go.
+            if record is not None and record.mail is not None:
+                kept = held or record.mail.held_ids or record.mail.copy_ids
+                await self._set_copies(record, [], kept, version)
+                await self._to_trash(record)
             return
         copies = list(payload["messageIds"])
+        held = held or copies
+        if record is not None and record.deleted_at is not None:
+            if record.delete_source == DeleteSource.USER:
+                # The user's delete stands while the mailbox keeps it.
+                await self._set_copies(record, copies, held, version)
+                return
+            await self._ingestor.untrash([record])
+            logger.info("email back from the mailbox's trash", extra={"recordId": record.id})
         if record is not None and record.mail is not None and record.mail.attachments_done:
-            await self._set_mail(
-                record, record.mail.model_copy(update={"copy_ids": copies, "version": version})
-            )
+            await self._set_copies(record, copies, held, version)
             return
-        await self._read(user_id, payload, copies, version, record)
+        await self._read(user_id, payload, copies, held, version, record)
 
     async def _read(
         self,
         user_id: str,
         payload: dict[str, Any],
         copies: list[str],
+        held: list[str],
         version: int,
         record: Record | None,
     ) -> None:
@@ -69,7 +80,7 @@ class MailSource:
         if message is None:
             return  # every copy went meanwhile; their deletes follow
         source = Source(SourceType.MAIL, payload["accountId"])
-        info = _mail_info(payload["key"], copies, version, message)
+        info = _mail_info(payload["key"], copies, held, version, message)
         if record is None:
             body_bytes, mime = _body(message)
             done = await self._ingestor.ingest(
@@ -165,13 +176,37 @@ class MailSource:
         if record is None or record.mail is None or record.mail.version > version:
             return
         left = [c for c in record.mail.copy_ids if c != message_id]
-        if left:
-            await self._set_mail(
-                record, record.mail.model_copy(update={"copy_ids": left, "version": version})
+        held = [c for c in record.mail.held_ids or record.mail.copy_ids if c != message_id]
+        if not left and record.mail.message_id_header:
+            # Mail jobs run side by side, so the copies known here may lag: the mailbox says.
+            held, left = await self._mail.copies(
+                record.user_id, record.source_id, record.mail.message_id_header
             )
+            if left:
+                await self._set_copies(record, left, held, version)
+                if record.deleted_at is not None and record.delete_source == DeleteSource.SOURCE:
+                    await self._ingestor.untrash([record])
+                return
+        if not held:
+            # Gone from the mailbox, its trash included: gone from here for good.
+            await self._ingestor.delete(record.user_id, record.id)
+            logger.info("email left rag", extra={"recordId": record.id})
             return
-        await self._ingestor.delete(record.user_id, record.id)
-        logger.info("email left rag", extra={"recordId": record.id})
+        await self._set_copies(record, left, held, version)
+        if not left:
+            await self._to_trash(record)
+
+    async def _to_trash(self, record: Record) -> None:
+        if record.deleted_at is None:
+            await self._ingestor.trash(record.user_id, [record.id], DeleteSource.SOURCE)
+            logger.info("email went to the trash", extra={"recordId": record.id})
+
+    async def _set_copies(
+        self, record: Record, copies: list[str], held: list[str], version: int
+    ) -> None:
+        if record.mail is not None:
+            update = {"copy_ids": copies, "held_ids": held, "version": version}
+            await self._set_mail(record, record.mail.model_copy(update=update))
 
     async def _set_mail(self, record: Record, info: MailInfo) -> None:
         await self._records.update(record.id, self._now(), mail=info.model_dump(by_alias=True))
@@ -186,7 +221,9 @@ def _body(message: dict[str, Any]) -> tuple[bytes, str]:
     return (b"", "text/plain") if body is None else (body.data, body.mime_type)
 
 
-def _mail_info(key: str, copies: list[str], version: int, message: dict[str, Any]) -> MailInfo:
+def _mail_info(
+    key: str, copies: list[str], held: list[str], version: int, message: dict[str, Any]
+) -> MailInfo:
     def address(value: Any) -> Address | None:
         return Address.model_validate(value) if isinstance(value, dict) else None
 
@@ -194,6 +231,7 @@ def _mail_info(key: str, copies: list[str], version: int, message: dict[str, Any
     return MailInfo(
         key=key,
         copy_ids=copies,
+        held_ids=held,
         version=version,
         thread_id=message.get("threadId"),
         message_id_header=message.get("messageIdHeader"),
