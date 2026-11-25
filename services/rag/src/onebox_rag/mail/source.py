@@ -202,8 +202,6 @@ def _mail_info(key: str, copies: list[str], version: int, message: dict[str, Any
         cc=[a for a in map(address, message.get("cc") or []) if a],
         received_at=datetime.fromisoformat(received) if received else None,
         attachment_names=[
-            a["filename"]
-            for a in message.get("attachments") or []
-            if a.get("filename") and not a.get("inline")
+            a["filename"] for a in message.get("attachments") or [] if a.get("filename")
         ],
     )

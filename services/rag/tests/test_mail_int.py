@@ -62,7 +62,7 @@ BUNDLE = {
     "attachments": [
         {**EMAIL["attachments"][0]},  # type: ignore[index]
         {**EMAIL["attachments"][0], "index": 1, "filename": "video.mov", "sizeBytes": 10**12},  # type: ignore[index]
-        {**EMAIL["attachments"][0], "index": 2, "filename": "late.csv"},  # type: ignore[index]
+        {**EMAIL["attachments"][0], "index": 2, "filename": "late.csv", "inline": True},  # type: ignore[index]
     ],
 }
 SENDS_LATE: dict[str, bool] = {"ready": False}

@@ -404,6 +404,16 @@ class RecordStore:
         cursor = self._records.find({"userId": user_id, "parentId": parent_id})
         return [Record.model_validate(doc) async for doc in cursor]
 
+    async def child_counts(self, user_id: str, parent_ids: list[str]) -> dict[str, int]:
+        """How many records (not deleted) sit under each of these."""
+        cursor = await self._records.aggregate(
+            [
+                {"$match": {"userId": user_id, "parentId": {"$in": parent_ids}, "deletedAt": None}},
+                {"$group": {"_id": "$parentId", "n": {"$sum": 1}}},
+            ]
+        )
+        return {doc["_id"]: doc["n"] async for doc in cursor}
+
     async def set_children(self, parent_id: str, now: datetime, **fields: Any) -> None:
         await self._records.update_many({"parentId": parent_id}, _set(fields, now))
 

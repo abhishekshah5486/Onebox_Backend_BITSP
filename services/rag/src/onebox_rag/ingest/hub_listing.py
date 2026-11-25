@@ -193,10 +193,12 @@ class HubLister:
             record = await self._records.get(user_id, parent_id or "")
             if record is None:
                 raise NotFoundError("Record not found")
-            current = _record_node(record, has_children=True)
+            children = [
+                r for r in await self._records.children(user_id, record.id) if r.deleted_at is None
+            ]
+            current = _record_node(record, attachments=len(children))
             crumbs = [_crumb(current)]
-            children = await self._records.children(user_id, record.id)
-            items = [_record_node(r) for r in children if r.deleted_at is None]
+            items = [_record_node(r) for r in children]
             return self._response(current, crumbs, items, len(items), 0, len(items) or 1, query)
         else:
             raise ValidationError(f"nodeType is one of {', '.join(NODE_TYPES)}")
@@ -224,9 +226,10 @@ class HubLister:
                 offset=start,
                 limit=max(room, 1),
             )
-            parents = {r.id for r in found if r.mail is not None and r.mail.attachment_names}
+            emails = [r.id for r in found if r.mail is not None and r.parent_id is None]
+            counts = await self._records.child_counts(user_id, emails) if emails else {}
             if room > 0:
-                items += [_record_node(r, has_children=r.id in parents) for r in found]
+                items += [_record_node(r, attachments=counts.get(r.id, 0)) for r in found]
         total = len(containers) + total_records
         return self._response(current, crumbs, items, total, offset, query.limit, query)
 
@@ -360,7 +363,7 @@ def _folder_node(folder: Folder) -> dict[str, Any]:
     }
 
 
-def _record_node(record: Record, *, has_children: bool = False) -> dict[str, Any]:
+def _record_node(record: Record, *, attachments: int = 0) -> dict[str, Any]:
     extension = record.name.rsplit(".", 1)[-1].lower() if "." in record.name else None
     return {
         "id": record.id,
@@ -371,10 +374,8 @@ def _record_node(record: Record, *, has_children: bool = False) -> dict[str, Any
         "folderId": record.folder_id,
         "origin": record.origin,
         "connector": "MAIL" if record.source_type == SourceType.MAIL else None,
-        "hasChildren": has_children,
-        "attachmentCount": len(record.mail.attachment_names)
-        if record.mail and record.parent_id is None
-        else 0,
+        "hasChildren": attachments > 0,
+        "attachmentCount": attachments,
         "createdAt": ms(record.created_at),
         "updatedAt": ms(record.updated_at),
         "sourceCreatedAt": ms(record.source_created_at),
