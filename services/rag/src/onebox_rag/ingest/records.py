@@ -1,7 +1,7 @@
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic.alias_generators import to_camel
@@ -10,7 +10,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
 from onebox_rag.dates import DateBounds
-from onebox_rag.models import Content, Record
+from onebox_rag.models import Content, DeleteSource, Record
 from onebox_rag.models.records import TERMINAL, DateOrigin, Stage, Status
 
 Doc = dict[str, Any]
@@ -163,6 +163,38 @@ class ContentStore:
     async def delete(self, content_id: str) -> None:
         await self._contents.delete_one({"_id": content_id})
 
+    async def unindex(self, content_id: str, now: datetime) -> Content | None:
+        """Marks an indexed content as having lost its points (every holder is in the trash);
+        None when it isn't indexed."""
+        doc = await self._contents.find_one_and_update(
+            {"_id": content_id, "status": Status.COMPLETED.value, "indexCollection": {"$ne": None}},
+            _set({"unindexed": True}, now),
+            return_document=ReturnDocument.BEFORE,
+        )
+        return Content.model_validate(doc) if doc else None
+
+    async def reindex(self, content_id: str, now: datetime) -> Content | None:
+        """Queues an unindexed content's index step again, from its stored blocks (its revision
+        stays, so it is not read or summarized again); None when there is nothing to do."""
+        doc = await self._contents.find_one_and_update(
+            {"_id": content_id, "unindexed": True, "blocksKey": {"$ne": None}},
+            _set(
+                {"unindexed": False, "status": Status.QUEUED, "stage": Stage.INDEX, "reason": None},
+                now,
+            ),
+            return_document=ReturnDocument.AFTER,
+        )
+        return Content.model_validate(doc) if doc else None
+
+    async def owe_collect(self, content_ids: list[str], now: datetime) -> None:
+        await self._contents.update_many(
+            {"_id": {"$in": content_ids}}, _set({"collect_pending": True}, now)
+        )
+
+    async def collect_owed(self, limit: int = 100) -> list[str]:
+        cursor = self._contents.find({"collectPending": True}, {"_id": 1}).limit(limit)
+        return [str(doc["_id"]) async for doc in cursor]
+
 
 class RecordStore:
     def __init__(self, db: AsyncDatabase[Doc]) -> None:
@@ -183,6 +215,8 @@ class RecordStore:
         await self._records.create_index([("contentId", ASCENDING)])
         await self._records.create_index([("parentId", ASCENDING)], sparse=True)
         await self._records.create_index([("mail.copyIds", ASCENDING)], sparse=True)
+        await self._records.create_index([("mail.heldIds", ASCENDING)], sparse=True)
+        await self._records.create_index([("deletedAt", ASCENDING)], sparse=True)
         await self._records.create_index([("titled", ASCENDING)])
         # Records made before they had source dates take their own.
         await self._records.update_many(
@@ -374,7 +408,9 @@ class RecordStore:
         return Record.model_validate(doc) if doc else None
 
     async def with_mail_copy(self, message_id: str) -> Record | None:
-        doc = await self._records.find_one({"mail.copyIds": message_id})
+        doc = await self._records.find_one(
+            {"$or": [{"mail.copyIds": message_id}, {"mail.heldIds": message_id}]}
+        )
         return Record.model_validate(doc) if doc else None
 
     async def count_reading(
@@ -394,11 +430,13 @@ class RecordStore:
         return await self._records.count_documents(query)
 
     async def untitled(self, limit: int = 1000) -> list[Record]:
-        cursor = self._records.find({"titled": {"$ne": True}}).limit(limit)
+        cursor = self._records.find({"titled": {"$ne": True}, "deletedAt": None}).limit(limit)
         return [Record.model_validate(doc) async for doc in cursor]
 
-    async def holds_content(self, content_id: str) -> bool:
-        return await self._records.count_documents({"contentId": content_id}, limit=1) > 0
+    async def holds_content(self, content_id: str, *, live: bool = False) -> bool:
+        """Whether any record holds it (`live`: any not in the trash)."""
+        query: Doc = {"contentId": content_id, **({"deletedAt": None} if live else {})}
+        return await self._records.count_documents(query, limit=1) > 0
 
     async def children(self, user_id: str, parent_id: str) -> list[Record]:
         cursor = self._records.find({"userId": user_id, "parentId": parent_id})
@@ -515,14 +553,49 @@ class RecordStore:
         }
         return [str(i) for i in await self._records.distinct("_id", query)]
 
-    async def trash(self, record_ids: list[str], now: datetime | None) -> None:
-        """Into the trash (now) or out of it (None), with their attachments."""
+    async def trash(
+        self, record_ids: list[str], now: datetime, source: DeleteSource, batch_id: str
+    ) -> None:
+        """Into the trash as one batch, with their attachments not there already."""
         ids = {"$in": record_ids}
-        update = _set({"deleted_at": now}, now or datetime.now(UTC))
-        await self._records.update_many({"$or": [{"_id": ids}, {"parentId": ids}]}, update)
+        await self._records.update_many(
+            {"$or": [{"_id": ids}, {"parentId": ids}], "deletedAt": None},
+            _set({"deleted_at": now, "delete_source": source, "delete_batch_id": batch_id}, now),
+        )
 
-    async def delete(self, record_ids: list[str]) -> None:
-        await self._records.delete_many({"_id": {"$in": record_ids}})
+    async def untrash(self, record: Record, now: datetime) -> list[Record]:
+        """Brings a record back with what its delete took along (not what went before it)."""
+        query: Doc = {
+            "userId": record.user_id,
+            "deletedAt": {"$ne": None},
+            "$or": [
+                {"_id": record.id},
+                {"parentId": record.id, "deleteBatchId": record.delete_batch_id},
+            ],
+        }
+        back = [Record.model_validate(d) async for d in self._records.find(query)]
+        await self._records.update_many(
+            {"_id": {"$in": [r.id for r in back]}},
+            _set({"deleted_at": None, "delete_source": None, "delete_batch_id": None}, now),
+        )
+        return back
+
+    async def trashed_before(self, before: datetime, limit: int = 100) -> list[Record]:
+        """Items in the trash since before `before`, oldest first (attachments go with them)."""
+        cursor = (
+            self._records.find({"deletedAt": {"$ne": None, "$lte": before}, "parentId": None})
+            .sort([("deletedAt", ASCENDING), ("_id", ASCENDING)])
+            .limit(limit)
+        )
+        return [Record.model_validate(d) async for d in cursor]
+
+    async def delete(self, record_ids: list[str], *, trashed_before: datetime | None = None) -> int:
+        """Deletes them; with `trashed_before`, only while still in the trash since then (one
+        restored meanwhile stays)."""
+        query: Doc = {"_id": {"$in": record_ids}}
+        if trashed_before is not None:
+            query["deletedAt"] = {"$ne": None, "$lte": trashed_before}
+        return (await self._records.delete_many(query)).deleted_count
 
 
 SCOPE_FIELDS = {"source_ids": "sourceId", "source_types": "sourceType", "record_ids": "_id"}

@@ -27,6 +27,14 @@ class Status(StrEnum):
     FAILED = "failed"
 
 
+class DeleteSource(StrEnum):
+    """Who sent a record to the trash: the user (it stays there whatever its source does)
+    or its source (it comes back if the source has it again)."""
+
+    USER = "user"
+    SOURCE = "source"
+
+
 TERMINAL = frozenset(
     {
         Status.COMPLETED,
@@ -124,6 +132,12 @@ class Content(CamelModel):
     point_count: int | None = None
     # Its points carry its records' dates (and emails' header points are written).
     points_dated: bool = False
+    # Its points were removed while every record holding it was in the trash; a restore
+    # indexes it again from its stored blocks.
+    unindexed: bool = False
+    # A permanent delete owes its cleanup (points, files, jobs); the sweep finishes one that
+    # was cut short.
+    collect_pending: bool = False
     embed_marker: EmbedMarker | None = None
     classification: Classification | None = None
     classify_status: ClassifyStatus | None = None
@@ -150,7 +164,10 @@ class MailInfo(CamelModel):
     who sent it to whom, for citations and for the model's context."""
 
     key: str
+    # The copies it is read from (not in spam, trash or drafts).
     copy_ids: list[str]
+    # Every copy the mailbox holds, those included: the email is gone once none is left.
+    held_ids: list[str] = Field(default_factory=list)
     version: int
     thread_id: str | None = None
     message_id_header: str | None = None
@@ -158,7 +175,7 @@ class MailInfo(CamelModel):
     to: list[Address] = Field(default_factory=list)
     cc: list[Address] = Field(default_factory=list)
     received_at: datetime | None = None
-    # Files sent with it (not pictures inline in the body), named in its header point.
+    # Files sent with it (pictures inline in the body too), named in its header point.
     attachment_names: list[str] = Field(default_factory=list)
     # Every attachment has its record (one that failed to download is tried again).
     attachments_done: bool = False
@@ -212,6 +229,9 @@ class Record(CamelModel):
     folder_id: str | None = None
     # When it went to the trash; it is left out of lists and searches until restored.
     deleted_at: datetime | None = None
+    delete_source: DeleteSource | None = None
+    # Shared by everything one delete sent to the trash, so a restore brings back that set.
+    delete_batch_id: str | None = None
     # Bumped when its file is replaced.
     version: int = 1
 

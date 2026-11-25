@@ -8,7 +8,7 @@ from onebox_rag.errors import ConflictError, NotFoundError, ValidationError
 from onebox_rag.ingest.hub import LEGACY_NAMES, FolderStore, KnowledgeBaseStore, clean_name
 from onebox_rag.ingest.ingestor import Ingestor
 from onebox_rag.ingest.records import RecordStore
-from onebox_rag.models import Record, SourceType
+from onebox_rag.models import DeleteSource, Record, SourceType
 from onebox_rag.models.hub import Folder, KnowledgeBase
 
 # An id that is also a name, as the first uploads used (e.g. "default").
@@ -81,7 +81,7 @@ class Organizer:
         below = [f.id for f in await self.folders.subtree(user_id, folder)]
         held = [r.id for r in await self._records.in_folders(user_id, below) if r.parent_id is None]
         if held:
-            await self._records.trash(held, self._now())
+            await self._ingestor.trash(user_id, held, DeleteSource.USER)
         await self.folders.delete(below)
         return len(held)
 
@@ -132,26 +132,19 @@ class Organizer:
 
     async def trash(self, user_id: str, record_ids: list[str]) -> list[str]:
         """Moves records (and their attachments) to the trash; returns those that were."""
-        found = [
-            r
-            for r in [await self._records.get(user_id, rid) for rid in dict.fromkeys(record_ids)]
-            if r is not None and r.parent_id is None
-        ]
-        if found:
-            await self._records.trash([r.id for r in found], self._now())
-        return [r.id for r in found]
+        trashed = await self._ingestor.trash(user_id, record_ids, DeleteSource.USER)
+        return [r.id for r in trashed]
 
     async def restore(self, user_id: str, record_ids: list[str]) -> list[str]:
-        """Brings records back; one whose folder went meanwhile comes back to the top."""
+        """Brings records back with what their delete took along, indexed again; one whose
+        folder went meanwhile comes back to the top."""
         restored = []
         for rid in dict.fromkeys(record_ids):
             record = await self._records.get(user_id, rid, trashed=True)
-            if record is None:
+            if record is None or record.parent_id is not None:
                 continue
             if record.folder_id and await self.folders.get(user_id, record.folder_id) is None:
                 await self._records.update(record.id, self._now(), folder_id=None)
                 await self._records.set_children(record.id, self._now(), folder_id=None)
-            restored.append(record.id)
-        if restored:
-            await self._records.trash(restored, None)
-        return restored
+            restored.append(record)
+        return await self._ingestor.untrash(restored)

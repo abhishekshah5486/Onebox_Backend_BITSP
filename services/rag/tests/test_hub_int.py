@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -168,3 +169,29 @@ def test_the_hub_lists_a_level_or_everything_below(client: TestClient) -> None: 
     ]
     assert client.get("/rag/hub/nodes/folder/nope", headers=user).status_code == 404
     assert client.get("/rag/hub/nodes", params={"cursor": "%%"}, headers=user).status_code == 400
+
+
+def test_the_trash_is_emptied_after_its_retention(client: TestClient) -> None:  # noqa: F811
+    state = client.app.state  # type: ignore[attr-defined]
+    old, kept = client.post(
+        "/rag/documents",
+        headers=USER,
+        files=[
+            ("files", ("old.txt", b"to be purged", "text/plain")),
+            ("files", ("kept.txt", b"brought back", "text/plain")),
+        ],
+        data={"knowledgeBase": "purge"},
+    ).json()["records"]
+    trashed = client.post("/rag/records/trash", json={"ids": [old["id"], kept["id"]]}, headers=USER)
+    assert sorted(trashed.json()["trashed"]) == sorted([old["id"], kept["id"]])
+    listed = client.get("/rag/records?trashed=true&sourceId=purge", headers=USER).json()
+    assert {r["deleteSource"] for r in listed["records"]} == {"user"}
+    client.post("/rag/records/restore", json={"ids": [kept["id"]]}, headers=USER)
+
+    # Not due yet: nothing goes. Past the retention: what is still in the trash goes for good.
+    now = datetime.now(UTC)
+    assert client.portal.call(state.ingestor.purge, now - timedelta(days=1)) == 0  # type: ignore[union-attr]
+    assert client.portal.call(state.ingestor.purge, now + timedelta(seconds=1)) >= 1  # type: ignore[union-attr]
+    assert client.get(f"/rag/records/{old['id']}", headers=USER).status_code == 404
+    assert client.portal.call(state.contents.get, old["contentId"]) is None  # type: ignore[union-attr]
+    assert names(client, sourceId="purge") == ["kept.txt"]

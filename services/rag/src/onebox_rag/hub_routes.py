@@ -191,6 +191,7 @@ def hub_router() -> APIRouter:
         return {
             "maxFileSizeBytes": settings.RAG_MAX_FILE_MB * 1024 * 1024,
             "maxFilesPerUpload": 100,
+            "trashRetentionDays": settings.RAG_TRASH_RETENTION_DAYS,
         }
 
     @router.post("/records/{record_id}/replace")

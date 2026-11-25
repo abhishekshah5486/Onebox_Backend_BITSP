@@ -159,6 +159,10 @@ class Settings(BaseSettings):
     # How often records without a title point, and contents whose points lack their records'
     # dates, are looked for.
     RAG_UPKEEP_SWEEP_S: float = Field(default=300, gt=0)
+    # Days an item stays in the trash before it is deleted for good, and how often that is
+    # looked for (one replica at a time).
+    RAG_TRASH_RETENTION_DAYS: int = Field(default=14, ge=1, le=3650)
+    RAG_TRASH_PURGE_EVERY_S: float = Field(default=3600, gt=0)
     # A record found by its title (its name, an email's subject, people or date) is shown whole
     # up to this many words, else its opening.
     RAG_TITLE_HIT_WORDS: int = Field(default=700, ge=50)

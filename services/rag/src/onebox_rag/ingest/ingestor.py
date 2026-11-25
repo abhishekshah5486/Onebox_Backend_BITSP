@@ -13,7 +13,7 @@ from onebox_rag.ingest.blobs import BlobStore
 from onebox_rag.ingest.inspect import Inspection, Limits, inspect_file
 from onebox_rag.ingest.queue import IngestQueue
 from onebox_rag.ingest.records import ContentStore, RecordStore
-from onebox_rag.models import Content, Record, SourceType, Stage, Status
+from onebox_rag.models import Content, DeleteSource, Record, SourceType, Stage, Status
 from onebox_rag.models.records import TERMINAL, DateOrigin, MailInfo
 from onebox_rag.parsers.base import ExtractedFile
 
@@ -359,9 +359,76 @@ class Ingestor:
         await self._queue.enqueue(user_id, cid, fresh.revision)
         return None
 
-    async def delete(self, user_id: str, record_id: str) -> bool:
-        """Removes a record and its attachments' records; content nothing else holds goes too."""
-        record = await self._records.get(user_id, record_id, trashed=None)
+    async def trash(
+        self, user_id: str, record_ids: list[str], source: DeleteSource
+    ) -> list[Record]:
+        """Moves records and their attachments to the trash as one batch. Their files and text
+        stay; their points go once nothing outside the trash holds their content."""
+        roots = [
+            r
+            for r in [await self._records.get(user_id, rid) for rid in dict.fromkeys(record_ids)]
+            if r is not None and r.parent_id is None
+        ]
+        if not roots:
+            return []
+        held = list(roots)
+        for root in roots:
+            held += [c for c in await self._records.children(user_id, root.id) if not c.deleted_at]
+        await self._records.trash([r.id for r in roots], self._now(), source, str(uuid.uuid4()))
+        for cid in dict.fromkeys(r.content_id for r in held):
+            await self._notify(cid, [], [r.id for r in held if r.content_id == cid])
+            await self._unindex(cid)
+        return roots
+
+    async def untrash(self, roots: list[Record]) -> list[str]:
+        """Brings records back with what their delete took along; content whose points went
+        is indexed again from its stored blocks."""
+        back: list[Record] = []
+        for root in roots:
+            back += await self._records.untrash(root, self._now())
+        for cid in dict.fromkeys(r.content_id for r in back):
+            await self._notify(cid, [r.id for r in back if r.content_id == cid], [])
+            content = await self._contents.reindex(cid, self._now())
+            if content is None:
+                continue
+            await self._records.update_for_content(
+                cid, self._now(), status=Status.QUEUED, stage=Stage.INDEX, reason=None
+            )
+            if self._index_queue is not None:
+                await self._index_queue.enqueue(content.user_id, cid, content.revision)
+        return [r.id for r in roots]
+
+    async def _unindex(self, cid: str) -> None:
+        if self._forget is None or await self._records.holds_content(cid, live=True):
+            return
+        content = await self._contents.unindex(cid, self._now())
+        if content is None:
+            return
+        try:
+            await self._forget(content)
+        except Exception:
+            # Search leaves records in the trash out anyway; the purge removes the points.
+            logger.warning("trashed points not removed", extra={"contentId": cid}, exc_info=True)
+
+    async def purge(self, before: datetime, limit: int = 100) -> int:
+        """Deletes for good up to `limit` items in the trash since before `before`, after
+        finishing any cleanup a cut-short delete still owes; returns how many went."""
+        for cid in await self._contents.collect_owed(limit):
+            await self.collect(cid)
+        purged = 0
+        for record in await self._records.trashed_before(before, limit):
+            if await self.delete(record.user_id, record.id, trashed_before=before):
+                purged += 1
+        return purged
+
+    async def delete(
+        self, user_id: str, record_id: str, *, trashed_before: datetime | None = None
+    ) -> bool:
+        """Removes a record and its attachments' records; content nothing else holds goes too.
+        With `trashed_before`, only if it is still in the trash since then."""
+        record = await self._records.get(
+            user_id, record_id, trashed=True if trashed_before else None
+        )
         if record is None:
             return False
         doomed, pending = [], [record]
@@ -369,8 +436,13 @@ class Ingestor:
             item = pending.pop()
             doomed.append(item)
             pending += await self._records.children(user_id, item.id)
-        await self._records.delete([item.id for item in doomed])
-        for cid in dict.fromkeys(item.content_id for item in doomed):
+        cids = list(dict.fromkeys(item.content_id for item in doomed))
+        # Owed before the records go, so a delete cut short is finished by the purge.
+        await self._contents.owe_collect(cids, self._now())
+        ids = [item.id for item in doomed]
+        if not await self._records.delete(ids, trashed_before=trashed_before):
+            return False
+        for cid in cids:
             # Their title points go first; the content goes too once nothing holds it.
             await self._notify(cid, [], [item.id for item in doomed if item.content_id == cid])
             await self.collect(cid)
@@ -443,10 +515,12 @@ class Ingestor:
 
     async def collect(self, cid: str) -> None:
         """Deletes a content, its stored files and pending job once no record holds it."""
-        if await self._records.holds_content(cid):
-            return
         content = await self._contents.get(cid)
         if content is None:
+            return
+        if await self._records.holds_content(cid):
+            if content.collect_pending:
+                await self._contents.update(cid, self._now(), collect_pending=False)
             return
         await self._queue.remove(cid, content.revision)
         if self._index_queue is not None:

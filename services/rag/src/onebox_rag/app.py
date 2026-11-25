@@ -191,6 +191,37 @@ async def _sweep_orphans(
         await asyncio.sleep(every_s)
 
 
+PURGE_LEASE = "rag:trash-purge:lease"
+PURGE_PAGE = 100
+
+
+async def purge_trash(redis: Redis, ingestor: Ingestor, settings: Settings) -> int:
+    """Deletes for good what has been in the trash past its retention, page by page, while
+    this replica holds the lease (so only one does it at a time)."""
+    lease = max(int(settings.RAG_TRASH_PURGE_EVERY_S), 60)
+    if not await redis.set(PURGE_LEASE, "1", nx=True, ex=lease):
+        return 0
+    try:
+        before = datetime.now(UTC) - timedelta(days=settings.RAG_TRASH_RETENTION_DAYS)
+        purged = 0
+        while (page := await ingestor.purge(before, PURGE_PAGE)) > 0:
+            purged += page
+        if purged:
+            logger.info("trash purged", extra={"records": purged})
+        return purged
+    finally:
+        await redis.delete(PURGE_LEASE)
+
+
+async def _purge_trash_every(redis: Redis, ingestor: Ingestor, settings: Settings) -> None:
+    while True:
+        try:
+            await purge_trash(redis, ingestor, settings)
+        except Exception:
+            logger.warning("trash purge failed", exc_info=True)
+        await asyncio.sleep(settings.RAG_TRASH_PURGE_EVERY_S)
+
+
 def create_app(
     settings: Settings,
     *,
@@ -448,10 +479,17 @@ def create_app(
             if settings.RAG_RUN_WORKER
             else None
         )
+        purge = (
+            asyncio.create_task(_purge_trash_every(redis, ingestor, settings))
+            if settings.RAG_RUN_WORKER
+            else None
+        )
         try:
             yield
         finally:
             prepare.cancel()
+            if purge is not None:
+                purge.cancel()
             if sweep is not None:
                 sweep.cancel()
             if orphans is not None:

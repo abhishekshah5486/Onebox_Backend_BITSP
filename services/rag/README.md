@@ -73,6 +73,15 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
   `POST /rag/records/restore` (`ids`; one whose folder went comes back to the top). Trashed
   records are left out of lists and searches. Each record says its `recordType` (`FILE` or
   `MAIL`) and `origin` (`UPLOAD` or `CONNECTOR`).
+- **The trash.** One delete sends a record and its attachments together (one
+  `deleteBatchId`, and `deleteSource`: `user`, or `source` when the mailbox let it go); a
+  restore brings back that set. The file and its read text stay, but the points go once no
+  record outside the trash holds the content, and a restore indexes it again from the stored
+  text (not read or summarized again). After `RAG_TRASH_RETENTION_DAYS` (14; in
+  `GET /rag/limits` as `trashRetentionDays`) a sweep every `RAG_TRASH_PURGE_EVERY_S`, one
+  replica at a time, deletes it for good: records, points, files and jobs. A delete marks the
+  cleanup it owes first, so one cut short is finished by the next sweep, and an item restored
+  meanwhile stays.
 
 ## How it works
 
@@ -271,8 +280,10 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   email's details (`attachments`, each naming its email as `attachedTo`): one too big to fetch,
   or one mail couldn't send (tried again when the email next changes), is a failed record
   saying why rather than missing. A copy moved or
-  deleted updates the record; once no readable copy is left, the email and its attachments
-  leave RAG. Passages from mail carry the sender, recipients and date, and an attachment's
+  deleted updates the record. Once only spam or trash holds it, the email and its attachments
+  go to RAG's trash, and come back if it leaves them; once the mailbox holds no copy at all
+  (asked through `/internal/accounts/{id}/copies`, as jobs run side by side), they are deleted
+  for good. An email the user deleted here stays deleted whatever the mailbox does. Passages from mail carry the sender, recipients and date, and an attachment's
   carry its email's.
 - **Formats so far:** plain text and Markdown (markdown-it), HTML (selectolax), email (attachments become child records),
   JSON and JSON Lines, YAML, CSV and TSV, spreadsheets, PDF, Word, PowerPoint, EPUB books,
