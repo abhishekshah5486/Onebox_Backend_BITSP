@@ -59,7 +59,9 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
   `GET /rag/hub/nodes/{collection|folder|mailbox|record}/{id}` lists what is in one (folders
   first, then its files, or an email's attachments). With any filter (`q`, `recordTypes`
   FILE/MAIL, `indexingStatus`, `sourceIds`, `createdAt`/`updatedAt`/`size` as `gte:X,lte:Y` in
-  epoch ms or bytes), or `flattened=true`, it lists every record below the node instead.
+  epoch ms or bytes), or `flattened=true`, it lists every record below the node instead; at
+  the top with no name, type or status filter, attachments stay under their email, which
+  carries its `attachmentCount`.
   `sortBy` name/createdAt/updatedAt/size, `sortOrder`, `limit` (up to 200) and the opaque
   `cursor` from `pagination.nextCursor`; `include` adds `breadcrumbs`, `counts`,
   `permissions` and `availableFilters`.
@@ -265,7 +267,10 @@ maxChunksPerRecord, createdAfter, createdBefore, modifiedAfter, modifiedBefore}`
   attachments back from mail's `/internal` routes. An email is one record whichever folders
   hold copies of it (spam, trash and drafts are left out), named by its subject, its content
   the latest reply only: quoted history is removed with talon, as earlier emails of the thread
-  hold it, but a forward is kept whole. Each attachment is a child record. A copy moved or
+  hold it, but a forward is kept whole. Each attachment is a child record, listed in the
+  email's details (`attachments`, each naming its email as `attachedTo`): one too big to fetch,
+  or one mail couldn't send (tried again when the email next changes), is a failed record
+  saying why rather than missing. A copy moved or
   deleted updates the record; once no readable copy is left, the email and its attachments
   leave RAG. Passages from mail carry the sender, recipients and date, and an attachment's
   carry its email's.

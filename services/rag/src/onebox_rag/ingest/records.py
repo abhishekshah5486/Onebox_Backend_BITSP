@@ -44,9 +44,13 @@ class RecordFilter:
     trashed: bool = False
     # FILE and/or MAIL (an email itself; its attachments are files).
     record_types: Sequence[str] | None = None
+    # Leave out attachments; they are listed under their email.
+    top_level: bool = False
 
     def query(self) -> Doc:
         query: Doc = _trash(self.trashed)
+        if self.top_level:
+            query["parentId"] = None
         if self.folder_ids is not None:
             query["folderId"] = {"$in": list(self.folder_ids)}
         if self.name:

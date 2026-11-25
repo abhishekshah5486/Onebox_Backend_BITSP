@@ -337,6 +337,22 @@ def rag_router() -> APIRouter:
             path = await organizer.folders.path(user.user_id, folder) if folder else []
             details["collection"] = {"id": kb.id, "name": kb.name} if kb else None
             details["folderPath"] = [{"id": f.id, "name": f.name} for f in path]
+        # An email's attachments (failed ones too, with why), or the email an attachment is in.
+        if record.parent_id is None:
+            details["attachments"] = [
+                {
+                    "id": child.id,
+                    "name": child.name,
+                    "status": child.status,
+                    "reason": child.reason,
+                    "sizeBytes": child.size_bytes,
+                }
+                for child in await records.children(user.user_id, record.id)
+                if child.deleted_at is None
+            ]
+        else:
+            parent = await records.get(user.user_id, record.parent_id, trashed=None)
+            details["attachedTo"] = {"id": parent.id, "name": parent.name} if parent else None
         # One user's records: theirs alone (sharing comes with workspaces).
         details["permissions"] = [{"id": user.user_id, "relationship": "OWNER", "type": "USER"}]
         return record_json(record, **details)

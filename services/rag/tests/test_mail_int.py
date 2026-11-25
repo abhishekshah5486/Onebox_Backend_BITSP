@@ -54,6 +54,18 @@ EMAIL = {
     ],
 }
 RATES = b"zone,price\nislands,9.90\nmainland,4.50\n"
+# An email with one attachment too big to fetch and one the server won't send until told to.
+BUNDLE = {
+    **EMAIL,
+    "id": "m-bundle",
+    "subject": "Quarter pack",
+    "attachments": [
+        {**EMAIL["attachments"][0]},  # type: ignore[index]
+        {**EMAIL["attachments"][0], "index": 1, "filename": "video.mov", "sizeBytes": 10**12},  # type: ignore[index]
+        {**EMAIL["attachments"][0], "index": 2, "filename": "late.csv"},  # type: ignore[index]
+    ],
+}
+SENDS_LATE: dict[str, bool] = {"ready": False}
 
 
 def fake_mail(calls: list[str]) -> FastAPI:
@@ -62,13 +74,15 @@ def fake_mail(calls: list[str]) -> FastAPI:
     @app.get("/internal/messages/{message_id}")
     def message(message_id: str, userId: str) -> Any:
         calls.append(message_id)
-        if userId != "u1" or message_id not in {"m-inbox", "m-label"}:
+        if userId != "u1" or message_id not in {"m-inbox", "m-label", "m-bundle"}:
             return Response(status_code=404)
-        return {**EMAIL, "id": message_id}
+        return BUNDLE if message_id == "m-bundle" else {**EMAIL, "id": message_id}
 
     @app.get("/internal/messages/{message_id}/attachments/{index}")
     def attachment(message_id: str, index: int) -> Response:
         calls.append(f"{message_id}/{index}")
+        if index == 2 and not SENDS_LATE["ready"]:
+            return Response(status_code=404)
         return Response(RATES, media_type="application/octet-stream")
 
     return app
@@ -272,3 +286,72 @@ def test_records_whose_content_was_lost_are_read_again(client: TestClient) -> No
     assert {r["name"] for r in until(settled)} == {"Island shipping", "rates.csv"}
     lost = client.get(f"/rag/records/{kept['id']}", headers=bearer("u1")).json()
     assert lost["status"] == "failed" and lost["reason"] == LOST_UPLOAD
+
+
+def test_every_attachment_is_listed_under_its_email_with_why_one_was_not_read(
+    client: TestClient, live_settings: Settings
+) -> None:
+    queue = Queue("rag-mail", {"connection": live_settings.REDIS_URL})
+
+    def send(version: int) -> None:
+        envelope = {
+            "jobId": f"bundle-{version}",
+            "userId": "u1",
+            "traceId": "t",
+            "attempt": 1,
+            "enqueuedAt": "2026-11-23T00:00:00.000Z",
+            "schemaVersion": 1,
+            "payload": {
+                "op": "upsert",
+                "key": "k-bundle",
+                "accountId": "acct-1",
+                "version": version,
+                "messageIds": ["m-bundle"],
+            },
+        }
+        client.portal.call(queue.add, "rag-mail", envelope, {"jobId": f"bundle-{version}"})  # type: ignore[union-attr]
+
+    def attachments() -> dict[str, Json]:
+        """This email's attachments (other tests leave emails of their own)."""
+        records = client.get("/rag/records?sourceType=mail", headers=bearer("u1")).json()["records"]
+        email = next((r["id"] for r in records if r["name"] == "Quarter pack"), None)
+        return {r["name"]: r for r in records if email and r["parentId"] == email}
+
+    def settled(names: dict[str, str]) -> Any:
+        found = attachments()
+        return found if {n: r["status"] for n, r in found.items()} == names else None
+
+    send(1)
+    found = until(
+        lambda: settled({"rates.csv": "completed", "video.mov": "failed", "late.csv": "failed"})
+    )
+    assert "larger than" in found["video.mov"]["reason"]
+    assert "mail server" in found["late.csv"]["reason"]
+    email_id = found["rates.csv"]["parentId"]
+
+    # The email lists them all with their states; each names its email.
+    details = client.get(f"/rag/records/{email_id}", headers=bearer("u1")).json()
+    assert {a["name"]: a["status"] for a in details["attachments"]} == {
+        "rates.csv": "completed",
+        "video.mov": "failed",
+        "late.csv": "failed",
+    }
+    late = client.get(f"/rag/records/{found['late.csv']['id']}", headers=bearer("u1")).json()
+    assert late["attachedTo"] == {"id": email_id, "name": "Quarter pack"}
+
+    # All records lists the email with its count; the attachments open under it.
+    listing = client.get("/rag/hub/nodes?flattened=true&limit=100", headers=bearer("u1")).json()
+    rows = {n["id"]: n for n in listing["items"]}
+    assert rows[email_id]["attachmentCount"] == 3 and rows[email_id]["hasChildren"]
+    assert found["rates.csv"]["id"] not in rows
+    under = client.get(f"/rag/hub/nodes/record/{email_id}", headers=bearer("u1")).json()
+    assert {n["name"] for n in under["items"]} == {"rates.csv", "video.mov", "late.csv"}
+
+    # The server sends it on the email's next change: the same record is read.
+    SENDS_LATE["ready"] = True
+    send(2)
+    read = until(
+        lambda: settled({"rates.csv": "completed", "video.mov": "failed", "late.csv": "completed"})
+    )
+    assert read["late.csv"]["id"] == found["late.csv"]["id"]
+    client.portal.call(queue.close)  # type: ignore[union-attr]

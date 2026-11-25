@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from onebox_rag.ingest.ingestor import Ingestor, ItemInfo, Source
+from onebox_rag.ingest.ingestor import Ingestor, ItemInfo, Source, is_unread
 from onebox_rag.ingest.records import RecordStore
 from onebox_rag.mail.client import MailClient
 from onebox_rag.mail.reply import latest_reply
@@ -122,27 +122,42 @@ class MailSource:
     async def _attachments(
         self, user_id: str, source: Source, parent: Record, message: dict[str, Any]
     ) -> bool:
+        """Every attachment gets a record: read, or failed with why (too big to fetch, or the
+        mail server couldn't send it, which is tried again the next time the email changes)."""
         complete = True
         for meta in message.get("attachments") or []:
             external_id = f"{parent.external_id}/attachments/{meta['index']}"
-            if await self._records.by_external_id(user_id, source.type, source.id, external_id):
+            found = await self._records.by_external_id(user_id, source.type, source.id, external_id)
+            if found is not None and not is_unread(found):
                 continue
-            if int(meta.get("sizeBytes") or 0) > self._max_file_bytes:
-                continue  # past what RAG reads; not worth downloading
+            item = {
+                "user_id": user_id,
+                "source": source,
+                "name": meta.get("filename") or "attachment",
+                "declared_mime_type": meta.get("contentType"),
+                "external_id": external_id,
+                "parent_id": parent.id,
+                "info": ItemInfo(*parent.dates()),
+            }
+            size = int(meta.get("sizeBytes") or 0)
+            if size > self._max_file_bytes:
+                if found is None:  # past what RAG reads; not worth downloading
+                    limit = self._max_file_bytes // 2**20
+                    reason = f"larger than {limit} MB, so not read"
+                    await self._ingestor.add_unread(**item, size_bytes=size, reason=reason)
+                continue
             data = await self._mail.attachment(user_id, message["id"], int(meta["index"]))
             if data is None:
-                complete = False  # the mail server can't give it now
+                complete = False
+                if found is None:
+                    reason = "the mail server didn't send it; tried again when the email changes"
+                    await self._ingestor.add_unread(**item, size_bytes=size, reason=reason)
                 continue
-            await self._ingestor.ingest(
-                user_id=user_id,
-                source=source,
-                name=meta.get("filename") or "attachment",
-                declared_mime_type=meta.get("contentType"),
-                stream=io.BytesIO(data),
-                external_id=external_id,
-                parent_id=parent.id,
-                info=ItemInfo(*parent.dates()),
-            )
+            if found is None:
+                await self._ingestor.ingest(**item, stream=io.BytesIO(data))
+            else:
+                await self._ingestor.restore(found, io.BytesIO(data), item["declared_mime_type"])
+                await self._ingestor.collect(found.content_id)
         return complete
 
     async def _drop_copy(self, message_id: str, version: int) -> None:

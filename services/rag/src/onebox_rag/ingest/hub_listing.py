@@ -149,6 +149,9 @@ class HubLister:
         if parent_type is None:
             if flat:
                 scope = {"source_ids": query.source_ids}
+                # Everything, with attachments under their emails until it is searched.
+                if not (query.q or query.record_types or query.statuses):
+                    scope["top_level"] = True
             else:
                 containers = await self._roots(user_id)
                 containers = _sorted(containers, query.sort_by, descending)
@@ -369,6 +372,9 @@ def _record_node(record: Record, *, has_children: bool = False) -> dict[str, Any
         "origin": record.origin,
         "connector": "MAIL" if record.source_type == SourceType.MAIL else None,
         "hasChildren": has_children,
+        "attachmentCount": len(record.mail.attachment_names)
+        if record.mail and record.parent_id is None
+        else 0,
         "createdAt": ms(record.created_at),
         "updatedAt": ms(record.updated_at),
         "sourceCreatedAt": ms(record.source_created_at),

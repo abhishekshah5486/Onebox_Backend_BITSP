@@ -21,6 +21,12 @@ logger = logging.getLogger("onebox_rag.ingest")
 _CHUNK = 1024 * 1024
 # Content ids are derived from user and bytes, so the same file always lands on one content.
 _CONTENT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "https://onebox.dev/rag/contents")
+# The digest of a file that was never fetched: it names the item, as there are no bytes.
+UNREAD = "unread:"
+
+
+def is_unread(record: Record) -> bool:
+    return record.sha256.startswith(UNREAD)
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,49 @@ class Ingestor:
             # Queuing again is a no-op, and covers a crash between storing and queuing.
             await self._queue.enqueue(user_id, cid, content.revision)
         return content
+
+    async def add_unread(
+        self,
+        *,
+        user_id: str,
+        source: Source,
+        name: str,
+        declared_mime_type: str | None,
+        size_bytes: int,
+        reason: str,
+        external_id: str,
+        parent_id: str | None = None,
+        info: ItemInfo | None = None,
+    ) -> Ingested:
+        """A record for an item that wasn't fetched (too big, or its source couldn't send it):
+        no bytes, failed with the reason, so it is listed rather than missing."""
+        digest, now = f"{UNREAD}{source.type}/{source.id}/{external_id}", self._now()
+        content, _ = await self._contents.claim(
+            Content(
+                id=content_id(user_id, digest),
+                user_id=user_id,
+                sha256=digest,
+                mime_type=declared_mime_type or "application/octet-stream",
+                size_bytes=size_bytes,
+                blob_key=None,
+                status=Status.FAILED,
+                stage=None,
+                reason=reason,
+                stored=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        return await self.add_record(
+            user_id=user_id,
+            source=source,
+            content=content,
+            name=name,
+            declared_mime_type=declared_mime_type,
+            external_id=external_id,
+            parent_id=parent_id,
+            info=info,
+        )
 
     async def add_record(
         self,
