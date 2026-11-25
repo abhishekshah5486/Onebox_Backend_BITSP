@@ -260,6 +260,10 @@ def test_keeps_emails_and_attachments_in_step_with_the_mailbox(
     send({"op": "delete", "version": 7, "messageId": "m-inbox"}, user="system")
     gone = until(lambda: len(trashed()) == 2 and trashed())
     assert {r["deleteSource"] for r in gone} == {"source"}
+    listed = client.get(
+        "/rag/records?sourceType=mail&trashed=true&topLevel=true", headers=bearer("u1")
+    ).json()["records"]
+    assert [r["id"] for r in listed] == [email["id"]]
     assert len({r["deleteBatchId"] for r in gone}) == 1
     content = client.portal.call(state.contents.get, email["contentId"])  # type: ignore[union-attr]
     assert content.unindexed

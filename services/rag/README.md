@@ -66,7 +66,7 @@ Settings come from the repo's `.env`: `MONGO_URI`, `REDIS_URL`, `CREDENTIALS_ENC
   `cursor` from `pagination.nextCursor`; `include` adds `breadcrumbs`, `counts`,
   `permissions` and `availableFilters`.
 - **Records.** `GET /rag/records` (filters below, `folderId` with `root` for a collection's
-  top, `trashed`), `GET /rag/records/{id}`, `GET /rag/records/{id}/blocks` (the parsed blocks),
+  top, `trashed`, `topLevel` without attachments), `GET /rag/records/{id}`, `GET /rag/records/{id}/blocks` (the parsed blocks),
   `PATCH /rag/records/{id}` (`name`, unique in its folder), `POST /rag/records/{id}/move`
   (`collectionId`, `folderId`), `DELETE /rag/records/{id}` (to the trash, or `?permanent=true`
   for good, its attachments' records included), `POST /rag/records/trash` and

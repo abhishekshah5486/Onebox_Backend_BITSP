@@ -259,6 +259,8 @@ def rag_router() -> APIRouter:
         # "root" for the top of a collection.
         folder_id: Annotated[list[str] | None, Query(alias="folderId")] = None,
         trashed: bool = False,
+        # Leave attachments out (they go and come back with their email).
+        top_level: Annotated[bool, Query(alias="topLevel")] = False,
     ) -> dict[str, Any]:
         """A page of the user's records with filters, how many pass them, and the statuses and
         file types the user has (for the filter menus)."""
@@ -283,6 +285,7 @@ def rag_router() -> APIRouter:
                 dates=dates if dates.given() else None,
                 folder_ids=[None if f == "root" else f for f in folder_id] if folder_id else None,
                 trashed=trashed,
+                top_level=top_level,
             ),
             sort=sort,
             descending=order == "desc",
