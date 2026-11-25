@@ -1,4 +1,5 @@
 import { requireInternal } from '@onebox/auth-kit';
+import { RAG_SKIPPED_ROLES } from '@onebox/contracts';
 import { NotFoundError } from '@onebox/errors';
 import type { HttpServer } from '@onebox/http';
 import type { Collection } from 'mongodb';
@@ -9,6 +10,7 @@ import type { MessageDoc } from '../db/collections';
 
 const query = z.object({ userId: z.string().min(1) });
 const messageId = z.string().min(1).max(128);
+const skipped = new Set<string>(RAG_SKIPPED_ROLES);
 
 // Never routed by the gateway: the RAG service reads stored mail here, for a named user.
 export function registerInternalMailRoutes(
@@ -58,6 +60,35 @@ export function registerInternalMailRoutes(
               inline: a.inline,
               sha256: a.sha256 ?? null,
             })),
+          };
+        },
+      );
+
+      // Every copy of an email the mailbox holds now (spam and trash too), and those RAG reads.
+      routes.get(
+        '/accounts/:accountId/copies',
+        {
+          schema: {
+            params: z.object({ accountId: z.string().min(1).max(128) }),
+            querystring: query.extend({ messageIdHeader: z.string().min(1).max(998) }),
+          },
+        },
+        async (request) => {
+          const copies = await messages
+            .find(
+              {
+                userId: request.query.userId,
+                accountId: request.params.accountId,
+                messageIdHeader: request.query.messageIdHeader,
+              },
+              { projection: { _id: 1, role: 1 } },
+            )
+            .sort({ _id: 1 })
+            .limit(100)
+            .toArray();
+          return {
+            held: copies.map((copy) => copy._id),
+            readable: copies.filter((copy) => !skipped.has(copy.role)).map((copy) => copy._id),
           };
         },
       );

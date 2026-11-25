@@ -37,17 +37,23 @@ export function toRagJob(event: FeedEvent): { userId: string; payload: RagMailPa
     .filter((copy) => !skipped.has(copy.role))
     .map((copy) => copy._id)
     .sort();
+  // Spam and trash copies too: the email is in RAG's trash until the last of them goes.
+  const heldIds = event.copies
+    .map((copy) => copy._id)
+    .sort()
+    .slice(0, 100);
   return {
     userId: first.userId,
     payload:
       readable.length === 0
-        ? { op: 'remove', version: event.version, key, accountId: first.accountId }
+        ? { op: 'remove', version: event.version, key, accountId: first.accountId, heldIds }
         : {
             op: 'upsert',
             version: event.version,
             key,
             accountId: first.accountId,
             messageIds: readable.slice(0, 100),
+            heldIds,
           },
   };
 }

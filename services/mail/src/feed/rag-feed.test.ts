@@ -7,7 +7,7 @@ describe('toRagJob', () => {
   const inbox = storedMessage({ _id: 'b', role: 'inbox', messageIdHeader: '<m1@x>' });
   const spam = storedMessage({ _id: 'a', role: 'spam', messageIdHeader: '<m1@x>' });
 
-  it('names only the copies RAG reads, and drops the email once none is left', () => {
+  it('names the copies RAG reads and every copy held, spam and trash included', () => {
     const job = toRagJob({ kind: 'email', version: 7, copies: [inbox, spam] });
     expect(job).toEqual({
       userId: inbox.userId,
@@ -17,6 +17,7 @@ describe('toRagJob', () => {
         key: emailKey(inbox),
         accountId: inbox.accountId,
         messageIds: ['b'],
+        heldIds: ['a', 'b'],
       },
     });
     const drafts = storedMessage({ _id: 'c', role: 'drafts', messageIdHeader: '<m1@x>' });
@@ -25,6 +26,7 @@ describe('toRagJob', () => {
       version: 8,
       key: emailKey(spam),
       accountId: spam.accountId,
+      heldIds: ['a', 'c'],
     });
   });
 

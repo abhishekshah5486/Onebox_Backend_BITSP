@@ -921,6 +921,23 @@ describe('mail api', () => {
       expect(file.rawPayload.equals(pdf)).toBe(true);
       expect(file.headers['x-content-type']).toBe('application/pdf');
 
+      // Its copies: a trash copy is held but not read.
+      const header = '<marks@school.test>';
+      await collections.messages.updateOne(
+        { _id: messageId },
+        { $set: { messageIdHeader: header } },
+      );
+      const doc = (await collections.messages.findOne({ _id: messageId }))!;
+      await collections.messages.insertOne({ ...doc, _id: `${messageId}-trash`, role: 'trash' });
+      const copies = await internal(
+        `/internal/accounts/${doc.accountId}/copies?userId=${userId}` +
+          `&messageIdHeader=${encodeURIComponent(header)}`,
+      );
+      expect(copies.json()).toEqual({
+        held: [messageId, `${messageId}-trash`],
+        readable: [messageId],
+      });
+
       expect(
         (await internal(`/internal/messages/${messageId}?userId=${randomUUID()}`)).statusCode,
       ).toBe(404);
